@@ -47,11 +47,19 @@ Nenhuma spec deste projeto deve ser lida como orientação de investimento.
 
 ## Status atual
 
-**Fase 1 — Infraestrutura de dados e backtesting (em andamento).** Implementados:
-ingestão (spec 02), motor de features incremental (spec 03), gestão de risco
-estrutural (spec 05) e motor de backtesting event-driven (spec 07), com um
-backtest de ponta a ponta já validado contra dados históricos reais da Binance.
-Ver [`backend/README.md`](./backend/README.md) para como rodar. Modelo de ML
-(spec 04), execução real (spec 06), dashboard (spec 08) e aprendizado contínuo
-(spec 09) ainda não foram implementados — ver
-[`specs/11-roadmap-e-fases.md`](./specs/11-roadmap-e-fases.md) para as próximas fases.
+**Fase 1 — Infraestrutura de dados e backtesting: concluída.** Ingestão (spec
+02), motor de features incremental (spec 03), gestão de risco estrutural (spec
+05) e motor de backtesting event-driven (spec 07), validados de ponta a ponta
+contra dados históricos reais da Binance.
+
+**Fase 2 — Modelo preditivo: infraestrutura concluída, modelo ainda não
+promovido.** Pipeline completo de dataset rotulado, treino LightGBM com
+validação walk-forward, calibração e promoção fold a fold contra o baseline
+da Fase 1 (spec 04/07) — mas a primeira rodada real (BTCUSDT, 1m, 45 dias) não
+atingiu o critério de saída (o candidato não venceu o baseline em todos os
+folds). Isso é o gate de promoção funcionando corretamente, não um bug. Ver
+[`specs/11-roadmap-e-fases.md`](./specs/11-roadmap-e-fases.md) para os
+próximos passos e [`backend/README.md`](./backend/README.md) para como rodar.
+
+Execução real (spec 06), dashboard (spec 08) e aprendizado contínuo (spec 09)
+ainda não foram implementados.

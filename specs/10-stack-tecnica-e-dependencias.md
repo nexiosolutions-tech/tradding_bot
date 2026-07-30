@@ -61,26 +61,39 @@
   Railway (ex.: `staging`/`production`), cada um com seu próprio conjunto de
   variáveis.
 
-## Estrutura de pastas (proposta inicial, sujeita a `changes/`)
+## Estrutura de pastas
+
+Estrutura real a partir da Fase 2 (atualizada nesta spec conforme `CLAUDE.md` regra 4 —
+divergiu da proposta inicial por uma boa razão: layout `src/` padrão de empacotamento
+Python, instalável via `pip install -e .`):
 
 ```
 /
 ├── CLAUDE.md
 ├── README.md
-├── specs/              # especificações (este diretório)
-├── learnings/           # relatórios diários do motor de aprendizado
-├── changes/             # backlog de mudanças propostas, pendentes de revisão
+├── specs/                    # especificações (este diretório)
+├── learnings/                 # relatórios diários do motor de aprendizado
+├── changes/                   # backlog de mudanças propostas, pendentes de revisão
 ├── backend/
-│   ├── ingestion/       # spec 02
-│   ├── features/        # spec 03
-│   ├── model/            # spec 04
-│   ├── risk/             # spec 05
-│   ├── execution/        # spec 06
-│   ├── backtesting/      # spec 07
-│   └── learning_engine/  # spec 09 — job diário
+│   ├── pyproject.toml
+│   ├── requirements.txt
+│   ├── README.md              # setup, como rodar testes/scripts
+│   ├── src/tradingbot/
+│   │   ├── ingestion/         # spec 02
+│   │   ├── features/          # spec 03
+│   │   ├── model/              # spec 04
+│   │   ├── risk/                # spec 05 (reutilizado pela futura execução, spec 06)
+│   │   ├── execution/            # spec 06 — Fase 4, ainda não implementado
+│   │   ├── backtesting/          # spec 07
+│   │   └── learning_engine/       # spec 09 — Fase 5, ainda não implementado
+│   ├── scripts/                    # entry points: run_backtest.py, train_model.py, ...
+│   └── tests/                       # um teste por função que envolve dinheiro (CLAUDE.md)
 ├── frontend/
-│   └── dashboard/        # spec 08
-└── infra/                 # scripts de deploy, configuração de ambiente
+│   └── dashboard/                    # spec 08 — Fase 3, ainda não implementado
+└── results/                           # artefatos gerados (gitignored):
+    ├── <run>/report.{json,md}          # relatórios de backtest
+    └── models/<version>/                # modelos versionados (spec 04), até a
+                                           # integração com Postgres (ver "Hospedagem")
 ```
 
 ## Gestão de segredos

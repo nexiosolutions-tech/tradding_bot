@@ -27,6 +27,17 @@ o que torna o projeto seguro de construir incrementalmente.
 - **Critério de saída:** modelo supera baseline ingênuo (ex.: buy-and-hold ou
   regra simples) em backtest out-of-sample, de forma consistente entre
   diferentes janelas de validação.
+- **Status:** infraestrutura implementada e validada de ponta a ponta
+  (dataset com label sem lookahead, split walk-forward, calibração, promoção
+  fold a fold contra o baseline da Fase 1, versionamento). Critério de saída
+  **ainda não atingido** — na primeira rodada real (BTCUSDT, 1m, 45 dias), o
+  candidato só venceu 1 de 5 folds, rejeitado nos demais por drawdown pior que
+  o baseline. Isso é o sistema de promoção funcionando como deveria (recusar
+  promover um modelo que não é consistentemente melhor), não um bug. Próximos
+  passos possíveis — iteração de modelo, não mudança de fase: revisar
+  threshold/target (`04`), considerar novas features via `changes/`, ou
+  aceitar que esse conjunto de features/target não supera a regra simples
+  neste par/janela e testar outro.
 
 ## Fase 3 — Dashboard em modo observação
 

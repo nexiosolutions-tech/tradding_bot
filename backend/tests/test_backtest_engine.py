@@ -135,6 +135,39 @@ def test_fees_and_slippage_reduce_pnl():
     assert engine.trades[0].pnl < 0
 
 
+@dataclass
+class FeatureRecordingStrategy:
+    seen_feature_keys: list = None
+
+    def __post_init__(self):
+        self.seen_feature_keys = []
+
+    def on_features(self, snapshot):
+        self.seen_feature_keys.append(set(snapshot.features))
+        return None
+
+    def should_exit(self, snapshot):
+        return False
+
+
+def test_warm_up_primes_indicators_without_recording_trades_or_equity():
+    strategy = FeatureRecordingStrategy()
+    engine = _no_cost_engine(strategy)
+
+    warmup_events = [_closed_kline("BTCUSDT", 100.0 + i * 0.1, (i + 1) * 60_000) for i in range(35)]
+    engine.warm_up(warmup_events)
+
+    assert engine.trades == []
+    assert engine.equity_curve == []
+    assert engine.equity == 1_000.0
+
+    real_events = [_closed_kline("BTCUSDT", 103.6, 36 * 60_000)]
+    engine.run(real_events)
+
+    assert len(strategy.seen_feature_keys) == 1
+    assert "rsi" in strategy.seen_feature_keys[0]  # warmed up, not starting from scratch
+
+
 def test_circuit_breaker_blocks_new_entries_after_drawdown():
     strategy = ScriptedStrategy(entry_at_ts=60_000, stop_loss_pct=0.50)
     engine = _no_cost_engine(

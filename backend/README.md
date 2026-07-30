@@ -35,6 +35,21 @@ python scripts/run_backtest.py --symbol BTCUSDT --interval 1m --days 7
 O relatório é salvo em `../results/<run_name>/report.md` (+ `report.json` com os
 dados brutos). Use `--testnet` para apontar para `testnet.binance.vision`.
 
+## Rodar o treino do modelo (Fase 2)
+
+Busca histórico real, constrói o dataset rotulado, treina com validação
+walk-forward e só salva uma versão se ela vencer o baseline da Fase 1 em
+**todos** os folds out-of-sample:
+
+```bash
+python scripts/train_model.py --symbol BTCUSDT --interval 1m --days 45
+```
+
+Se promovido, o artefato vai para `../results/models/<version>/` (`model.joblib`
++ `metadata.json` com dataset/hiperparâmetros/thresholds/validação). Se não for
+promovido, nada é salvo — isso é esperado e correto quando o modelo não supera
+o baseline de forma consistente, não uma falha do script.
+
 ## Estratégia usada nesta fase
 
 `RsiBollingerPlaceholderStrategy` (`src/tradingbot/backtesting/strategy.py`) é uma
@@ -46,7 +61,9 @@ critério é o pipeline rodar de ponta a ponta com custos reais modelados.
 
 ## O que ainda não está implementado
 
-- Modelo de ML (spec 04) — Fase 2.
+- Modelo de ML **promovido** (spec 04) — infraestrutura da Fase 2 pronta, mas
+  nenhuma versão passou ainda no critério de promoção (ver
+  `specs/11-roadmap-e-fases.md`).
 - Camada de execução real contra testnet (spec 06) — Fase 4.
 - Motor de aprendizado contínuo (spec 09) — Fase 5.
 - Dashboard (spec 08) — Fase 3.

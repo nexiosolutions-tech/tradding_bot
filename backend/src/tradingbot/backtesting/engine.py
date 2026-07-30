@@ -64,6 +64,13 @@ class BacktestEngine:
         self.trades: list[ClosedTrade] = []
         self.rejected_signals: list[str] = []
 
+    def warm_up(self, events: list[MarketEvent]) -> None:
+        """Primes indicator state from events preceding the evaluation window, without
+        recording trades or equity — lets an out-of-sample fold start with fully warmed-up
+        indicators instead of contaminating its own metrics with a few in-sample bars."""
+        for event in events:
+            self.feature_engine.on_event(event)
+
     def run(self, events: list[MarketEvent]) -> None:
         for event in events:
             snapshot = self.feature_engine.on_event(event)
