@@ -102,15 +102,18 @@ repo) — variáveis de serviço obrigatórias no `tradding_bot`:
 | `BINANCE_API_KEY` / `BINANCE_API_SECRET` | Segredos — setar manualmente, nunca via commit |
 | `BINANCE_TESTNET` | `true` |
 | `SYMBOL`, `INITIAL_EQUITY`, `DASHBOARD_ORIGIN` | Ver `.env.example` |
-| **`RAILPACK_DEPLOY_APT_PACKAGES`** | **`libgomp1`** |
+| **`RAILPACK_DEPLOY_APT_PACKAGES`** | **`libgomp1 libpq5`** |
 
-A última é a que trava sem aviso óbvio: `lightgbm` precisa de
-`libgomp.so.1` (runtime OpenMP) em tempo de **execução**, não só de build — a
-imagem padrão do Railpack não inclui essa lib, e sem essa variável o processo
-crasha em loop logo no `import lightgbm` (o build em si aparece como
-`SUCCESS`, só o container morre ao subir). `RAILPACK_DEPLOY_APT_PACKAGES`
-(não `RAILPACK_BUILD_APT_PACKAGES`) instala no estágio final da imagem, que é
-o que roda em produção.
+Essa é a que trava sem aviso óbvio, e trava em duas partes: `lightgbm` precisa
+de `libgomp.so.1` (runtime OpenMP) e `psycopg2-binary` precisa de `libpq.so.5`
+(cliente Postgres) — ambos em tempo de **execução**, não só de build. A
+imagem padrão do Railpack não inclui nenhuma das duas, e sem essa variável o
+processo crasha em loop logo no primeiro `import lightgbm` ou na primeira
+tentativa de `create_engine` com uma URL Postgres (o build em si aparece como
+`SUCCESS`, só o container morre ao subir — dois incidentes reais, corrigidos
+um de cada vez). `RAILPACK_DEPLOY_APT_PACKAGES` (não
+`RAILPACK_BUILD_APT_PACKAGES`) instala no estágio final da imagem, que é o
+que roda em produção.
 
 Build command do `dashboard`: **`npm run build`**, não `npm ci && npm run
 build` — o Railpack já roda sua própria etapa de install antes do

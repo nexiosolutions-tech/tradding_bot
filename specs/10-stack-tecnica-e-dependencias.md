@@ -47,9 +47,10 @@
   `BINANCE_API_SECRET`, `BINANCE_TESTNET` (default `true` — só pode ser
   `false` com decisão humana explícita, `bootstrap.py` bloqueia isso por
   padrão), `SYMBOL`, `INITIAL_EQUITY`, `DATABASE_URL`, `DASHBOARD_ORIGIN`
-  (CORS do frontend), e **`RAILPACK_DEPLOY_APT_PACKAGES=libgomp1`** — sem essa
-  última, o processo crasha em loop no `import lightgbm` em runtime (detalhe
-  em `backend/README.md#deploy-no-railway`).
+  (CORS do frontend), e **`RAILPACK_DEPLOY_APT_PACKAGES=libgomp1 libpq5`** —
+  sem essas duas, o processo crasha em loop em runtime (`import lightgbm` e
+  `psycopg2`/Postgres, respectivamente — dois incidentes reais, não
+  hipotéticos; detalhe em `backend/README.md#deploy-no-railway`).
 
 ### Frontend / Dashboard
 - **React + Vite + TypeScript** (`frontend/dashboard/`), **TradingView
