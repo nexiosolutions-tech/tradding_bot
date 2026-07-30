@@ -1,3 +1,4 @@
+import { IconDot } from "./Icons";
 import type { EngineStateValue } from "../api/types";
 
 const LABELS: Record<EngineStateValue, string> = {
@@ -16,7 +17,15 @@ const CLASSES: Record<EngineStateValue, string> = {
 
 export function StateBadge({ state }: { state?: EngineStateValue }) {
   if (!state) {
-    return <span className="state-badge state-badge--muted">não configurado</span>;
+    return (
+      <span className="state-badge state-badge--muted">
+        <IconDot /> não configurado
+      </span>
+    );
   }
-  return <span className={CLASSES[state]}>{LABELS[state]}</span>;
+  return (
+    <span className={CLASSES[state]}>
+      <IconDot /> {LABELS[state]}
+    </span>
+  );
 }

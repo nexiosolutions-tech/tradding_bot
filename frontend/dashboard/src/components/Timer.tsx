@@ -10,18 +10,37 @@ function formatElapsed(ms: number): string {
 
 /** A ticking clock is something the operator glances at constantly — per the animation
  * skill guidance, it should never pulse or transition, just update the digits in place. */
-export function Timer({ sinceTs, label }: { sinceTs: number | null | undefined; label: string }) {
+export function Timer({
+  sinceTs,
+  label,
+  inline = false,
+}: {
+  sinceTs: number | null | undefined;
+  label: string;
+  inline?: boolean;
+}) {
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
+    if (!sinceTs) return;
     const interval = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(interval);
-  }, []);
+  }, [sinceTs]);
+
+  const value = sinceTs ? formatElapsed(now - sinceTs) : "—";
+
+  if (inline) {
+    return <span className="num">{value}</span>;
+  }
 
   return (
-    <div className="timer">
-      <span className="timer__label">{label}</span>
-      <span className="timer__value">{sinceTs ? formatElapsed(now - sinceTs) : "—"}</span>
+    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+      <span className="muted" style={{ fontSize: 12 }}>
+        {label}
+      </span>
+      <span className="num" style={{ fontSize: 22 }}>
+        {value}
+      </span>
     </div>
   );
 }

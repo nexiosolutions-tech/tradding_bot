@@ -195,12 +195,21 @@ def _engine_state_payload() -> dict:
             "stop_loss_price": position.stop_loss_price,
             "entry_ts": position.entry_ts,
         },
+        "activity": [
+            {"ts": a.ts, "level": a.level, "message": a.message} for a in orchestrator.recent_activity(50)
+        ],
     }
 
 
 @app.get("/api/engine/state")
 def engine_state():
     return _engine_state_payload()
+
+
+@app.get("/api/engine/activity")
+def engine_activity(limit: int = 50):
+    orchestrator = _require_orchestrator()
+    return [{"ts": a.ts, "level": a.level, "message": a.message} for a in orchestrator.recent_activity(limit)]
 
 
 @app.get("/api/engine/events")

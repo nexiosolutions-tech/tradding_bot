@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
+import { IconBook } from "../components/Icons";
 import type { ChangeSummary, DocDetail } from "../api/types";
 
 export function AprendizadoView() {
@@ -17,8 +18,8 @@ export function AprendizadoView() {
   const openChange = (filename: string) => api.changeDetail(filename).then(setDoc);
 
   return (
-    <div className="performance-view">
-      <div className="panel performance-view__list">
+    <div className="split-view">
+      <div className="panel list-panel">
         <div className="tabs">
           <button
             className={activeList === "learnings" ? "tab tab--active" : "tab"}
@@ -35,36 +36,42 @@ export function AprendizadoView() {
         </div>
 
         {activeList === "learnings" ? (
-          <ul className="run-list">
+          <ul className="item-list">
             {learnings.map((filename) => (
               <li key={filename}>
-                <button className="run-list__item" onClick={() => openLearning(filename)}>
-                  {filename}
+                <button className="item-row" onClick={() => openLearning(filename)}>
+                  <span className="item-row__label">{filename}</span>
                 </button>
               </li>
             ))}
-            {learnings.length === 0 && <li className="muted">Nenhum relatório ainda.</li>}
+            {learnings.length === 0 && <li className="muted" style={{ padding: "9px 11px", fontSize: 13 }}>Nenhum relatório ainda.</li>}
           </ul>
         ) : (
-          <ul className="run-list">
+          <ul className="item-list">
             {changes.map((change) => (
               <li key={change.filename}>
-                <button className="run-list__item" onClick={() => openChange(change.filename)}>
-                  <span>{change.filename}</span>
+                <button className="item-row" onClick={() => openChange(change.filename)}>
+                  <span className="item-row__label">{change.filename}</span>
                   {change.status && <span className="tag">{change.status}</span>}
                 </button>
               </li>
             ))}
-            {changes.length === 0 && <li className="muted">Nenhuma proposta ainda.</li>}
+            {changes.length === 0 && <li className="muted" style={{ padding: "9px 11px", fontSize: 13 }}>Nenhuma proposta ainda.</li>}
           </ul>
         )}
       </div>
 
-      <div className="panel performance-view__detail">
+      <div className="panel">
         {doc ? (
           <pre className="markdown-doc">{doc.content}</pre>
         ) : (
-          <p className="muted">Selecione um documento para visualizar.</p>
+          <div className="empty-state">
+            <div className="empty-state__icon">
+              <IconBook />
+            </div>
+            <div className="empty-state__title">Selecione um documento</div>
+            <p className="muted">Escolha um item na lista ao lado para visualizar o conteúdo.</p>
+          </div>
         )}
       </div>
     </div>

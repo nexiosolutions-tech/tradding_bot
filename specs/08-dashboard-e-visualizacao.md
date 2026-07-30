@@ -94,3 +94,23 @@ skills de UI definidas em [`CLAUDE.md`](../CLAUDE.md#skills-de-ui-a-utilizar-no-
 - View "Live" mostra "engine não configurado" enquanto
   `BINANCE_API_KEY`/`BINANCE_API_SECRET` não existirem no backend — as demais
   views não dependem disso.
+
+### Feed de atividade em tempo real (adicionado após feedback de uso)
+
+O usuário reportou que a Fase 3 original não "parecia viva" — sem um jeito de
+ver o engine avaliando candles entre um trade e outro, e a UI não seguia de
+fato as skills de design listadas em `CLAUDE.md`. Duas mudanças:
+
+1. **Redesign visual** aplicando a skill `redesign-existing-projects`
+   (instalada conforme `CLAUDE.md`): sidebar com ícones próprios (não
+   biblioteca genérica), tipografia com caráter (Space Grotesk + JetBrains
+   Mono para números), paleta com um único accent considerado (âmbar
+   dessaturado) em vez de azul/roxo genérico de IA, hero card com sparkline
+   de capital da sessão, estados vazios compostos em vez de texto solto.
+2. **`Orchestrator.activity_log`** (`backend/src/tradingbot/execution/orchestrator.py`)
+   — um buffer em memória (não persistido, não é o audit trail de
+   `EngineEvent`) que registra toda avaliação de candle, sinal, ordem e
+   circuit breaker, exposto via `/api/engine/activity` e embutido no payload
+   de `/api/engine/state` (REST e WS). A view Live renderiza isso num console
+   com auto-scroll — é a resposta direta a "quero saber que o algoritmo está
+   trabalhando".

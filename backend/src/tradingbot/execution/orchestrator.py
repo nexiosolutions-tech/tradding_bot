@@ -6,6 +6,7 @@ the exchange to enter or exit a position.
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 from enum import Enum
 
@@ -18,12 +19,25 @@ from tradingbot.persistence import repository
 from tradingbot.persistence.models import CircuitBreakerEvent, EngineEvent, OrderRecord, TradeRecord
 from tradingbot.risk.manager import MissingStopLossError, RiskConfig, RiskManager
 
+ACTIVITY_LOG_MAXLEN = 200
+
 
 class EngineState(str, Enum):
     ANALISANDO = "ANALISANDO"
     POSICAO_ABERTA = "POSICAO_ABERTA"
     PAUSADO = "PAUSADO"
     PARADO_CIRCUIT_BREAKER = "PARADO_CIRCUIT_BREAKER"
+
+
+@dataclass(frozen=True)
+class ActivityLogEntry:
+    """A 'proof of life' feed, separate from EngineEvent (spec 01's audit trail of state
+    transitions). This exists purely so the dashboard's Live view can show the engine is
+    still evaluating candles between trades — it is not persisted, not an audit record."""
+
+    ts: int
+    level: str  # "info" | "signal" | "trade" | "warning"
+    message: str
 
 
 @dataclass
@@ -61,10 +75,17 @@ class Orchestrator:
         self._position: OpenPositionLive | None = None
         self._sequence = 0
         self.started_at: int | None = None
+        self.activity_log: deque[ActivityLogEntry] = deque(maxlen=ACTIVITY_LOG_MAXLEN)
 
     @property
     def open_position(self) -> OpenPositionLive | None:
         return self._position
+
+    def _log_activity(self, level: str, message: str) -> None:
+        self.activity_log.append(ActivityLogEntry(ts=self._now(), level=level, message=message))
+
+    def recent_activity(self, limit: int = 50) -> list[ActivityLogEntry]:
+        return list(self.activity_log)[-limit:]
 
     # -- operator commands -------------------------------------------------
 
@@ -73,9 +94,11 @@ class Orchestrator:
             raise RuntimeError("circuit breaker ativo — reconheça antes de retomar")
         if self.started_at is None:
             self.started_at = self._now()
+        self._log_activity("info", f"Engine retomado por {by}")
         self._transition(EngineState.ANALISANDO, "retomado pelo operador", human=True)
 
     def pause(self, by: str) -> None:
+        self._log_activity("info", f"Engine pausado por {by}")
         self._transition(EngineState.PAUSADO, "pausado pelo operador", human=True)
 
     def acknowledge_circuit_breaker(self, by: str) -> None:
@@ -86,6 +109,7 @@ class Orchestrator:
             if event is not None:
                 repository.acknowledge_circuit_breaker(session, event.id, ts=self._now(), acknowledged_by=by)
         self.risk.circuit_breaker_triggered = False  # the only path that clears it — always human
+        self._log_activity("info", f"Circuit breaker reconhecido por {by}")
         self._transition(EngineState.ANALISANDO, "circuit breaker reconhecido", human=True)
 
     # -- event loop ----------------------------------------------------------
@@ -103,11 +127,17 @@ class Orchestrator:
             return  # indicators keep warming up "a seco"; no decision is made
 
         if self._position is not None:
+            self._log_activity("info", f"{self.symbol} @ {snapshot.close:.2f} — monitorando posição aberta")
             await self._check_exit(snapshot)
         elif self.risk.can_enter():
             signal = self.strategy.on_features(snapshot)
             if signal is not None:
+                self._log_activity(
+                    "signal", f"{self.symbol} @ {snapshot.close:.2f} — sinal detectado (confiança {signal.confidence:.0%})"
+                )
                 await self._try_enter(signal, snapshot)
+            else:
+                self._log_activity("info", f"{self.symbol} @ {snapshot.close:.2f} — analisando, sem sinal")
 
         self._maybe_trip_circuit_breaker(snapshot.knowledge_ts)
 
@@ -115,6 +145,7 @@ class Orchestrator:
         try:
             size = self.risk.position_size(self.equity, snapshot.close, signal.stop_loss_pct)
         except MissingStopLossError:
+            self._log_activity("warning", "Sinal rejeitado: sem stop-loss (estrutural, spec 05)")
             return  # structurally rejected — spec 05, never reaches the exchange
 
         size = self.risk.cap_to_max_exposure(size, snapshot.close, self.equity)
@@ -125,6 +156,7 @@ class Orchestrator:
         self._persist_order(entry_order, purpose="entry", requested_qty=size)
 
         if entry_order.status not in ("FILLED", "PARTIALLY_FILLED") or not entry_order.filled_qty:
+            self._log_activity("warning", f"Ordem de entrada não executada (status={entry_order.status})")
             return  # rejected or unfilled — stay flat, nothing to protect with a stop
 
         stop_loss_price = entry_order.avg_fill_price * (1 - signal.stop_loss_pct)
@@ -141,6 +173,11 @@ class Orchestrator:
             size=entry_order.filled_qty,
             stop_loss_price=stop_loss_price,
             entry_ts=snapshot.knowledge_ts,
+        )
+        self._log_activity(
+            "trade",
+            f"Posição aberta @ {entry_order.avg_fill_price:.2f} — tamanho {entry_order.filled_qty:.6f} "
+            f"— stop em {stop_loss_price:.2f}",
         )
         self._transition(EngineState.POSICAO_ABERTA, "entrada executada")
 
@@ -189,6 +226,9 @@ class Orchestrator:
                 ),
             )
         self._position = None
+        self._log_activity(
+            "trade", f"Posição fechada ({reason}) @ {exit_order.avg_fill_price:.2f} — P&L {pnl:+.2f}"
+        )
         self._transition(EngineState.ANALISANDO, f"posição fechada ({reason})")
 
     async def _handle_gap(self) -> None:
@@ -216,6 +256,8 @@ class Orchestrator:
                         drawdown_pct=(peak - self.equity) / peak if peak else 0.0,
                     ),
                 )
+            drawdown_pct = (peak - self.equity) / peak if peak else 0.0
+            self._log_activity("warning", f"Circuit breaker acionado — drawdown de {drawdown_pct:.1%}")
             self._transition(EngineState.PARADO_CIRCUIT_BREAKER, "circuit breaker acionado")
 
     def _persist_order(self, order: OrderResult, purpose: str, requested_qty: float) -> None:

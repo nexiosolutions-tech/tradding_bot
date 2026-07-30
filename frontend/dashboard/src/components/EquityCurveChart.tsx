@@ -12,17 +12,18 @@ export function EquityCurveChart({ points }: { points: [number, number][] }) {
       height: 280,
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
-        textColor: "#a8b3c5",
+        textColor: "#7a7466",
+        fontFamily: "JetBrains Mono, monospace",
         attributionLogo: false,
       },
-      grid: { horzLines: { color: "#1f2733" }, vertLines: { visible: false } },
-      timeScale: { timeVisible: true, borderColor: "#1f2733" },
-      rightPriceScale: { borderColor: "#1f2733" },
+      grid: { horzLines: { color: "#29271f" }, vertLines: { visible: false } },
+      timeScale: { timeVisible: true, borderColor: "#29271f" },
+      rightPriceScale: { borderColor: "#29271f" },
     });
     const series = chart.addSeries(AreaSeries, {
-      lineColor: "#4ade80",
-      topColor: "rgba(74, 222, 128, 0.25)",
-      bottomColor: "rgba(74, 222, 128, 0.02)",
+      lineColor: "#d99a3d",
+      topColor: "rgba(217, 154, 61, 0.22)",
+      bottomColor: "rgba(217, 154, 61, 0.01)",
       lineWidth: 2,
     });
 

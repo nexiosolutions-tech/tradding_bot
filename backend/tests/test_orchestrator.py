@@ -267,3 +267,56 @@ def test_gap_with_no_open_position_is_a_no_op(tmp_path):
 
     asyncio.run(orch.on_event(_gap_event(200_000)))
     assert orch.state == EngineState.ANALISANDO
+
+
+def test_activity_log_records_resume_and_no_signal_evaluations(tmp_path):
+    import asyncio
+
+    strategy = ScriptedStrategy()  # never fires a signal
+    orch, _ = _make_orchestrator(tmp_path, strategy)
+    orch.resume(by="brian")
+
+    asyncio.run(orch.on_event(_closed_kline("BTCUSDT", 100.0, 60_000)))
+
+    messages = [a.message for a in orch.recent_activity()]
+    assert any("retomado" in m for m in messages)
+    assert any("sem sinal" in m for m in messages)
+
+
+def test_activity_log_records_full_trade_lifecycle(tmp_path):
+    import asyncio
+
+    exchange = FakeExchangeClient()
+    exchange.next_fill_price["BTCUSDT"] = 100.0
+    strategy = ScriptedStrategy(entry_at_ts=60_000, stop_loss_pct=0.05, exit_at_ts=120_000)
+    orch, _ = _make_orchestrator(tmp_path, strategy, exchange)
+    orch.resume(by="brian")
+
+    asyncio.run(orch.on_event(_closed_kline("BTCUSDT", 100.0, 60_000)))
+    exchange.next_fill_price["BTCUSDT"] = 110.0
+    asyncio.run(orch.on_event(_closed_kline("BTCUSDT", 110.0, 120_000)))
+
+    levels_and_messages = [(a.level, a.message) for a in orch.recent_activity()]
+    assert any(level == "signal" and "sinal detectado" in msg for level, msg in levels_and_messages)
+    assert any(level == "trade" and "Posição aberta" in msg for level, msg in levels_and_messages)
+    assert any(level == "trade" and "Posição fechada" in msg for level, msg in levels_and_messages)
+
+
+def test_activity_log_records_missing_stop_loss_rejection(tmp_path):
+    import asyncio
+
+    strategy = ScriptedStrategy(entry_at_ts=60_000, stop_loss_pct=None)
+    orch, _ = _make_orchestrator(tmp_path, strategy)
+    orch.resume(by="brian")
+
+    asyncio.run(orch.on_event(_closed_kline("BTCUSDT", 100.0, 60_000)))
+
+    assert any(a.level == "warning" and "sem stop-loss" in a.message for a in orch.recent_activity())
+
+
+def test_activity_log_is_bounded(tmp_path):
+    strategy = ScriptedStrategy()
+    orch, _ = _make_orchestrator(tmp_path, strategy)
+    for i in range(300):
+        orch._log_activity("info", f"entry {i}")
+    assert len(orch.recent_activity(1000)) == 200

@@ -1,39 +1,37 @@
 import { useState } from "react";
+import { Sidebar, type ViewKey } from "./components/Sidebar";
+import { TopBar } from "./components/TopBar";
 import { LiveView } from "./views/LiveView";
 import { PerformanceView } from "./views/PerformanceView";
 import { ModeloView } from "./views/ModeloView";
 import { AprendizadoView } from "./views/AprendizadoView";
+import { useEngineState } from "./hooks/useEngineState";
 
-const VIEWS = [
-  { key: "live", label: "Live", render: () => <LiveView /> },
-  { key: "performance", label: "Performance", render: () => <PerformanceView /> },
-  { key: "modelo", label: "Modelo", render: () => <ModeloView /> },
-  { key: "aprendizado", label: "Aprendizado", render: () => <AprendizadoView /> },
-] as const;
-
-type ViewKey = (typeof VIEWS)[number]["key"];
+const LABELS: Record<ViewKey, string> = {
+  live: "Live",
+  performance: "Performance",
+  modelo: "Modelo",
+  aprendizado: "Aprendizado",
+};
 
 function App() {
   const [active, setActive] = useState<ViewKey>("live");
-  const view = VIEWS.find((v) => v.key === active)!;
+  // Single WebSocket for the whole app — the sidebar badge, topbar uptime, and Live view
+  // all read from this one connection instead of each opening their own.
+  const engineState = useEngineState();
 
   return (
     <div className="app">
-      <header className="app__header">
-        <span className="app__title">Trading Bot</span>
-        <nav className="app__nav">
-          {VIEWS.map((v) => (
-            <button
-              key={v.key}
-              className={v.key === active ? "app__nav-item app__nav-item--active" : "app__nav-item"}
-              onClick={() => setActive(v.key)}
-            >
-              {v.label}
-            </button>
-          ))}
-        </nav>
-      </header>
-      <main className="app__content">{view.render()}</main>
+      <Sidebar active={active} onSelect={setActive} engineState={engineState?.state} />
+      <div>
+        <TopBar viewLabel={LABELS[active]} startedAt={engineState?.started_at} />
+        <main className="content">
+          {active === "live" && <LiveView state={engineState} />}
+          {active === "performance" && <PerformanceView />}
+          {active === "modelo" && <ModeloView />}
+          {active === "aprendizado" && <AprendizadoView />}
+        </main>
+      </div>
     </div>
   );
 }

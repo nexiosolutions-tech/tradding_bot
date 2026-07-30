@@ -11,6 +11,14 @@ export interface OpenPosition {
   entry_ts: number;
 }
 
+export type ActivityLevel = "info" | "signal" | "trade" | "warning";
+
+export interface ActivityEntry {
+  ts: number;
+  level: ActivityLevel;
+  message: string;
+}
+
 export interface EngineState {
   configured: boolean;
   error?: string;
@@ -20,6 +28,7 @@ export interface EngineState {
   strategy_version?: string;
   started_at?: number | null;
   position?: OpenPosition | null;
+  activity?: ActivityEntry[];
 }
 
 export interface EngineEvent {

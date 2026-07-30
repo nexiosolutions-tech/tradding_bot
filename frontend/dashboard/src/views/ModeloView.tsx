@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api } from "../api/client";
+import { IconNode } from "../components/Icons";
 import type { ModelMetadata } from "../api/types";
 
 export function ModeloView() {
-  const [models, setModels] = useState<ModelMetadata[]>([]);
+  const [models, setModels] = useState<ModelMetadata[] | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
 
   useEffect(() => {
@@ -14,13 +15,28 @@ export function ModeloView() {
     });
   }, []);
 
-  const model = models.find((m) => m.version === selected);
+  const model = models?.find((m) => m.version === selected);
+
+  if (models === null) {
+    return (
+      <div className="panel">
+        <div className="skeleton" style={{ height: 220 }} />
+      </div>
+    );
+  }
 
   if (models.length === 0) {
     return (
       <div className="panel">
-        Nenhum modelo promovido ainda — a estratégia ativa é o placeholder da Fase 1. Ver{" "}
-        <code>specs/11-roadmap-e-fases.md</code>.
+        <div className="empty-state">
+          <div className="empty-state__icon">
+            <IconNode />
+          </div>
+          <div className="empty-state__title">Nenhum modelo promovido ainda</div>
+          <p className="muted">
+            A estratégia ativa é o placeholder da Fase 1. Ver <code>specs/11-roadmap-e-fases.md</code>.
+          </p>
+        </div>
       </div>
     );
   }
@@ -31,17 +47,17 @@ export function ModeloView() {
   }));
 
   return (
-    <div className="performance-view">
-      <div className="panel performance-view__list">
+    <div className="split-view">
+      <div className="panel list-panel">
         <h3>Modelos</h3>
-        <ul className="run-list">
+        <ul className="item-list">
           {models.map((m) => (
             <li key={m.version}>
               <button
-                className={m.version === selected ? "run-list__item run-list__item--active" : "run-list__item"}
+                className={m.version === selected ? "item-row item-row--active" : "item-row"}
                 onClick={() => setSelected(m.version)}
               >
-                {m.version}
+                <span className="item-row__label">{m.version}</span>
               </button>
             </li>
           ))}
@@ -49,7 +65,7 @@ export function ModeloView() {
       </div>
 
       {model && (
-        <div className="performance-view__detail">
+        <div>
           <div className="panel metrics-grid">
             <Metric label="Entry threshold" value={model.entry_threshold.toFixed(2)} />
             <Metric label="Exit threshold" value={model.exit_threshold.toFixed(2)} />
@@ -64,11 +80,14 @@ export function ModeloView() {
             <h3>Profit factor por fold (walk-forward)</h3>
             <ResponsiveContainer width="100%" height={220}>
               <BarChart data={foldData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1f2733" />
-                <XAxis dataKey="fold" stroke="#a8b3c5" fontSize={12} />
-                <YAxis stroke="#a8b3c5" fontSize={12} />
-                <Tooltip contentStyle={{ background: "#141a24", border: "1px solid #1f2733" }} />
-                <Bar dataKey="profit_factor" fill="#c084fc" radius={[3, 3, 0, 0]} />
+                <CartesianGrid strokeDasharray="3 3" stroke="#29271f" />
+                <XAxis dataKey="fold" stroke="#7a7466" fontSize={11} fontFamily="JetBrains Mono" />
+                <YAxis stroke="#7a7466" fontSize={11} fontFamily="JetBrains Mono" />
+                <Tooltip
+                  contentStyle={{ background: "#131210", border: "1px solid #29271f", borderRadius: 8, fontSize: 12 }}
+                  labelStyle={{ color: "#b3ac9e" }}
+                />
+                <Bar dataKey="profit_factor" fill="#d99a3d" radius={[3, 3, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -92,8 +111,8 @@ export function ModeloView() {
 function Metric({ label, value }: { label: string; value: string | number }) {
   return (
     <div className="metric">
-      <span className="muted">{label}</span>
-      <strong>{value}</strong>
+      <span className="metric__label">{label}</span>
+      <span className="metric__value">{value}</span>
     </div>
   );
 }

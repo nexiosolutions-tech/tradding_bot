@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api } from "../api/client";
+import { IconAlertTriangle, IconPause, IconPlay } from "./Icons";
 import type { EngineStateValue } from "../api/types";
 
 export function EngineControls({ state, onChanged }: { state?: EngineStateValue; onChanged: () => void }) {
@@ -26,35 +27,39 @@ export function EngineControls({ state, onChanged }: { state?: EngineStateValue;
   };
 
   return (
-    <div className="engine-controls">
-      <label className="engine-controls__operator">
-        Operador
-        <input value={operator} onChange={(e) => persistOperator(e.target.value)} />
-      </label>
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
+      <div className="controls">
+        <label className="operator-field">
+          Operador
+          <input value={operator} onChange={(e) => persistOperator(e.target.value)} />
+        </label>
 
-      <div className="engine-controls__buttons">
         {state === "PAUSADO" && (
-          <button className="btn btn--primary" disabled={pending} onClick={() => run(() => api.resume(operator))}>
-            Play
+          <button
+            className="icon-btn icon-btn--primary"
+            disabled={pending}
+            onClick={() => run(() => api.resume(operator))}
+          >
+            <IconPlay width={13} height={13} /> Play
           </button>
         )}
         {(state === "ANALISANDO" || state === "POSICAO_ABERTA") && (
-          <button className="btn" disabled={pending} onClick={() => run(() => api.pause(operator))}>
-            Pause
+          <button className="icon-btn" disabled={pending} onClick={() => run(() => api.pause(operator))}>
+            <IconPause width={13} height={13} /> Pause
           </button>
         )}
         {state === "PARADO_CIRCUIT_BREAKER" && (
           <button
-            className="btn btn--danger"
+            className="icon-btn icon-btn--danger"
             disabled={pending}
             onClick={() => run(() => api.acknowledgeCircuitBreaker(operator))}
           >
-            Reconhecer circuit breaker
+            <IconAlertTriangle width={13} height={13} /> Reconhecer
           </button>
         )}
       </div>
 
-      {error && <p className="engine-controls__error">{error}</p>}
+      {error && <p className="form-error">{error}</p>}
     </div>
   );
 }
