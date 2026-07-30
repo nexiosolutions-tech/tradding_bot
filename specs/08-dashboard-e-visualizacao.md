@@ -76,3 +76,21 @@ skills de UI definidas em [`CLAUDE.md`](../CLAUDE.md#skills-de-ui-a-utilizar-no-
   ver `09-aprendizado-continuo.md`) — o dashboard no MVP é observação + controle
   operacional (play/pause/kill switch), não um editor de configuração de risco.
 - Múltiplos usuários/autenticação multi-perfil.
+
+## Status de implementação (Fase 3)
+
+- **Backend:** `backend/src/tradingbot/api/app.py` (FastAPI) — REST para
+  backtests/modelos/trades/learnings/changes, WebSocket `/ws/engine` para
+  estado ao vivo, comandos play/pause/reconhecer circuit breaker roteados
+  sempre pelos métodos do `Orchestrator` (nunca acesso direto a banco/exchange
+  a partir da API). Roda o `Orchestrator` + stream de ingestão como task de
+  background no mesmo processo — decisão registrada em
+  [`10-stack-tecnica-e-dependencias.md`](./10-stack-tecnica-e-dependencias.md#hospedagem)
+  para simplificar o deploy inicial no Railway (um único serviço).
+- **Frontend:** `frontend/dashboard/` (React + Vite + TypeScript), 4 views
+  como especificado, TradingView Lightweight Charts para a curva de capital e
+  Recharts para os gráficos de barra. Validado visualmente contra a API real
+  (screenshot das 4 views com dados reais da Fase 1 carregando corretamente).
+- View "Live" mostra "engine não configurado" enquanto
+  `BINANCE_API_KEY`/`BINANCE_API_SECRET` não existirem no backend — as demais
+  views não dependem disso.

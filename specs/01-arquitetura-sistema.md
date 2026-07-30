@@ -104,3 +104,8 @@ dashboard:
 
 Transição para `PARADO_CIRCUIT_BREAKER` nunca é automática de volta para
 qualquer outro estado — sempre requer reconhecimento humano explícito.
+
+**Nota de implementação (Fase 4):** `AGUARDANDO` não tem transição própria no
+`Orchestrator` implementado — é um sub-caso de `ANALISANDO` (flat, sem sinal
+qualificado) sem diferença de comportamento do sistema, só de leitura humana.
+Ver detalhe em [`06-camada-de-execucao.md`](./06-camada-de-execucao.md#status-de-implementação-fase-4).

@@ -62,6 +62,20 @@ risco é o que garante isso — ela é independente da qualidade do modelo.
   stop-loss, e qual era o estado do circuit breaker — sem isso, a gestão de
   risco não é verificável e essa spec não está sendo cumprida.
 
+## Status de implementação (Fase 4)
+
+`backend/src/tradingbot/risk/manager.py` implementa sizing percentual,
+rejeição estrutural de ordem sem stop-loss (`MissingStopLossError`) e circuit
+breaker sem recuperação automática — usado tanto pelo backtesting (Fase 1)
+quanto pelo `Orchestrator` real (Fase 4), o mesmo código em ambos os
+contextos. Uma lacuna conhecida está documentada em
+[`06-camada-de-execucao.md`](./06-camada-de-execucao.md#status-de-implementação-fase-4):
+reconciliação de ordem de entrada perdida por crash entre confirmação da
+exchange e persistência local ainda não é tratada — só a reconciliação de
+stop-loss em gap de conexão está implementada. Fechar essa lacuna é
+pré-requisito antes de qualquer capital real (Fase 6), não da validação em
+testnet.
+
 ## O que esta spec não define
 
 - Valores específicos de percentual de risco, drawdown máximo tolerado, ou

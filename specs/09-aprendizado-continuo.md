@@ -77,3 +77,27 @@ automatizar na parte de análise, sem herdar esse risco.
 A view "Aprendizado" do dashboard (`08-dashboard-e-visualizacao.md`) expõe o
 histórico de `learnings/` e `changes/`, com o status de cada proposta —
 mantendo o ciclo de aprendizado tão visível quanto a operação em tempo real.
+
+## Status de implementação (Fase 5)
+
+`backend/src/tradingbot/learning_engine/` — `daily_report.py` (lê
+`trades`/`engine_events` do dia via `persistence/repository.py`, somente
+leitura, reaproveita as mesmas funções de métrica do backtesting para que dia
+real e backtest sejam julgados pelo mesmo critério) e
+`change_proposals.py` (rascunha uma entrada em `changes/` só para achados com
+amostra ≥ 10 trades — abaixo disso, o achado fica marcado "preliminar" no
+`learnings/` e nenhuma proposta é gerada). Roda via `scripts/run_daily_learning.py`
+(pensado para Railway Cron Jobs).
+
+**Heurística atual é mecânica, não estatística/ML:** o único achado
+implementado por ora é "win rate abaixo de 35% num horário UTC específico".
+Isso é deliberadamente simples — o objetivo desta fase era o *fluxo*
+`learnings/ → changes/ → revisão humana` funcionar de ponta a ponta, não ter
+heurísticas sofisticadas. Novas heurísticas de achado são elas mesmas uma
+mudança de spec/`changes/`, não algo a adicionar livremente depois.
+
+**Ainda não validado contra dado de produção real** — não há trades reais
+ainda (Fase 4 depende de chaves de testnet que o usuário ainda não configurou).
+Toda a lógica está coberta por testes unitários com dados sintéticos
+(`backend/tests/test_daily_report.py`, `test_change_proposals.py`); o primeiro
+relatório "de verdade" só existe depois de um dia de operação real em testnet.

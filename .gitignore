@@ -7,3 +7,6 @@ __pycache__/
 results/
 .env
 .env.*
+!.env.development
+node_modules/
+dist/

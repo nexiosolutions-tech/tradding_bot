@@ -61,3 +61,31 @@ para execução:
 - Execução em múltiplas exchanges simultâneas.
 - Ordens avançadas (OCO complexas, trailing stop nativo da exchange) — MVP usa
   stop-loss simples gerenciado pelo próprio sistema; evolução via `changes/`.
+
+## Status de implementação (Fase 4)
+
+Implementado em `backend/src/tradingbot/execution/`: `client.py` (interface
+`ExchangeClient` + `BinanceTestnetClient` real via `python-binance`),
+`idempotency.py`, `orchestrator.py` (máquina de estados + fluxo de
+entrada/saída/circuit breaker/gap), `bootstrap.py` (wiring compartilhado entre
+o script standalone `scripts/run_live.py` e o serviço da API). Testado com um
+`FakeExchangeClient` em memória (`backend/tests/fakes.py`) — sem chaves de
+testnet ainda, a validação contra a exchange real está pendente.
+
+**Simplificação sobre `AGUARDANDO`:** a máquina de estados implementada usa
+apenas `ANALISANDO`/`POSICAO_ABERTA`/`PAUSADO`/`PARADO_CIRCUIT_BREAKER` — o
+estado `AGUARDANDO` descrito em `01-arquitetura-sistema.md` (score não atingiu
+threshold) é um sub-caso de `ANALISANDO` sem transição própria, já que não
+muda comportamento do sistema, só a leitura humana do que está acontecendo.
+
+**Lacunas conhecidas, a fechar antes de qualquer capital real:**
+- `fees_paid` é gravado como `0.0` nos trades reais — a Binance deduz a
+  comissão do próprio fill (potencialmente em outro ativo) e isso ainda não é
+  convertido/agregado. Sinalizado no código, não fabricado como zero "de
+  verdade".
+- Idempotência cobre retry de rede no envio da ordem (mesmo `client_order_id`
+  → a exchange rejeita duplicata). Não cobre ainda o caso de crash do processo
+  entre a exchange confirmar o fill e o sistema persistir isso localmente —
+  reconciliação de ordens de entrada perdidas nesse intervalo é um follow-up,
+  não implementado (a reconciliação de gap hoje cobre apenas stop-loss de
+  posição já aberta).

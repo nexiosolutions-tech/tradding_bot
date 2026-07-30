@@ -77,6 +77,12 @@ class RiskManager:
             self.circuit_breaker_triggered = True
             self.circuit_breaker_triggered_at = ts
 
+    @property
+    def peak_equity(self) -> float | None:
+        if not self._equity_history:
+            return None
+        return max(equity for _, equity in self._equity_history)
+
     def can_enter(self) -> bool:
         """Once tripped, stays tripped for the rest of this run — spec 05: the circuit
         breaker does not recover on its own, it requires explicit human acknowledgement,

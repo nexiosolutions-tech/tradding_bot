@@ -46,6 +46,12 @@ o que torna o projeto seguro de construir incrementalmente.
 - **Critério de saída:** usuário consegue acompanhar visualmente o
   comportamento do sistema e confia no que está vendo (sem cobrir bugs de
   visualização/dados).
+- **Status: implementado.** API FastAPI + dashboard React com as 4 views
+  (Live/Performance/Modelo/Aprendizado). Validado visualmente contra a API
+  real rodando localmente — as 4 views carregam e renderizam dados reais da
+  Fase 1 corretamente (screenshots tirados durante a implementação). Decisão
+  de arquitetura tomada: API e `Orchestrator` no mesmo processo/serviço (ver
+  `10-stack-tecnica-e-dependencias.md`).
 
 ## Fase 4 — Execução em testnet
 
@@ -57,6 +63,17 @@ o que torna o projeto seguro de construir incrementalmente.
 - **Critério de saída:** operação estável em testnet por um período mínimo
   (a definir), sem violação de nenhuma invariante de risco, com todo o ciclo
   de vida de ordens corretamente refletido no dashboard.
+- **Status: código implementado, validação ao vivo pendente.** `Orchestrator`
+  completo (máquina de estados, sizing/stop-loss/circuit breaker via o mesmo
+  `RiskManager` do backtesting, idempotência de client order id,
+  reconciliação de gap), testado extensivamente contra um `FakeExchangeClient`
+  em memória. **Falta:** o usuário gerar chaves de API em
+  `testnet.binance.vision` e configurá-las (`BINANCE_API_KEY`/`BINANCE_API_SECRET`)
+  — sem isso, o critério de saída ("operação estável em testnet por um
+  período mínimo") não pode nem começar a ser avaliado, porque não há como
+  testar contra a exchange real ainda. Como a Fase 2 não promoveu modelo, a
+  estratégia ativa por padrão é o placeholder da Fase 1 — rodar em testnet
+  não valida qualidade de modelo, só a mecânica de execução.
 
 ## Fase 5 — Motor de aprendizado contínuo
 
@@ -67,16 +84,28 @@ o que torna o projeto seguro de construir incrementalmente.
 - **Critério de saída:** pelo menos uma proposta de `changes/` gerada a partir
   de dados reais, revisada e (aprovada ou rejeitada) por decisão humana
   registrada.
+- **Status: código implementado, sem dado real para processar ainda.** Job
+  diário e drafting de `changes/` implementados e testados com dados
+  sintéticos. O critério de saída depende de trades reais existirem
+  (Fase 4 rodando), então só pode ser cumprido depois dela.
 
 ## Fase 6 — Produção com capital simbólico
 
 - Mainnet com valor mínimo, mantendo todos os gates de risco ativos.
 - **Critério de saída:** decisão humana explícita, fora do escopo desta spec
   (é uma decisão financeira do usuário, não uma recomendação de engenharia).
+- **Esta fase não é implementável por um agente de IA.** Não existe código a
+  escrever aqui — é a decisão do usuário de trocar `BINANCE_TESTNET=false` (o
+  próprio `bootstrap.py` bloqueia isso por padrão, exigindo intervenção manual
+  explícita fora do fluxo automatizado) depois de: (a) Fase 4 estável por um
+  período que o usuário considere suficiente, (b) as lacunas conhecidas de
+  `06-camada-de-execucao.md` fechadas, (c) um modelo real promovido (Fase 2)
+  ou aceitação consciente de operar com o placeholder.
 
 ## Fase 7 — Operação plena
 
 - Só após Fase 6 validada pelo próprio usuário nos seus próprios critérios.
+- Mesma nota da Fase 6: decisão humana, não uma tarefa de engenharia.
 
 ---
 

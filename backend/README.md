@@ -1,8 +1,9 @@
-# Backend — Fase 1
+# Backend
 
-Implementação de ingestão (spec 02), motor de features (spec 03), gestão de risco
-(spec 05) e backtesting event-driven (spec 07), conforme
-[`specs/11-roadmap-e-fases.md`](../specs/11-roadmap-e-fases.md).
+Implementação das Fases 1–5 do roadmap (`specs/11-roadmap-e-fases.md`):
+ingestão (spec 02), features (spec 03), modelo ML (spec 04), risco (spec 05),
+execução (spec 06), backtesting (spec 07), API do dashboard (spec 08),
+aprendizado contínuo (spec 09).
 
 ## Setup
 
@@ -20,55 +21,60 @@ pip install -e .
 python -m pytest -q
 ```
 
-Todo código que envolve dinheiro (sizing, custos, P&L, drawdown, circuit breaker)
-tem teste unitário em `tests/`, conforme exigido em [`CLAUDE.md`](../CLAUDE.md).
+Todo código que envolve dinheiro (sizing, custos, P&L, drawdown, circuit breaker,
+execução de ordens) tem teste unitário em `tests/`, conforme exigido em
+[`CLAUDE.md`](../CLAUDE.md). A camada de execução é testada contra um
+`FakeExchangeClient` em memória (`tests/fakes.py`) — nunca contra a rede.
 
-## Rodar um backtest de ponta a ponta
+## Scripts
 
-Busca klines históricos reais da Binance (endpoint público, sem necessidade de
-API key) e roda o backtest completo:
+| Script | Fase | O que faz |
+|---|---|---|
+| `run_backtest.py --symbol BTCUSDT --interval 1m --days 7` | 1 | Backtest de ponta a ponta com dados reais da Binance (endpoint público, sem API key) |
+| `train_model.py --symbol BTCUSDT --interval 1m --days 45` | 2 | Treina com walk-forward; só salva o modelo se vencer o baseline em **todos** os folds |
+| `run_live.py` | 4 | Worker standalone: conecta no testnet e roda o `Orchestrator` (alternativa a rodar tudo dentro da API) |
+| `run_daily_learning.py [--date AAAA-MM-DD]` | 5 | Analisa trades do dia, gera `learnings/` e rascunha `changes/` — pensado para cron diário |
+
+Relatórios/modelos vão para `../results/` (gitignored). `run_backtest.py` e
+`train_model.py` não precisam de credenciais; `run_live.py` e a API (abaixo)
+precisam.
+
+## Subir a API + dashboard localmente
 
 ```bash
-python scripts/run_backtest.py --symbol BTCUSDT --interval 1m --days 7
+uvicorn tradingbot.api.app:app --reload
 ```
 
-O relatório é salvo em `../results/<run_name>/report.md` (+ `report.json` com os
-dados brutos). Use `--testnet` para apontar para `testnet.binance.vision`.
-
-## Rodar o treino do modelo (Fase 2)
-
-Busca histórico real, constrói o dataset rotulado, treina com validação
-walk-forward e só salva uma versão se ela vencer o baseline da Fase 1 em
-**todos** os folds out-of-sample:
+Sem `BINANCE_API_KEY`/`BINANCE_API_SECRET` no ambiente, a API sobe normalmente
+e todas as views que dependem de `results/`/banco funcionam — só a view "Live"
+mostra "engine não configurado". Para ligar a execução real (Fase 4), gere
+chaves em [testnet.binance.vision](https://testnet.binance.vision) e exporte:
 
 ```bash
-python scripts/train_model.py --symbol BTCUSDT --interval 1m --days 45
+export BINANCE_API_KEY=...
+export BINANCE_API_SECRET=...
+# BINANCE_TESTNET=false exigiria mainnet — bloqueado por padrão (CLAUDE.md regra 1/6)
 ```
 
-Se promovido, o artefato vai para `../results/models/<version>/` (`model.joblib`
-+ `metadata.json` com dataset/hiperparâmetros/thresholds/validação). Se não for
-promovido, nada é salvo — isso é esperado e correto quando o modelo não supera
-o baseline de forma consistente, não uma falha do script.
+O engine sempre inicia **pausado**; ligar a execução é uma ação explícita no
+dashboard (Play), nunca automática ao subir o processo.
 
-## Estratégia usada nesta fase
+## Estratégia ativa
 
-`RsiBollingerPlaceholderStrategy` (`src/tradingbot/backtesting/strategy.py`) é uma
-regra simples de mean-reversion (RSI + Bandas de Bollinger), existe **apenas para
-validar a infraestrutura de ponta a ponta** — não é o modelo de ML previsto em
-`specs/04-modelo-ml-e-scoring.md`, que é a próxima fase. Ela pode (e provavelmente
-vai) perder dinheiro em backtest; isso não é o critério de saída desta fase. O
-critério é o pipeline rodar de ponta a ponta com custos reais modelados.
+Enquanto nenhum modelo (Fase 2) for promovido, `bootstrap.load_active_strategy()`
+usa `RsiBollingerPlaceholderStrategy` (`src/tradingbot/backtesting/strategy.py`)
+— uma regra simples de mean-reversion que existe só para exercitar a
+infraestrutura de ponta a ponta, não é uma recomendação de estratégia.
 
-## O que ainda não está implementado
+## Lacunas conhecidas antes de qualquer capital real
 
-- Modelo de ML **promovido** (spec 04) — infraestrutura da Fase 2 pronta, mas
-  nenhuma versão passou ainda no critério de promoção (ver
-  `specs/11-roadmap-e-fases.md`).
-- Camada de execução real contra testnet (spec 06) — Fase 4.
-- Motor de aprendizado contínuo (spec 09) — Fase 5.
-- Dashboard (spec 08) — Fase 3.
-- Persistência em banco relacional (spec 10 prevê PostgreSQL via addon do
-  Railway, que é a plataforma de hospedagem alvo). Nesta fase, resultados de
-  backtest são gravados como arquivos em `results/` — suficiente para o
-  critério de saída da Fase 1 (pipeline de backtesting ponta a ponta), sem exigir
-  infraestrutura de banco antes de haver dado de produção real para persistir.
+Ver [`specs/06-camada-de-execucao.md`](../specs/06-camada-de-execucao.md#status-de-implementação-fase-4)
+para o detalhe: contabilização de taxas em ordens reais ainda é `0.0`
+(sinalizado, não fabricado), e reconciliação de ordem de entrada perdida por
+crash entre confirmação da exchange e persistência local ainda não é tratada.
+
+## Persistência
+
+`src/tradingbot/persistence/` usa SQLAlchemy — SQLite local por padrão
+(`../results/tradingbot.db`, gitignored), PostgreSQL em produção via
+`DATABASE_URL` (Railway). Nenhuma query muda entre os dois.

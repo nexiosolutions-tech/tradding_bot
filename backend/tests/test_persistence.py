@@ -1,0 +1,102 @@
+from tradingbot.persistence.db import get_session_factory
+from tradingbot.persistence.models import CircuitBreakerEvent, EngineEvent, OrderRecord, TradeRecord
+from tradingbot.persistence.repository import (
+    acknowledge_circuit_breaker,
+    get_order,
+    latest_unacknowledged_circuit_breaker,
+    record_circuit_breaker_event,
+    record_engine_event,
+    record_trade,
+    recent_engine_events,
+    trades_in_range,
+    upsert_order,
+)
+
+
+def _session(tmp_path):
+    factory = get_session_factory(f"sqlite:///{tmp_path}/test.db")
+    return factory()
+
+
+def _order(client_order_id="co-1", status="NEW", filled_qty=0.0):
+    return OrderRecord(
+        client_order_id=client_order_id,
+        symbol="BTCUSDT",
+        side="buy",
+        purpose="entry",
+        requested_qty=1.0,
+        requested_price=100.0,
+        status=status,
+        filled_qty=filled_qty,
+        avg_fill_price=None,
+        created_at="2026-01-01T00:00:00Z",
+        updated_at="2026-01-01T00:00:00Z",
+        raw_response=None,
+    )
+
+
+def test_upsert_order_inserts_then_updates_same_row(tmp_path):
+    session = _session(tmp_path)
+    upsert_order(session, _order())
+    upsert_order(session, _order(status="FILLED", filled_qty=1.0))
+
+    stored = get_order(session, "co-1")
+    assert stored.status == "FILLED"
+    assert stored.filled_qty == 1.0
+
+
+def test_trades_in_range_filters_by_exit_ts(tmp_path):
+    session = _session(tmp_path)
+    for i in range(5):
+        record_trade(
+            session,
+            TradeRecord(
+                symbol="BTCUSDT",
+                entry_order_id=f"e{i}",
+                exit_order_id=f"x{i}",
+                entry_ts=i * 1000,
+                exit_ts=i * 1000 + 500,
+                entry_price=100.0,
+                exit_price=101.0,
+                size=1.0,
+                pnl=1.0,
+                fees_paid=0.1,
+                exit_reason="signal_exit",
+                strategy_version="v1",
+            ),
+        )
+
+    result = trades_in_range(session, start_ts=1500, end_ts=3500)
+    assert {t.exit_order_id for t in result} == {"x1", "x2", "x3"}
+
+
+def test_circuit_breaker_ack_flow(tmp_path):
+    session = _session(tmp_path)
+    event = record_circuit_breaker_event(
+        session,
+        CircuitBreakerEvent(
+            triggered_at=1000,
+            equity_at_trigger=900.0,
+            peak_equity=1000.0,
+            drawdown_pct=0.10,
+        ),
+    )
+
+    pending = latest_unacknowledged_circuit_breaker(session)
+    assert pending is not None
+    assert pending.id == event.id
+
+    acknowledge_circuit_breaker(session, event.id, ts=2000, acknowledged_by="brian")
+    assert latest_unacknowledged_circuit_breaker(session) is None
+
+
+def test_engine_events_ordered_most_recent_first(tmp_path):
+    session = _session(tmp_path)
+    for i in range(3):
+        record_engine_event(
+            session,
+            EngineEvent(ts=i, from_state="ANALISANDO", to_state="POSICAO_ABERTA", reason="signal"),
+        )
+
+    events = recent_engine_events(session, limit=2)
+    assert [e.ts for e in events] == [2, 1]

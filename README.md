@@ -47,19 +47,22 @@ Nenhuma spec deste projeto deve ser lida como orientação de investimento.
 
 ## Status atual
 
-**Fase 1 — Infraestrutura de dados e backtesting: concluída.** Ingestão (spec
-02), motor de features incremental (spec 03), gestão de risco estrutural (spec
-05) e motor de backtesting event-driven (spec 07), validados de ponta a ponta
-contra dados históricos reais da Binance.
+**Fases 1, 3 e 5 — concluídas.** Fase 2 (modelo) e Fase 4 (execução) têm todo
+o código implementado e testado, mas seus critérios de saída dependem de
+coisas que só o usuário pode fazer — ver detalhe por fase em
+[`specs/11-roadmap-e-fases.md`](./specs/11-roadmap-e-fases.md).
 
-**Fase 2 — Modelo preditivo: infraestrutura concluída, modelo ainda não
-promovido.** Pipeline completo de dataset rotulado, treino LightGBM com
-validação walk-forward, calibração e promoção fold a fold contra o baseline
-da Fase 1 (spec 04/07) — mas a primeira rodada real (BTCUSDT, 1m, 45 dias) não
-atingiu o critério de saída (o candidato não venceu o baseline em todos os
-folds). Isso é o gate de promoção funcionando corretamente, não um bug. Ver
-[`specs/11-roadmap-e-fases.md`](./specs/11-roadmap-e-fases.md) para os
-próximos passos e [`backend/README.md`](./backend/README.md) para como rodar.
+| Fase | O que é | Status |
+|---|---|---|
+| 1 | Ingestão + features + backtesting | ✅ Concluída, validada com dados reais da Binance |
+| 2 | Modelo ML (LightGBM + walk-forward) | ⚙️ Infra pronta; primeiro modelo treinado não venceu o baseline — nenhuma versão promovida ainda |
+| 3 | Dashboard (API + React) | ✅ Concluída, validada visualmente com dados reais |
+| 4 | Execução em testnet | ⚙️ Código pronto e testado com exchange fake; falta o usuário gerar chaves em `testnet.binance.vision` para validar contra a exchange real |
+| 5 | Aprendizado contínuo | ⚙️ Código pronto e testado com dados sintéticos; sem trades reais ainda para gerar o primeiro relatório de verdade |
+| 6/7 | Mainnet simbólico → operação plena | 🔒 Não são tarefas de engenharia — são decisões humanas explícitas, bloqueadas por padrão no código (ver `CLAUDE.md` regra 1/6) |
 
-Execução real (spec 06), dashboard (spec 08) e aprendizado contínuo (spec 09)
-ainda não foram implementados.
+**Para desbloquear a Fase 4 de verdade:** gere chaves de API em
+`testnet.binance.vision` e configure `BINANCE_API_KEY`/`BINANCE_API_SECRET`
+no ambiente do backend. Ver [`backend/README.md`](./backend/README.md) e
+[`frontend/dashboard/README.md`](./frontend/dashboard/README.md) para como
+rodar tudo localmente.
