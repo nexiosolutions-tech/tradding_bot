@@ -87,3 +87,37 @@ crash entre confirmação da exchange e persistência local ainda não é tratad
 `src/tradingbot/persistence/` usa SQLAlchemy — SQLite local por padrão
 (`../results/tradingbot.db`, gitignored), PostgreSQL em produção via
 `DATABASE_URL` (Railway). Nenhuma query muda entre os dois.
+
+## Deploy no Railway
+
+Projeto usa 3 serviços no mesmo ambiente Railway: `tradding_bot` (esta API,
+`rootDirectory=backend`), `dashboard` (`frontend/dashboard`, ver seu próprio
+README) e `Postgres` (addon oficial). Configuração feita via mutation
+`serviceInstanceUpdate` da API GraphQL da Railway (não há `railway.json` no
+repo) — variáveis de serviço obrigatórias no `tradding_bot`:
+
+| Variável | Valor |
+|---|---|
+| `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` (referência, não hardcoded) |
+| `BINANCE_API_KEY` / `BINANCE_API_SECRET` | Segredos — setar manualmente, nunca via commit |
+| `BINANCE_TESTNET` | `true` |
+| `SYMBOL`, `INITIAL_EQUITY`, `DASHBOARD_ORIGIN` | Ver `.env.example` |
+| **`RAILPACK_DEPLOY_APT_PACKAGES`** | **`libgomp1`** |
+
+A última é a que trava sem aviso óbvio: `lightgbm` precisa de
+`libgomp.so.1` (runtime OpenMP) em tempo de **execução**, não só de build — a
+imagem padrão do Railpack não inclui essa lib, e sem essa variável o processo
+crasha em loop logo no `import lightgbm` (o build em si aparece como
+`SUCCESS`, só o container morre ao subir). `RAILPACK_DEPLOY_APT_PACKAGES`
+(não `RAILPACK_BUILD_APT_PACKAGES`) instala no estágio final da imagem, que é
+o que roda em produção.
+
+Build command do `dashboard`: **`npm run build`**, não `npm ci && npm run
+build` — o Railpack já roda sua própria etapa de install antes do
+`buildCommand`; rodar `npm ci` de novo colide com o cache dessa etapa
+(`EBUSY` em `node_modules/.vite`).
+
+Contas free/hobby da Railway podem ter deploys enfileirados durante picos de
+demanda ("Deployments paused - limited access") — isso é do lado da Railway,
+não da configuração deste projeto; reprocessa sozinho quando a capacidade
+libera.

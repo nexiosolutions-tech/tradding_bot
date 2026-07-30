@@ -39,13 +39,17 @@
   (um "web", um "worker" rodando `scripts/run_live.py`) se um redeploy do
   dashboard interrompendo a operação ao vivo se mostrar um problema real — aí
   vira uma proposta em `changes/`, não uma decisão especulativa de agora.
-- PostgreSQL via addon do Railway quando o usuário provisionar (ver conversa
-  do projeto) — até lá, roda com o SQLite local por padrão.
+- **Status: provisionado.** Projeto Railway com 3 serviços: `tradding_bot`
+  (esta API + Orchestrator, `rootDirectory=backend`), `dashboard`
+  (`rootDirectory=frontend/dashboard`), `Postgres` (addon oficial,
+  `DATABASE_URL` referenciado no backend via `${{Postgres.DATABASE_URL}}`).
 - Variáveis de ambiente necessárias em produção: `BINANCE_API_KEY`,
   `BINANCE_API_SECRET`, `BINANCE_TESTNET` (default `true` — só pode ser
   `false` com decisão humana explícita, `bootstrap.py` bloqueia isso por
   padrão), `SYMBOL`, `INITIAL_EQUITY`, `DATABASE_URL`, `DASHBOARD_ORIGIN`
-  (CORS do frontend).
+  (CORS do frontend), e **`RAILPACK_DEPLOY_APT_PACKAGES=libgomp1`** — sem essa
+  última, o processo crasha em loop no `import lightgbm` em runtime (detalhe
+  em `backend/README.md#deploy-no-railway`).
 
 ### Frontend / Dashboard
 - **React + Vite + TypeScript** (`frontend/dashboard/`), **TradingView
