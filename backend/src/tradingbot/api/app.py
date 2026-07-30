@@ -62,9 +62,9 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Trading Bot API", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.environ.get(
-        "DASHBOARD_ORIGIN", "http://localhost:5173,http://127.0.0.1:5173"
-    ).split(","),
+    # `or` (not dict.get's default=) so an empty-but-set DASHBOARD_ORIGIN — e.g. left
+    # blank in .env — falls back too, instead of producing a single empty allowed origin.
+    allow_origins=(os.environ.get("DASHBOARD_ORIGIN") or "http://localhost:5173,http://127.0.0.1:5173").split(","),
     allow_methods=["*"],
     allow_headers=["*"],
 )

@@ -13,7 +13,8 @@ from pathlib import Path
 
 from tradingbot.learning_engine.daily_report import MIN_SAMPLE_SIZE_FOR_CONFIDENT_FINDING, DailyReport, Finding
 
-CHANGES_DIR = Path(__file__).resolve().parents[3] / "changes"
+# backend/src/tradingbot/learning_engine/change_proposals.py -> parents[4] is the repo root.
+CHANGES_DIR = Path(__file__).resolve().parents[4] / "changes"
 
 
 def _slugify(title: str) -> str:

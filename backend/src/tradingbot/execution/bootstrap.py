@@ -10,6 +10,8 @@ import os
 import time
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 from tradingbot.backtesting.strategy import RsiBollingerPlaceholderStrategy
 from tradingbot.execution.client import BinanceTestnetClient
 from tradingbot.execution.orchestrator import Orchestrator
@@ -18,8 +20,13 @@ from tradingbot.model.versioning import load_metadata, load_model
 from tradingbot.persistence.db import get_session_factory
 from tradingbot.risk.manager import RiskConfig
 
-MODELS_DIR = Path(__file__).resolve().parents[3] / "results" / "models"
+# backend/src/tradingbot/execution/bootstrap.py -> parents[4] is the repo root, where
+# results/, learnings/ and changes/ actually live (not backend/, one level short of it).
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+MODELS_DIR = _REPO_ROOT / "results" / "models"
 PLACEHOLDER_STOP_LOSS_PCT = 0.015
+
+load_dotenv(_REPO_ROOT / "backend" / ".env")
 
 
 def load_active_strategy():

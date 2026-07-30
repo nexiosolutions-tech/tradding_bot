@@ -14,7 +14,8 @@ from pathlib import Path
 from tradingbot.backtesting.metrics import win_rate
 from tradingbot.persistence.repository import recent_engine_events, trades_in_range
 
-LEARNINGS_DIR = Path(__file__).resolve().parents[3] / "learnings"
+# backend/src/tradingbot/learning_engine/daily_report.py -> parents[4] is the repo root.
+LEARNINGS_DIR = Path(__file__).resolve().parents[4] / "learnings"
 
 MIN_SAMPLE_SIZE_FOR_CONFIDENT_FINDING = 10
 HOUR_UNDERPERFORMANCE_WIN_RATE_THRESHOLD = 0.35

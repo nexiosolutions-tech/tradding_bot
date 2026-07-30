@@ -11,10 +11,15 @@ from __future__ import annotations
 import argparse
 import os
 from datetime import date, timedelta
+from pathlib import Path
+
+from dotenv import load_dotenv
 
 from tradingbot.learning_engine.change_proposals import draft_change_proposals
 from tradingbot.learning_engine.daily_report import write_daily_report
 from tradingbot.persistence.db import get_session_factory
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 
 def main() -> None:

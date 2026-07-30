@@ -20,7 +20,7 @@ from tradingbot.ingestion.schema import EventType, KlinePayload, MarketEvent
 logger = logging.getLogger(__name__)
 
 MAINNET_WS_BASE = "wss://stream.binance.com:9443/stream"
-TESTNET_WS_BASE = "wss://testnet.binance.vision/stream"
+TESTNET_WS_BASE = "wss://stream.testnet.binance.vision/stream"
 
 INITIAL_BACKOFF_SECONDS = 1.0
 MAX_BACKOFF_SECONDS = 30.0

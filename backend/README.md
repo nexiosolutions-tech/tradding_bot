@@ -39,25 +39,34 @@ Relatórios/modelos vão para `../results/` (gitignored). `run_backtest.py` e
 `train_model.py` não precisam de credenciais; `run_live.py` e a API (abaixo)
 precisam.
 
+## Configurar as chaves da testnet
+
+1. Acesse [testnet.binance.vision](https://testnet.binance.vision) e faça login
+   com sua conta do GitHub (é a única forma de login lá).
+2. Clique em "Generate HMAC_SHA256 Key", dê um nome qualquer e gere.
+3. O **Secret Key só é mostrado uma vez** — copie API Key e Secret Key
+   imediatamente.
+4. Copie `backend/.env.example` para `backend/.env` (se ainda não tiver feito)
+   e cole as duas chaves em `BINANCE_API_KEY`/`BINANCE_API_SECRET`. O arquivo
+   `.env` já está no `.gitignore` — nunca vai pro commit.
+
+`bootstrap.py` carrega `backend/.env` automaticamente (via `python-dotenv`)
+sempre que a API ou `run_live.py` sobem — não precisa exportar nada na mão.
+
 ## Subir a API + dashboard localmente
 
 ```bash
 uvicorn tradingbot.api.app:app --reload
 ```
 
-Sem `BINANCE_API_KEY`/`BINANCE_API_SECRET` no ambiente, a API sobe normalmente
+Sem `BINANCE_API_KEY`/`BINANCE_API_SECRET` configuradas, a API sobe normalmente
 e todas as views que dependem de `results/`/banco funcionam — só a view "Live"
-mostra "engine não configurado". Para ligar a execução real (Fase 4), gere
-chaves em [testnet.binance.vision](https://testnet.binance.vision) e exporte:
-
-```bash
-export BINANCE_API_KEY=...
-export BINANCE_API_SECRET=...
-# BINANCE_TESTNET=false exigiria mainnet — bloqueado por padrão (CLAUDE.md regra 1/6)
-```
+mostra "engine não configurado". Com as chaves no `.env`, a ingestão conecta
+de verdade no testnet e a view "Live" mostra `configured: true`.
 
 O engine sempre inicia **pausado**; ligar a execução é uma ação explícita no
-dashboard (Play), nunca automática ao subir o processo.
+dashboard (Play), nunca automática ao subir o processo. `BINANCE_TESTNET=false`
+exigiria mainnet e é bloqueado por padrão (`CLAUDE.md` regra 1/6).
 
 ## Estratégia ativa
 
