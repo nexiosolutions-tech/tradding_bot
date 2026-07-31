@@ -44,7 +44,7 @@ def main() -> None:
     parser.add_argument("--days", type=int, default=45)
     parser.add_argument("--n-splits", type=int, default=5)
     parser.add_argument("--horizon-minutes", type=int, default=15)
-    parser.add_argument("--move-threshold-pct", type=float, default=0.003)
+    parser.add_argument("--move-threshold-pct", type=float, default=0.008)
     parser.add_argument("--entry-percentile", type=float, default=80.0)
     parser.add_argument("--exit-percentile", type=float, default=50.0)
     parser.add_argument("--min-trades", type=int, default=15)

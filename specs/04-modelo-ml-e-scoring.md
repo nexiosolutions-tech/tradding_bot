@@ -38,6 +38,32 @@ direta.
 - Esse tipo de alvo generaliza melhor do que prever o valor exato do preço, e
   permite calibração posterior (ver seção de calibração).
 
+### Calibração de `move_threshold_pct` vs. custo de round-trip (2026-07-31)
+
+- `move_threshold_pct` (default anterior: 0.3%) estava **exatamente no
+  breakeven do custo de round-trip** (~0.2% de taxa + ~0.1% de slippage,
+  achado na investigação do backtest de `BTCUSDT_1m_7d` — ver
+  `07-backtesting-e-validacao.md`). Isso significa que um "acerto" do label
+  (`label=1`) mal cobria os custos de execução — lucro líquido perto de zero
+  mesmo quando o modelo acerta a direção. Combinado com `stop_loss_pct` 5x
+  maior (1.5%), a razão risco:retorno de 1:5 exigiria taxa de acerto bruta
+  de ~83% só para empatar, uma barra alta demais mesmo para um modelo
+  genuinamente preditivo.
+- Novo default: `move_threshold_pct = 0.008` (0.8%, ~2.7x o custo de
+  round-trip) — um `label=1` agora representa uma margem líquida real, não
+  um empate contábil. Com `stop_loss_pct` inalterado (1.5%), a razão
+  risco:retorno passa a ~1.875:1, exigindo taxa de acerto bruta de ~65% —
+  ainda uma barra real, mas bem mais plausível.
+- **O que este ajuste explicitamente NÃO faz:** não altera `stop_loss_pct`
+  (1.5%), que é parâmetro de risco/execução real usado pela camada de
+  execução (`05-gestao-de-risco.md`, `06-camada-de-execucao.md`) — só o alvo
+  de lucro usado para *rotular* o dataset de treino muda. Se a validação
+  empírica (backtest/walk-forward) mostrar que a razão risco:retorno ainda
+  precisa de ajuste, isso é uma proposta separada, explicitamente
+  classificada como mudança de parâmetro de risco (`CLAUDE.md` regra 6), não
+  uma extensão silenciosa desta.
+- Ver `changes/2026-07-31-recalibracao-target-move-threshold.md`.
+
 ## Modelo baseline
 
 - **LightGBM/XGBoost** como baseline — bom desempenho em features tabulares de

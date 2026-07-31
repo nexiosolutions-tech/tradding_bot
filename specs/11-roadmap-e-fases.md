@@ -33,11 +33,32 @@ o que torna o projeto seguro de construir incrementalmente.
   **ainda não atingido** — na primeira rodada real (BTCUSDT, 1m, 45 dias), o
   candidato só venceu 1 de 5 folds, rejeitado nos demais por drawdown pior que
   o baseline. Isso é o sistema de promoção funcionando como deveria (recusar
-  promover um modelo que não é consistentemente melhor), não um bug. Próximos
-  passos possíveis — iteração de modelo, não mudança de fase: revisar
-  threshold/target (`04`), considerar novas features via `changes/`, ou
-  aceitar que esse conjunto de features/target não supera a regra simples
-  neste par/janela e testar outro.
+  promover um modelo que não é consistentemente melhor), não um bug.
+- **Iteração de 2026-07-31** (features normalizadas por escala +
+  recalibração de `move_threshold_pct`, ver
+  `changes/2026-07-31-normalizacao-features-escala-preco.md` e
+  `changes/2026-07-31-recalibracao-target-move-threshold.md`): mesma rodada
+  real (BTCUSDT, 1m, 45 dias). Resultado: **critério de saída continua não
+  atingido, 0 de 5 folds vencidos** — profit factor do candidato entre 0.03
+  e 0.43 (com `entry_percentile` ajustado para 99 num teste de calibração
+  rápido), bem abaixo do gate absoluto de `min_profit_factor=1.0`. Achado
+  relevante no processo: subir o alvo de lucro (`move_threshold_pct`
+  0.3%→0.8%) derrubou a taxa de `label=1` para 0.9% do dataset — um
+  desbalanceamento de classe forte que desalinha `entry_percentile=80`
+  (default do CLI) com a taxa real de positivos; subir o percentil para 99
+  melhorou o profit factor em todos os folds mas não o suficiente para
+  promover. Não é conclusivo se o teto está no conjunto de
+  features/threshold atual, no horizonte (`horizon_minutes=15`), ou se
+  BTCUSDT 1m simplesmente não tem sinal explorável suficiente nesse recorte
+  — próxima iteração deveria tratar `entry_percentile`/`horizon_minutes`
+  como hiperparâmetros a variar sistematicamente, não fixos, antes de
+  descartar o conjunto de features atual.
+- Próximos passos possíveis — iteração de modelo, não mudança de fase:
+  variar `entry_percentile`/`horizon_minutes` sistematicamente, revisar
+  outras features candidatas via `changes/` (ATR, features cíclicas de
+  horário — já levantadas em discussão, ainda não implementadas), ou aceitar
+  que esse conjunto de features/target não supera a regra simples neste
+  par/janela e testar outro.
 - **Limitação conhecida (2026-07-31):** o baseline placeholder da Fase 1
   (`RsiBollingerPlaceholderStrategy`) tem expectância estruturalmente
   negativa — sua saída por recuperação de RSI fecha a posição antes do

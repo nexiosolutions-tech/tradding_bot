@@ -20,15 +20,13 @@ from tradingbot.features.engine import FeatureEngine
 from tradingbot.ingestion.schema import EventType, MarketEvent
 
 FEATURE_NAMES = (
-    "ema_fast",
-    "ema_slow",
+    "ema_fast_dist_pct",
+    "ema_slow_dist_pct",
+    "ema_cross_pct",
     "rsi",
-    "macd",
-    "macd_signal",
-    "macd_hist",
-    "bollinger_mid",
-    "bollinger_upper",
-    "bollinger_lower",
+    "macd_pct",
+    "macd_signal_pct",
+    "macd_hist_pct",
     "bollinger_percent_b",
     "relative_volume",
     "volatility",
@@ -39,7 +37,11 @@ FEATURE_NAMES = (
 class TargetConfig:
     horizon_minutes: int = 15
     candle_minutes: int = 1
-    move_threshold_pct: float = 0.003
+    # 2026-07-31: was 0.003 (0.3%), exactly the round-trip cost (~0.2% fee + ~0.1%
+    # slippage) — a "hit" barely broke even. Raised to ~2.7x cost so label=1 represents a
+    # real net margin. stop_loss_pct deliberately untouched — that's a risk/execution
+    # parameter, out of scope here (see specs/04-modelo-ml-e-scoring.md).
+    move_threshold_pct: float = 0.008
     stop_loss_pct: float = 0.015
 
     @property
