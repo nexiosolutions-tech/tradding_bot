@@ -9,7 +9,7 @@ from tradingbot.ingestion.schema import EventType, MarketEvent
 from tradingbot.risk.manager import RiskConfig
 
 
-def _closed_kline(symbol, close, ts, volume=100.0):
+def _closed_kline(symbol, close, ts, low=None, high=None, volume=100.0):
     return MarketEvent(
         symbol=symbol,
         event_type=EventType.KLINE,
@@ -21,8 +21,8 @@ def _closed_kline(symbol, close, ts, volume=100.0):
             "close_time": ts,
             "interval": "1m",
             "open": close,
-            "high": close,
-            "low": close,
+            "high": close if high is None else high,
+            "low": close if low is None else low,
             "close": close,
             "volume": volume,
             "is_closed": True,
@@ -82,6 +82,30 @@ def test_stop_loss_hit_closes_position_at_stop_price():
     trade = engine.trades[0]
     assert trade.exit_reason == "stop_loss"
     assert trade.exit_price == pytest.approx(95.0)
+    assert trade.pnl < 0
+
+
+def test_stop_loss_triggers_on_intrabar_wick_even_if_candle_closes_above_it():
+    """The blind spot test_stop_loss_hit_closes_position_at_stop_price didn't cover: a
+    candle can wick through the stop and still close back above it. A real resting stop
+    order fires on the wick, regardless of the close — the backtest must match that, not
+    silently let the position ride because the candle happened to close green."""
+    strategy = ScriptedStrategy(entry_at_ts=60_000, stop_loss_pct=0.05)
+    engine = _no_cost_engine(strategy)
+
+    events = [
+        _closed_kline("BTCUSDT", 100.0, 60_000),  # entry @ 100, stop @ 95
+        # wicks down through 95 intrabar, but closes back above the stop at 98
+        _closed_kline("BTCUSDT", 98.0, 120_000, low=93.0, high=100.0),
+        _closed_kline("BTCUSDT", 99.0, 180_000),  # would never be reached if the bug persisted
+    ]
+    engine.run(events)
+
+    assert len(engine.trades) == 1
+    trade = engine.trades[0]
+    assert trade.exit_reason == "stop_loss"
+    assert trade.exit_ts == 120_000  # triggered on the wick's candle, not a later one
+    assert trade.exit_price == pytest.approx(95.0)  # fills at the stop price, not the wick low
     assert trade.pnl < 0
 
 

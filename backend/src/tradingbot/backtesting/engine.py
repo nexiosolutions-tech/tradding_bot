@@ -76,16 +76,17 @@ class BacktestEngine:
             snapshot = self.feature_engine.on_event(event)
             if snapshot is None:
                 continue
-            self._on_snapshot(snapshot)
+            low = float(event.payload["low"])
+            self._on_snapshot(snapshot, low)
 
         if self._position is not None and self._last_snapshot is not None:
             self._close_position(self._last_snapshot, reason="end_of_data")
 
-    def _on_snapshot(self, snapshot: FeatureSnapshot) -> None:
+    def _on_snapshot(self, snapshot: FeatureSnapshot, low: float) -> None:
         self._last_snapshot = snapshot
 
         if self._position is not None:
-            self._check_exit(snapshot)
+            self._check_exit(snapshot, low)
         elif self.risk.can_enter():
             signal = self.strategy.on_features(snapshot)
             if signal is not None:
@@ -118,10 +119,14 @@ class BacktestEngine:
             entry_fee=entry_fee,
         )
 
-    def _check_exit(self, snapshot: FeatureSnapshot) -> None:
+    def _check_exit(self, snapshot: FeatureSnapshot, low: float) -> None:
         pos = self._position
         assert pos is not None
-        if snapshot.close <= pos.stop_loss_price:
+        # A real resting stop order fires the instant price crosses it intrabar, regardless
+        # of where the candle closes — checking only `snapshot.close` would miss a wick
+        # that touches the stop and recovers within the same candle, understating how
+        # often (and how early) a live stop-loss would actually trigger.
+        if low <= pos.stop_loss_price:
             self._close_position(snapshot, reason="stop_loss", exit_price_override=pos.stop_loss_price)
             return
         if self.strategy.should_exit(snapshot):
