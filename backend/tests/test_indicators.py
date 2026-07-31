@@ -1,4 +1,7 @@
+import pytest
+
 from tradingbot.features.indicators import (
+    ATR,
     EMA,
     RSI,
     BollingerBands,
@@ -72,3 +75,42 @@ def test_realized_volatility_zero_for_constant_price():
     for _ in range(5):
         result = vol.update(100.0)
     assert result == 0.0
+
+
+def test_atr_none_until_warmup_period():
+    atr = ATR(period=3)
+    assert atr.update(high=101, low=99, close=100) is None
+    assert atr.update(high=102, low=99, close=101) is None
+    assert atr.update(high=103, low=100, close=102) is not None
+
+
+def test_atr_sees_intrabar_range_that_close_to_close_volatility_misses():
+    """The gap this closes: a candle with a huge wick in both directions but a flat
+    close looks perfectly calm to RealizedVolatility (close-to-close), but ATR sees the
+    real range via true range (high-low, or the gap from the previous close)."""
+    atr = ATR(period=3)
+    vol = RealizedVolatility(period=3)
+    closes = [100.0, 100.0, 100.0, 100.0]
+    highs = [100.0, 150.0, 100.0, 150.0]  # huge wick up every other candle
+    lows = [100.0, 50.0, 100.0, 50.0]  # huge wick down every other candle
+
+    atr_value = None
+    vol_value = None
+    for h, low, c in zip(highs, lows, closes):
+        atr_value = atr.update(high=h, low=low, close=c)
+        vol_value = vol.update(c)
+
+    assert vol_value == 0.0  # close never moves — blind to the wicks
+    assert atr_value is not None and atr_value > 0  # sees the real intrabar range
+
+
+def test_atr_true_range_includes_gap_from_previous_close():
+    atr = ATR(period=2)
+    atr.update(high=101, low=99, close=100)  # 1st true range = high-low = 2 (seeds avg_tr)
+    # Next candle's high/low don't span much, but it gapped up hard from the prior close.
+    value = atr.update(high=121, low=120, close=120.5)
+    assert value is not None
+    # 2nd true range = max(high-low, |high-prev_close|, |low-prev_close|) = max(1, 21, 20) = 21
+    # Wilder smoothing: (avg_tr_prev * (period-1) + true_range) / period = (2*1 + 21) / 2
+    expected_avg_tr = (2 * 1 + 21) / 2
+    assert value == pytest.approx(expected_avg_tr)

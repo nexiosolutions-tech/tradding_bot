@@ -73,6 +73,36 @@ class RSI:
         return self.value
 
 
+class ATR:
+    """Average True Range, Wilder-smoothed (same smoothing style as RSI). Captures
+    intrabar range (wicks) that RealizedVolatility's close-to-close log returns ignore
+    entirely — a candle that wicks hard in both directions but closes flat looks
+    perfectly calm to RealizedVolatility, but ATR sees the real range."""
+
+    def __init__(self, period: int = 14):
+        self.period = period
+        self._prev_close: float | None = None
+        self._avg_tr: float | None = None
+        self._count = 0
+        self.value: float | None = None
+
+    def update(self, high: float, low: float, close: float) -> float | None:
+        true_range = (
+            high - low
+            if self._prev_close is None
+            else max(high - low, abs(high - self._prev_close), abs(low - self._prev_close))
+        )
+        self._prev_close = close
+        self._count += 1
+
+        self._avg_tr = true_range if self._avg_tr is None else (self._avg_tr * (self.period - 1) + true_range) / self.period
+
+        if self._count < self.period:
+            return None
+        self.value = self._avg_tr
+        return self.value
+
+
 class MACD:
     def __init__(self, fast: int = 12, slow: int = 26, signal: int = 9):
         self._fast = EMA(fast)

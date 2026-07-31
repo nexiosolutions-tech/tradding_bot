@@ -30,6 +30,11 @@ FEATURE_NAMES = (
     "bollinger_percent_b",
     "relative_volume",
     "volatility",
+    "atr_pct",
+    "hour_sin",
+    "hour_cos",
+    "dow_sin",
+    "dow_cos",
 )
 
 

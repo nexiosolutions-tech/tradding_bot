@@ -31,6 +31,11 @@ regras de decisão isoladas:
 - Volume relativo (volume atual vs. média)
 - Spread bid-ask e profundidade (quando order book estiver disponível)
 - Volatilidade realizada em janela curta
+- ATR (Average True Range), normalizado — captura range intrabar (pavios),
+  que a volatilidade de close-to-close ignora por completo (2026-07-31)
+- Features cíclicas de hora-do-dia e dia-da-semana (`sin`/`cos`), derivadas
+  do timestamp de fechamento do candle — sem risco de leakage, já que o
+  horário é sempre conhecido de antemão (2026-07-31)
 
 Novas features entram via `changes/` após o motor de aprendizado identificar
 sinal de que agregam valor — não são adicionadas ad-hoc sem justificativa
@@ -50,7 +55,23 @@ relativa à banda) e `relative_volume` já eram exemplos corretos desse
 princípio — o conjunto de features de nível de preço foi normalizado para
 segui-lo (`ema_fast_dist_pct`, `ema_slow_dist_pct`, `ema_cross_pct`,
 `macd_pct`, `macd_signal_pct`, `macd_hist_pct`). Ver
-`changes/2026-07-31-normalizacao-features-escala-preco.md`.
+`changes/2026-07-31-normalizacao-features-escala-preco.md`. ATR (adicionado
+depois) já nasce seguindo essa mesma regra: exposto como `atr_pct` (ATR
+dividido pelo close), nunca em valor absoluto.
+
+### Features cíclicas de tempo (2026-07-31)
+
+`hour_sin`/`hour_cos`/`dow_sin`/`dow_cos` são calculadas a partir do
+`knowledge_ts` do candle (hora do dia e dia da semana em UTC, codificadas em
+seno/cosseno para que o modelo veja um ciclo contínuo — 23h e 00h ficam
+próximas no espaço de features, não distantes como um inteiro cru de
+hora-do-dia sugeriria). Motivação: os próprios relatórios de backtest já
+mostravam `pnl_by_hour`/`pnl_by_weekday` desiguais (mercado cripto tem
+padrões conhecidos de volume/volatilidade por sessão) — sem essas features
+o modelo não tinha como aprender esse efeito de sessão, só tratá-lo como
+ruído. `dow` segue a mesma convenção de `datetime.weekday()` (segunda=0) já
+usada em `pnl_by_weekday` (`backtesting/metrics.py`), para os dois ficarem
+comparáveis.
 
 ## Feature store
 
