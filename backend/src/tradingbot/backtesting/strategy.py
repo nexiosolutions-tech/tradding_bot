@@ -39,10 +39,12 @@ class RsiBollingerPlaceholderStrategy:
 
     def on_features(self, snapshot: FeatureSnapshot) -> TradeSignal | None:
         rsi = snapshot.features.get("rsi")
-        lower = snapshot.features.get("bollinger_lower")
-        if rsi is None or lower is None:
+        percent_b = snapshot.features.get("bollinger_percent_b")
+        if rsi is None or percent_b is None:
             return None
-        if rsi < self.rsi_oversold and snapshot.close <= lower:
+        # percent_b <= 0 is exactly equivalent to close <= bollinger_lower — the engine
+        # (2026-07-31) no longer exposes the raw band levels, only the normalized position.
+        if rsi < self.rsi_oversold and percent_b <= 0:
             return TradeSignal(
                 symbol=snapshot.symbol,
                 confidence=0.5,

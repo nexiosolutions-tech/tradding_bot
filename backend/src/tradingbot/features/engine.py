@@ -48,16 +48,19 @@ class SymbolFeatureState:
         rel_vol = self.rel_volume.update(volume)
         vol = self.volatility.update(close)
 
+        # EMA/MACD/Bollinger level features are expressed relative to `close` (% terms),
+        # not as raw price — a model trained mostly on one price regime (e.g. BTC at
+        # ~$60k) would otherwise anchor on absolute levels that don't transfer to a very
+        # different regime (~$20k or ~$100k+). `rsi`, `bollinger_percent_b`,
+        # `relative_volume` and `volatility` are already scale-invariant, unchanged here.
         raw = {
-            "ema_fast": ema_fast,
-            "ema_slow": ema_slow,
+            "ema_fast_dist_pct": (close - ema_fast) / close,
+            "ema_slow_dist_pct": (close - ema_slow) / close,
+            "ema_cross_pct": (ema_fast - ema_slow) / close,
             "rsi": rsi,
-            "macd": macd,
-            "macd_signal": signal,
-            "macd_hist": hist,
-            "bollinger_mid": mid,
-            "bollinger_upper": upper,
-            "bollinger_lower": lower,
+            "macd_pct": macd / close,
+            "macd_signal_pct": signal / close,
+            "macd_hist_pct": hist / close,
             "bollinger_percent_b": percent_b,
             "relative_volume": rel_vol,
             "volatility": vol,

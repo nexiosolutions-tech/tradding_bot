@@ -36,6 +36,22 @@ Novas features entram via `changes/` após o motor de aprendizado identificar
 sinal de que agregam valor — não são adicionadas ad-hoc sem justificativa
 registrada.
 
+### Invariante de escala (2026-07-31)
+
+Toda feature derivada de nível de preço (EMA, MACD, posição de Bollinger)
+**deve ser expressa em termos relativos ao close** (percentual), nunca como
+preço absoluto. Achado real: `ema_fast`/`ema_slow`/`macd`/`macd_signal`/
+`macd_hist`/`bollinger_mid`/`upper`/`lower` eram expostas em escala de preço
+absoluto (dezenas de milhares de dólares para BTC) — um modelo treinado
+majoritariamente numa janela de preço (ex. BTC a ~$60-70k) tende a ancorar
+em níveis absolutos que não se transferem para um regime de preço muito
+diferente (~$20k ou ~$100k+). `rsi` (0-100), `bollinger_percent_b` (posição
+relativa à banda) e `relative_volume` já eram exemplos corretos desse
+princípio — o conjunto de features de nível de preço foi normalizado para
+segui-lo (`ema_fast_dist_pct`, `ema_slow_dist_pct`, `ema_cross_pct`,
+`macd_pct`, `macd_signal_pct`, `macd_hist_pct`). Ver
+`changes/2026-07-31-normalizacao-features-escala-preco.md`.
+
 ## Feature store
 
 - Toda feature calculada em produção é persistida junto com o timestamp e o
