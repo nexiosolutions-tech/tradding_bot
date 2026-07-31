@@ -58,3 +58,44 @@ def test_risk_config_rejects_out_of_range_percentages():
         RiskConfig(risk_per_trade_pct=0.0)
     with pytest.raises(ValueError):
         RiskConfig(circuit_breaker_loss_pct=1.5)
+
+
+def test_circuit_breaker_trips_on_slow_bleed_across_many_windows():
+    """A loss of 1% every 10 minutes for 5 hours never shows 10% inside any single
+    60-minute window (the reference peak slides down with it), but does accumulate to a
+    26% loss from the session's actual peak — the session-peak trigger must catch it."""
+    config = RiskConfig(circuit_breaker_loss_pct=0.10, circuit_breaker_window_minutes=60)
+    manager = RiskManager(config)
+
+    equity = 1_000.0
+    ts = 0
+    manager.record_equity(ts=ts, equity=equity)
+    for _ in range(30):  # 30 * 10min = 5h
+        ts += 10 * 60_000
+        equity *= 0.99
+        manager.record_equity(ts=ts, equity=equity)
+        if manager.circuit_breaker_triggered:
+            break
+
+    assert not manager.can_enter()
+
+
+def test_reset_session_peak_prevents_instant_retrigger_after_ack():
+    """Isolates the session-peak trigger from the pre-existing windowed one: once the old
+    high-equity point has aged out of the window (so the windowed check sees no drawdown),
+    a reset session peak must not immediately re-trip just because capital hasn't
+    recovered yet."""
+    config = RiskConfig(circuit_breaker_loss_pct=0.10, circuit_breaker_window_minutes=60)
+    manager = RiskManager(config)
+
+    manager.record_equity(ts=0, equity=1_000)
+    manager.record_equity(ts=60_000, equity=850)
+    assert manager.circuit_breaker_triggered
+
+    manager.circuit_breaker_triggered = False  # simulate human acknowledgement
+    manager.reset_session_peak(equity=850)
+
+    window_ms = config.circuit_breaker_window_minutes * 60_000
+    later_ts = 60_000 + window_ms + 1  # old entries fully age out of the window
+    manager.record_equity(ts=later_ts, equity=850)  # capital hasn't moved yet
+    assert manager.can_enter()

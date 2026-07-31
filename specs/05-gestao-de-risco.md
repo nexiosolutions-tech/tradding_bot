@@ -38,6 +38,20 @@ risco é o que garante isso — ela é independente da qualidade do modelo.
 - O circuit breaker é avaliado continuamente, não só no fechamento de trade —
   uma sequência de perdas não realizadas (drawdown intra-trade) também conta
   conforme os critérios definidos.
+- Dois gatilhos complementares, ambos precisam bater `circuit_breaker_loss_pct`
+  para não deixar buraco de cobertura entre eles:
+  1. **Janela rolante** (`circuit_breaker_window_minutes`): drawdown desde o
+     pico *dentro dessa janela*. Pego perdas rápidas e concentradas.
+  2. **Pico de sessão**: drawdown desde o pico de capital de toda a sessão
+     atual (nunca descartado por tempo, só reiniciado no reconhecimento
+     humano). Fecha a lacuna que a janela rolante sozinha deixa: uma perda
+     lenta e constante (ex.: 1%/10min por várias horas) nunca aparece dentro
+     de nenhuma janela isolada, porque o pico de referência "escorrega" junto
+     com a queda — mas o pico de sessão continua fixo e detecta o acúmulo.
+  - Ao reconhecer o circuit breaker, o pico de sessão é reiniciado para o
+    capital do momento — sem isso, a próxima atualização de capital
+    re-acionaria o breaker instantaneamente, antes de o capital ter chance de
+    se recuperar.
 
 ### Idempotência de ordens
 - Toda ordem enviada usa um `client order id` determinístico e idempotente —
@@ -75,6 +89,10 @@ exchange e persistência local ainda não é tratada — só a reconciliação d
 stop-loss em gap de conexão está implementada. Fechar essa lacuna é
 pré-requisito antes de qualquer capital real (Fase 6), não da validação em
 testnet.
+
+O gatilho de pico de sessão (queda lenta acumulada) foi adicionado em
+2026-07-30 a partir de achado de auditoria técnica — ver
+[`changes/2026-07-30-circuit-breaker-queda-lenta.md`](../changes/2026-07-30-circuit-breaker-queda-lenta.md).
 
 ## O que esta spec não define
 
