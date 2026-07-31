@@ -94,6 +94,28 @@ def test_trades_and_events_endpoints_work_against_empty_db(client):
     assert client.get("/api/engine/events").json() == []
 
 
+def test_trades_and_events_endpoints_close_their_db_session(client, monkeypatch):
+    """Regression test: both endpoints used to call session_factory() directly without
+    closing the session, leaking one connection per request. Under continuous dashboard
+    polling this exhausted the pool (QueuePool limit of size 5 overflow 10 reached) in
+    production on 2026-07-31."""
+    from sqlalchemy.orm import Session
+
+    close_calls = []
+    original_close = Session.close
+
+    def spy_close(self):
+        close_calls.append(self)
+        return original_close(self)
+
+    monkeypatch.setattr(Session, "close", spy_close)
+
+    client.get("/api/trades")
+    client.get("/api/engine/events")
+
+    assert len(close_calls) == 2
+
+
 def test_list_learnings_reads_markdown_files_excluding_readme(client, tmp_path):
     learnings_dir = tmp_path / "learnings"
     learnings_dir.mkdir(parents=True)

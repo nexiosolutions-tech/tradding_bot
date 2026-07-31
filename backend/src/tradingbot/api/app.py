@@ -225,8 +225,8 @@ def engine_activity(limit: int = 50):
 
 @app.get("/api/engine/events")
 def engine_events(limit: int = 50):
-    session = app.state.session_factory()
-    events = recent_engine_events(session, limit=limit)
+    with app.state.session_factory() as session:
+        events = recent_engine_events(session, limit=limit)
     return [
         {
             "ts": e.ts,
@@ -241,8 +241,8 @@ def engine_events(limit: int = 50):
 
 @app.get("/api/trades")
 def list_trades(start_ts: int = 0, end_ts: int = 2**62):
-    session = app.state.session_factory()
-    trades = trades_in_range(session, start_ts, end_ts)
+    with app.state.session_factory() as session:
+        trades = trades_in_range(session, start_ts, end_ts)
     return [
         {
             "symbol": t.symbol,
