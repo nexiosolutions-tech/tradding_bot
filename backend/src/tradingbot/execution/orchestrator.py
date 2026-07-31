@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
+from decimal import Decimal
 from enum import Enum
 
 from tradingbot.backtesting.strategy import Strategy
@@ -195,7 +196,7 @@ class Orchestrator:
         )
         stop_id = make_client_order_id(self.symbol, "stop_loss", snapshot.knowledge_ts, self._sequence)
         stop_order = await self._place_stop_loss_with_retry(
-            entry_order, stop_id, stop_loss_price, snapshot.knowledge_ts
+            entry_order, stop_id, stop_loss_price, snapshot.knowledge_ts, filters.tick_size
         )
         if stop_order is None:
             return  # entry is open on the exchange but unprotected — handled emergency path already ran
@@ -216,7 +217,13 @@ class Orchestrator:
         self._transition(EngineState.POSICAO_ABERTA, "entrada executada")
 
     async def _place_stop_loss_with_retry(
-        self, entry_order: OrderResult, stop_id: str, stop_loss_price: float, ts: int, attempts: int = 3
+        self,
+        entry_order: OrderResult,
+        stop_id: str,
+        stop_loss_price: float,
+        ts: int,
+        tick_size: Decimal,
+        attempts: int = 3,
     ) -> OrderResult | None:
         """CLAUDE.md regra 2 is structural: an entry may never be left open without a
         stop-loss. If placing it keeps failing (network, exchange 5xx), the entry is
@@ -226,7 +233,7 @@ class Orchestrator:
         for attempt in range(1, attempts + 1):
             try:
                 stop_order = await self.exchange.place_stop_loss_order(
-                    self.symbol, "sell", entry_order.filled_qty, stop_loss_price, stop_id
+                    self.symbol, "sell", entry_order.filled_qty, stop_loss_price, stop_id, tick_size
                 )
                 self._persist_order(stop_order, purpose="stop_loss", requested_qty=entry_order.filled_qty)
                 return stop_order

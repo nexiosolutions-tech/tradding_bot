@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Protocol
 
+from tradingbot.execution.rounding import round_to_tick
+
 
 @dataclass(frozen=True)
 class OrderResult:
@@ -37,7 +39,13 @@ class ExchangeClient(Protocol):
     ) -> OrderResult: ...
 
     async def place_stop_loss_order(
-        self, symbol: str, side: str, quantity: float, stop_price: float, client_order_id: str
+        self,
+        symbol: str,
+        side: str,
+        quantity: float,
+        stop_price: float,
+        client_order_id: str,
+        tick_size: Decimal = Decimal("0"),
     ) -> OrderResult: ...
 
     async def cancel_order(self, symbol: str, client_order_id: str) -> OrderResult: ...
@@ -102,12 +110,23 @@ class BinanceTestnetClient:
         return self._to_order_result(client_order_id, raw)
 
     async def place_stop_loss_order(
-        self, symbol: str, side: str, quantity: float, stop_price: float, client_order_id: str
+        self,
+        symbol: str,
+        side: str,
+        quantity: float,
+        stop_price: float,
+        client_order_id: str,
+        tick_size: Decimal = Decimal("0"),
     ) -> OrderResult:
         client = await self._get_client()
         # STOP_LOSS_LIMIT with the limit price a hair below the stop — guarantees the order
-        # is marketable once triggered without becoming a bare market stop.
-        limit_price = stop_price * 0.999 if side.lower() == "sell" else stop_price * 1.001
+        # is marketable once triggered without becoming a bare market stop. stop_price
+        # arrives already tick-aligned, but multiplying it by 0.999/1.001 almost always
+        # breaks that alignment again — the limit price needs its own rounding, or Binance
+        # rejects it with PRICE_FILTER (this was silently 100% of stop-loss placements
+        # failing in production until 2026-07-31).
+        raw_limit = stop_price * 0.999 if side.lower() == "sell" else stop_price * 1.001
+        limit_price = round_to_tick(raw_limit, tick_size) if tick_size > 0 else raw_limit
         raw = await client.create_order(
             symbol=symbol,
             side=side.upper(),

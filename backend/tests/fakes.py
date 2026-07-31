@@ -45,7 +45,9 @@ class FakeExchangeClient:
         self.orders[client_order_id] = result
         return result
 
-    async def place_stop_loss_order(self, symbol, side, quantity, stop_price, client_order_id) -> OrderResult:
+    async def place_stop_loss_order(
+        self, symbol, side, quantity, stop_price, client_order_id, tick_size=None
+    ) -> OrderResult:
         self.call_log.append(("place_stop_loss_order", symbol, side, quantity, stop_price, client_order_id))
         if client_order_id in self.orders:
             return self.orders[client_order_id]
