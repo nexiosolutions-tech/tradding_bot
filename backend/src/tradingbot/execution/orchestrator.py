@@ -16,12 +16,14 @@ from tradingbot.execution.client import ExchangeClient, OrderResult, SymbolFilte
 from tradingbot.execution.idempotency import make_client_order_id
 from tradingbot.execution.rounding import meets_min_notional, round_down_to_step, round_to_tick
 from tradingbot.features.engine import FeatureEngine, FeatureSnapshot
+from tradingbot.features.indicators import EMA, RSI, BollingerBands
 from tradingbot.ingestion.schema import EventType, MarketEvent
 from tradingbot.persistence import repository
 from tradingbot.persistence.models import CircuitBreakerEvent, EngineEvent, OrderRecord, TradeRecord
 from tradingbot.risk.manager import MissingStopLossError, RiskConfig, RiskManager
 
 ACTIVITY_LOG_MAXLEN = 200
+CANDLE_HISTORY_MAXLEN = 500
 
 
 class EngineState(str, Enum):
@@ -52,6 +54,27 @@ class OpenPositionLive:
     entry_ts: int
 
 
+@dataclass(frozen=True)
+class CandleSnapshot:
+    """OHLC + indicators in absolute price terms, kept only for the dashboard's price
+    chart — deliberately separate from FeatureEngine's normalized (scale-invariant)
+    feature vector fed to the model (spec 03/04). A human looking at a candlestick chart
+    expects an EMA line in the same price units as the candles, not a percentage."""
+
+    ts: int
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+    ema_fast: float | None
+    ema_slow: float | None
+    bollinger_mid: float | None
+    bollinger_upper: float | None
+    bollinger_lower: float | None
+    rsi: float | None
+
+
 class Orchestrator:
     def __init__(
         self,
@@ -80,6 +103,14 @@ class Orchestrator:
         self.activity_log: deque[ActivityLogEntry] = deque(maxlen=ACTIVITY_LOG_MAXLEN)
         self._symbol_filters: SymbolFilters | None = None
 
+        # Chart-only indicator state (spec 08) — same periods as FeatureEngine, but never
+        # feeds the model, only the dashboard's price chart. See CandleSnapshot.
+        self.candle_history: deque[CandleSnapshot] = deque(maxlen=CANDLE_HISTORY_MAXLEN)
+        self._chart_ema_fast = EMA(12)
+        self._chart_ema_slow = EMA(26)
+        self._chart_bollinger = BollingerBands()
+        self._chart_rsi = RSI(14)
+
     @property
     def open_position(self) -> OpenPositionLive | None:
         return self._position
@@ -94,6 +125,9 @@ class Orchestrator:
 
     def recent_activity(self, limit: int = 50) -> list[ActivityLogEntry]:
         return list(self.activity_log)[-limit:]
+
+    def recent_candles(self, limit: int = 200) -> list[CandleSnapshot]:
+        return list(self.candle_history)[-limit:]
 
     # -- operator commands -------------------------------------------------
 
@@ -141,6 +175,8 @@ class Orchestrator:
         if snapshot is None:
             return
 
+        self._record_candle(event, snapshot)
+
         if self.state in (EngineState.PAUSADO, EngineState.PARADO_CIRCUIT_BREAKER):
             return  # indicators keep warming up "a seco"; no decision is made
 
@@ -158,6 +194,26 @@ class Orchestrator:
                 self._log_activity("info", f"{self.symbol} @ {snapshot.close:.2f} — analisando, sem sinal")
 
         self._maybe_trip_circuit_breaker(snapshot.knowledge_ts)
+
+    def _record_candle(self, event: MarketEvent, snapshot: FeatureSnapshot) -> None:
+        payload = event.payload
+        mid, upper, lower = self._chart_bollinger.update(snapshot.close)
+        self.candle_history.append(
+            CandleSnapshot(
+                ts=snapshot.knowledge_ts,
+                open=float(payload["open"]),
+                high=float(payload["high"]),
+                low=float(payload["low"]),
+                close=snapshot.close,
+                volume=float(payload["volume"]),
+                ema_fast=self._chart_ema_fast.update(snapshot.close),
+                ema_slow=self._chart_ema_slow.update(snapshot.close),
+                bollinger_mid=mid,
+                bollinger_upper=upper,
+                bollinger_lower=lower,
+                rsi=self._chart_rsi.update(snapshot.close),
+            )
+        )
 
     async def _try_enter(self, signal, snapshot: FeatureSnapshot) -> None:
         try:

@@ -223,6 +223,28 @@ def engine_activity(limit: int = 50):
     return [{"ts": a.ts, "level": a.level, "message": a.message} for a in orchestrator.recent_activity(limit)]
 
 
+@app.get("/api/engine/candles")
+def engine_candles(limit: int = 200):
+    orchestrator = _require_orchestrator()
+    return [
+        {
+            "ts": c.ts,
+            "open": c.open,
+            "high": c.high,
+            "low": c.low,
+            "close": c.close,
+            "volume": c.volume,
+            "ema_fast": c.ema_fast,
+            "ema_slow": c.ema_slow,
+            "bollinger_mid": c.bollinger_mid,
+            "bollinger_upper": c.bollinger_upper,
+            "bollinger_lower": c.bollinger_lower,
+            "rsi": c.rsi,
+        }
+        for c in orchestrator.recent_candles(limit)
+    ]
+
+
 @app.get("/api/engine/events")
 def engine_events(limit: int = 50):
     with app.state.session_factory() as session:

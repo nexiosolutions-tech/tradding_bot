@@ -39,6 +39,21 @@ export interface EngineEvent {
   triggered_by_human: boolean;
 }
 
+export interface Candle {
+  ts: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  ema_fast: number | null;
+  ema_slow: number | null;
+  bollinger_mid: number | null;
+  bollinger_upper: number | null;
+  bollinger_lower: number | null;
+  rsi: number | null;
+}
+
 export interface Trade {
   symbol: string;
   entry_ts: number;

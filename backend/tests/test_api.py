@@ -46,6 +46,11 @@ def test_engine_activity_returns_503_when_unconfigured(client):
     assert response.status_code == 503
 
 
+def test_engine_candles_returns_503_when_unconfigured(client):
+    response = client.get("/api/engine/candles")
+    assert response.status_code == 503
+
+
 def test_engine_state_includes_empty_activity_key_when_unconfigured(client):
     response = client.get("/api/engine/state")
     assert response.json().get("activity") is None

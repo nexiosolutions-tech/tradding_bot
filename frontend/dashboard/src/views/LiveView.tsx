@@ -3,16 +3,18 @@ import { api } from "../api/client";
 import { EngineControls } from "../components/EngineControls";
 import { ActivityConsole } from "../components/ActivityConsole";
 import { TradesTable } from "../components/TradesTable";
+import { PriceChart } from "../components/PriceChart";
 import { IconTarget } from "../components/Icons";
 import { Timer } from "../components/Timer";
 import { MiniEquityChart } from "../components/MiniEquityChart";
-import type { EngineEvent, EngineState, Trade } from "../api/types";
+import type { Candle, EngineEvent, EngineState, Trade } from "../api/types";
 
 const MAX_EQUITY_SAMPLES = 400;
 
 export function LiveView({ state }: { state: EngineState | null }) {
   const [events, setEvents] = useState<EngineEvent[]>([]);
   const [trades, setTrades] = useState<Trade[]>([]);
+  const [candles, setCandles] = useState<Candle[]>([]);
   const [equityHistory, setEquityHistory] = useState<[number, number][]>([]);
   const baselineEquity = useRef<number | null>(null);
 
@@ -22,6 +24,10 @@ export function LiveView({ state }: { state: EngineState | null }) {
 
   const refreshTrades = useCallback(() => {
     api.trades().then(setTrades).catch(() => undefined);
+  }, []);
+
+  const refreshCandles = useCallback(() => {
+    api.candles(200).then(setCandles).catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -35,6 +41,12 @@ export function LiveView({ state }: { state: EngineState | null }) {
     const interval = setInterval(refreshTrades, 15000);
     return () => clearInterval(interval);
   }, [refreshTrades]);
+
+  useEffect(() => {
+    refreshCandles();
+    const interval = setInterval(refreshCandles, 60000);
+    return () => clearInterval(interval);
+  }, [refreshCandles]);
 
   useEffect(() => {
     if (state?.equity == null) return;
@@ -102,6 +114,11 @@ export function LiveView({ state }: { state: EngineState | null }) {
             <Timer sinceTs={state.position?.entry_ts ?? null} label="" inline />
           </div>
         </div>
+      </div>
+
+      <div className="panel">
+        <h3>Preço e indicadores</h3>
+        <PriceChart candles={candles} trades={trades} />
       </div>
 
       {state.position && (

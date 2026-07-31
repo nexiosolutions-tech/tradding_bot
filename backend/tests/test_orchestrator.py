@@ -443,3 +443,41 @@ def test_on_event_swallows_unexpected_exception_and_keeps_processing(tmp_path):
 
     asyncio.run(orch.on_event(_closed_kline("BTCUSDT", 101.0, 120_000)))
     assert strategy.calls == 2  # the next event was still processed
+
+
+def test_candle_history_records_ohlc_and_indicators_even_while_paused(tmp_path):
+    """The dashboard's price chart should reflect real market data continuously —
+    independent of whether the engine is currently paused for trading decisions."""
+    import asyncio
+
+    strategy = ScriptedStrategy(entry_at_ts=None)
+    orch, _ = _make_orchestrator(tmp_path, strategy)
+    assert orch.state == EngineState.PAUSADO  # never resumed in this test
+
+    asyncio.run(orch.on_event(_closed_kline("BTCUSDT", 100.0, 60_000, volume=12.5)))
+    asyncio.run(orch.on_event(_closed_kline("BTCUSDT", 101.0, 120_000, volume=8.0)))
+
+    candles = orch.recent_candles()
+    assert len(candles) == 2
+    assert candles[-1].close == 101.0
+    assert candles[-1].volume == 8.0
+    assert candles[-1].ts == 120_000
+    # RSI/Bollinger need a warm-up window — None until then, never a crash.
+    assert candles[0].rsi is None
+    assert candles[0].bollinger_mid is None
+    # EMA has no warm-up (spec 03) — always a real value from the first candle.
+    assert candles[0].ema_fast == 100.0
+
+
+def test_candle_history_respects_limit_and_max_length(tmp_path):
+    import asyncio
+
+    strategy = ScriptedStrategy(entry_at_ts=None)
+    orch, _ = _make_orchestrator(tmp_path, strategy)
+
+    for i in range(30):
+        asyncio.run(orch.on_event(_closed_kline("BTCUSDT", 100.0 + i, (i + 1) * 60_000)))
+
+    assert len(orch.recent_candles()) == 30
+    assert len(orch.recent_candles(limit=5)) == 5
+    assert orch.recent_candles(limit=5)[-1].close == 129.0

@@ -1,6 +1,7 @@
 import type {
   BacktestDetail,
   BacktestSummary,
+  Candle,
   ChangeSummary,
   DocDetail,
   EngineEvent,
@@ -40,6 +41,7 @@ export const api = {
   engineState: () => getJSON<EngineState>("/api/engine/state"),
   engineEvents: (limit = 50) => getJSON<EngineEvent[]>(`/api/engine/events?limit=${limit}`),
   trades: () => getJSON<Trade[]>("/api/trades"),
+  candles: (limit = 200) => getJSON<Candle[]>(`/api/engine/candles?limit=${limit}`),
   pause: (by: string) => postJSON<{ state: string }>("/api/engine/pause", { by }),
   resume: (by: string) => postJSON<{ state: string }>("/api/engine/resume", { by }),
   acknowledgeCircuitBreaker: (by: string) =>

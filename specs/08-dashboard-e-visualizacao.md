@@ -102,6 +102,18 @@ skills de UI definidas em [`CLAUDE.md`](../CLAUDE.md#skills-de-ui-a-utilizar-no-
   configurada, o comportamento é o mesmo de antes (aberto) — ver
   [`changes/2026-07-30-autenticacao-endpoints-controle.md`](../changes/2026-07-30-autenticacao-endpoints-controle.md).
   Isso não é o "múltiplos usuários/autenticação multi-perfil" citado como fora
+  de escopo acima — é uma chave única compartilhada.
+- **Gráfico de preço com indicadores na view Live (2026-07-31):** `Orchestrator`
+  mantém um buffer em memória (`candle_history`, últimos 500 candles) com OHLC
+  e indicadores em escala de preço absoluto (EMA rápida/lenta, Bollinger,
+  RSI) — deliberadamente **separado** do vetor de features normalizado que
+  alimenta o modelo (`03-motor-de-features.md`): um humano olhando um gráfico
+  de candles espera a EMA na mesma escala de preço, não em percentual.
+  Exposto via `GET /api/engine/candles`. O buffer é populado a cada candle
+  fechado, independente do estado de pausa do engine — o gráfico deve
+  refletir o mercado real continuamente. Frontend renderiza via
+  `lightweight-charts` (candlestick + overlays de EMA/Bollinger + painel
+  secundário de RSI + marcadores de entrada/saída dos trades reais).
   de escopo acima — é uma chave única compartilhada, só para não deixar
   comandos que afetam execução real completamente abertos numa URL pública.
 
