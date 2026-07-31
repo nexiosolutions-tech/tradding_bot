@@ -53,12 +53,43 @@ o que torna o projeto seguro de construir incrementalmente.
   — próxima iteração deveria tratar `entry_percentile`/`horizon_minutes`
   como hiperparâmetros a variar sistematicamente, não fixos, antes de
   descartar o conjunto de features atual.
+- **Iteração de 2026-07-31 (2ª rodada — features ATR/cíclicas + sweep
+  sistemático)**: implementadas as duas features candidatas pendentes
+  (`changes/2026-07-31-features-atr-e-ciclicas-tempo.md`) e criado
+  `scripts/sweep_thresholds.py` para variar `entry_percentile` (80/90/95/99)
+  × `horizon_minutes` (10/15/30) sistematicamente em vez de manualmente,
+  buscando os dados uma única vez (BTCUSDT, 1m, 45 dias, `n_splits=3` para
+  caber num grid de 12 combinações em tempo razoável).
+  - **Padrão claro e consistente nas 12 combinações**: percentil de entrada
+    mais alto e horizonte mais longo sempre melhoram o profit factor médio
+    — tendência monotônica, ainda subindo nos extremos testados (99%,
+    30min). Melhor combinação: `horizon_minutes=30`, `entry_percentile=95-99`
+    (mean PF 0.33, min PF 0.16) — mas **0 de 3 folds vencidos em todas as 12
+    combinações**, sem exceção.
+  - Follow-up explorando horizontes ainda maiores (com `n_splits=5`, já com
+    as features novas): `horizon_minutes=45, entry_percentile=99` chegou a
+    mean PF 0.77 — bem melhor — mas com `min_trades=6` no pior fold e
+    `min_pf=0.00`. Amostra pequena demais para confiar no número (mesma
+    ressalva já documentada em `07-backtesting-e-validacao.md` sobre PF
+    perto do gate precisar de amostra suficiente) — não é evidência sólida
+    de melhora real, é o tipo de resultado que a própria Fase 4b/critério de
+    amostra mínima existe para filtrar.
+  - **Conclusão desta rodada**: a tendência (percentil/horizonte maiores
+    ajudam) é real e vale manter em mente, mas não fecha a lacuna sozinha —
+    mesmo o melhor ponto testado com amostra confiável (~0.33) está a ~3x de
+    distância do gate de promoção (1.0). As features novas (ATR, cíclicas)
+    não foram claramente responsáveis por uma melhora distinguível de ruído
+    nesta rodada — não invalida a decisão de adicioná-las (o raciocínio de
+    cada uma continua sólido), só significa que não são, sozinhas, a peça
+    que faltava.
 - Próximos passos possíveis — iteração de modelo, não mudança de fase:
-  variar `entry_percentile`/`horizon_minutes` sistematicamente, revisar
-  outras features candidatas via `changes/` (ATR, features cíclicas de
-  horário — já levantadas em discussão, ainda não implementadas), ou aceitar
-  que esse conjunto de features/target não supera a regra simples neste
-  par/janela e testar outro.
+  testar horizontes ainda maiores com dados de um período mais longo (para
+  manter `min_trades` alto o suficiente para confiar no resultado), revisar
+  se BTCUSDT 1m tem sinal explorável nesse recorte de fato ou se vale testar
+  outro timeframe/par, considerar peso de classe no treino (LightGBM) dado
+  o desbalanceamento observado (`label=1` em 0.5-4.5% das linhas dependendo
+  do horizonte), ou aceitar que esse conjunto de features/target não supera
+  a regra simples neste par/janela e testar outro.
 - **Limitação conhecida (2026-07-31):** o baseline placeholder da Fase 1
   (`RsiBollingerPlaceholderStrategy`) tem expectância estruturalmente
   negativa — sua saída por recuperação de RSI fecha a posição antes do
