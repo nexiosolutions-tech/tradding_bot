@@ -10,6 +10,7 @@ import type {
 } from "./types";
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+const API_KEY = import.meta.env.VITE_DASHBOARD_API_KEY as string | undefined;
 
 async function getJSON<T>(path: string): Promise<T> {
   const response = await fetch(`${BASE_URL}${path}`);
@@ -22,7 +23,10 @@ async function getJSON<T>(path: string): Promise<T> {
 async function postJSON<T>(path: string, body: unknown): Promise<T> {
   const response = await fetch(`${BASE_URL}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(API_KEY ? { "X-API-Key": API_KEY } : {}),
+    },
     body: JSON.stringify(body),
   });
   const data = await response.json();
@@ -53,5 +57,8 @@ export const api = {
   changes: () => getJSON<ChangeSummary[]>("/api/changes"),
   changeDetail: (filename: string) => getJSON<DocDetail>(`/api/changes/${filename}`),
 
-  wsUrl: () => `${BASE_URL.replace(/^http/, "ws")}/ws/engine`,
+  wsUrl: () => {
+    const base = `${BASE_URL.replace(/^http/, "ws")}/ws/engine`;
+    return API_KEY ? `${base}?key=${encodeURIComponent(API_KEY)}` : base;
+  },
 };

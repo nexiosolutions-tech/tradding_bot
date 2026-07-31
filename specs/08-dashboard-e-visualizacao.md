@@ -94,6 +94,16 @@ skills de UI definidas em [`CLAUDE.md`](../CLAUDE.md#skills-de-ui-a-utilizar-no-
 - View "Live" mostra "engine não configurado" enquanto
   `BINANCE_API_KEY`/`BINANCE_API_SECRET` não existirem no backend — as demais
   views não dependem disso.
+- **Autenticação dos comandos de controle (2026-07-30):** os endpoints
+  `pause`/`resume`/`acknowledge_circuit_breaker` e o WebSocket `/ws/engine`
+  aceitam uma `DASHBOARD_API_KEY` opcional — via header `X-API-Key` nos
+  endpoints REST, via query param `?key=` no WebSocket (navegadores não
+  conseguem setar headers customizados num WebSocket nativo). Sem a variável
+  configurada, o comportamento é o mesmo de antes (aberto) — ver
+  [`changes/2026-07-30-autenticacao-endpoints-controle.md`](../changes/2026-07-30-autenticacao-endpoints-controle.md).
+  Isso não é o "múltiplos usuários/autenticação multi-perfil" citado como fora
+  de escopo acima — é uma chave única compartilhada, só para não deixar
+  comandos que afetam execução real completamente abertos numa URL pública.
 
 ### Feed de atividade em tempo real (adicionado após feedback de uso)
 

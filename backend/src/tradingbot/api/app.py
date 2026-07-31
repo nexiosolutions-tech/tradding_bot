@@ -13,7 +13,7 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -74,6 +74,17 @@ def _require_orchestrator():
     if app.state.orchestrator is None:
         raise HTTPException(status_code=503, detail=app.state.engine_error or "engine não configurado")
     return app.state.orchestrator
+
+
+def _verify_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> None:
+    """Optional by design: if DASHBOARD_API_KEY isn't set (e.g. right after this deploy,
+    before the operator configures it), commands stay open — same behavior as before this
+    check existed. Once set, it's enforced on every command endpoint."""
+    expected = os.environ.get("DASHBOARD_API_KEY")
+    if not expected:
+        return
+    if x_api_key != expected:
+        raise HTTPException(status_code=401, detail="chave de API ausente ou inválida")
 
 
 @app.get("/api/health")
@@ -249,14 +260,14 @@ def list_trades(start_ts: int = 0, end_ts: int = 2**62):
     ]
 
 
-@app.post("/api/engine/pause")
+@app.post("/api/engine/pause", dependencies=[Depends(_verify_api_key)])
 def pause_engine(body: CommandBody):
     orchestrator = _require_orchestrator()
     orchestrator.pause(by=body.by)
     return {"state": orchestrator.state.value}
 
 
-@app.post("/api/engine/resume")
+@app.post("/api/engine/resume", dependencies=[Depends(_verify_api_key)])
 def resume_engine(body: CommandBody):
     orchestrator = _require_orchestrator()
     try:
@@ -266,7 +277,7 @@ def resume_engine(body: CommandBody):
     return {"state": orchestrator.state.value}
 
 
-@app.post("/api/engine/acknowledge_circuit_breaker")
+@app.post("/api/engine/acknowledge_circuit_breaker", dependencies=[Depends(_verify_api_key)])
 def acknowledge_circuit_breaker(body: CommandBody):
     orchestrator = _require_orchestrator()
     try:
@@ -277,7 +288,13 @@ def acknowledge_circuit_breaker(body: CommandBody):
 
 
 @app.websocket("/ws/engine")
-async def engine_ws(websocket: WebSocket):
+async def engine_ws(websocket: WebSocket, key: str | None = Query(default=None)):
+    # Browsers can't set custom headers on a native WebSocket handshake, so the key
+    # travels as a query param here instead of X-API-Key.
+    expected = os.environ.get("DASHBOARD_API_KEY")
+    if expected and key != expected:
+        await websocket.close(code=1008)  # policy violation
+        return
     await websocket.accept()
     try:
         while True:

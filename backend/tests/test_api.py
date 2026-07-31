@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 def client(tmp_path, monkeypatch):
     monkeypatch.delenv("BINANCE_API_KEY", raising=False)
     monkeypatch.delenv("BINANCE_API_SECRET", raising=False)
+    monkeypatch.delenv("DASHBOARD_API_KEY", raising=False)
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path}/api-test.db")
 
     import tradingbot.api.app as api_app
@@ -111,6 +112,50 @@ def test_get_learning_rejects_path_traversal(client, tmp_path):
     (tmp_path / "secret.md").write_text("não deveria ser lido")
     response = client.get("/api/learnings/..%2Fsecret.md")
     assert response.status_code == 404
+
+
+def test_engine_commands_stay_open_without_dashboard_api_key_configured(client):
+    # No DASHBOARD_API_KEY set -> auth is a no-op, same behavior as before it existed.
+    # Still 503 (engine unconfigured in this fixture), not 401 -> auth didn't block it.
+    response = client.post("/api/engine/pause", json={"by": "brian"})
+    assert response.status_code == 503
+
+
+def test_engine_commands_require_api_key_once_configured(client, monkeypatch):
+    monkeypatch.setenv("DASHBOARD_API_KEY", "s3cr3t")
+
+    no_header = client.post("/api/engine/pause", json={"by": "brian"})
+    assert no_header.status_code == 401
+
+    wrong_header = client.post("/api/engine/pause", json={"by": "brian"}, headers={"X-API-Key": "nope"})
+    assert wrong_header.status_code == 401
+
+    correct_header = client.post("/api/engine/pause", json={"by": "brian"}, headers={"X-API-Key": "s3cr3t"})
+    assert correct_header.status_code == 503  # passes auth; still 503 because engine is unconfigured
+
+
+def test_resume_and_acknowledge_also_require_api_key_once_configured(client, monkeypatch):
+    monkeypatch.setenv("DASHBOARD_API_KEY", "s3cr3t")
+
+    assert client.post("/api/engine/resume", json={"by": "brian"}).status_code == 401
+    assert client.post("/api/engine/acknowledge_circuit_breaker", json={"by": "brian"}).status_code == 401
+
+
+def test_ws_engine_rejects_missing_or_wrong_key_once_configured(client, monkeypatch):
+    from starlette.websockets import WebSocketDisconnect
+
+    monkeypatch.setenv("DASHBOARD_API_KEY", "s3cr3t")
+
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect("/ws/engine"):
+            pass
+
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect("/ws/engine?key=wrong"):
+            pass
+
+    with client.websocket_connect("/ws/engine?key=s3cr3t") as ws:
+        ws.receive_json()  # connects and streams state once the key matches
 
 
 def test_list_changes_extracts_status_field(client, tmp_path):
