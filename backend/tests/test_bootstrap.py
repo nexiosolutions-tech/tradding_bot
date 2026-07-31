@@ -73,3 +73,41 @@ def test_build_orchestrator_blocks_mainnet_without_explicit_override(monkeypatch
 
     with pytest.raises(RuntimeError):
         bootstrap.build_orchestrator()
+
+
+def test_build_orchestrator_reconstructs_equity_from_realized_pnl(tmp_path, monkeypatch):
+    """A restart must never silently wipe P&L already booked from real trades — equity
+    should be INITIAL_EQUITY plus whatever the DB already shows as realized, not always
+    reset to the config default (2026-07-31, real gap found in production)."""
+    import tradingbot.execution.bootstrap as bootstrap
+    from tradingbot.persistence import repository
+    from tradingbot.persistence.db import get_session_factory
+    from tradingbot.persistence.models import TradeRecord
+
+    monkeypatch.setenv("BINANCE_API_KEY", "fake")
+    monkeypatch.setenv("BINANCE_API_SECRET", "fake")
+    monkeypatch.setenv("INITIAL_EQUITY", "1000")
+    monkeypatch.setenv("SYMBOL", "BTCUSDT")
+
+    session_factory = get_session_factory(f"sqlite:///{tmp_path}/test.db")
+    with session_factory() as session:
+        repository.record_trade(
+            session,
+            TradeRecord(
+                symbol="BTCUSDT", entry_order_id="e1", exit_order_id="x1", entry_ts=1, exit_ts=2,
+                entry_price=100.0, exit_price=110.0, size=1.0, pnl=42.5, fees_paid=1.0,
+                exit_reason="signal_exit", strategy_version="test",
+            ),
+        )
+        repository.record_trade(
+            session,
+            TradeRecord(
+                symbol="BTCUSDT", entry_order_id="e2", exit_order_id="x2", entry_ts=3, exit_ts=4,
+                entry_price=100.0, exit_price=90.0, size=1.0, pnl=-10.0, fees_paid=1.0,
+                exit_reason="stop_loss", strategy_version="test",
+            ),
+        )
+
+    orchestrator = bootstrap.build_orchestrator(session_factory=session_factory)
+
+    assert orchestrator.equity == pytest.approx(1000.0 + 42.5 - 10.0)

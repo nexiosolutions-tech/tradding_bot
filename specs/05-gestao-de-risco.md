@@ -82,11 +82,12 @@ risco é o que garante isso — ela é independente da qualidade do modelo.
 rejeição estrutural de ordem sem stop-loss (`MissingStopLossError`) e circuit
 breaker sem recuperação automática — usado tanto pelo backtesting (Fase 1)
 quanto pelo `Orchestrator` real (Fase 4), o mesmo código em ambos os
-contextos. Uma lacuna conhecida está documentada em
-[`06-camada-de-execucao.md`](./06-camada-de-execucao.md#status-de-implementação-fase-4):
-reconciliação de ordem de entrada perdida por crash entre confirmação da
-exchange e persistência local ainda não é tratada — só a reconciliação de
-stop-loss em gap de conexão está implementada. Fechar essa lacuna é
+contextos. **Reconciliação de posição/equity no startup do processo**
+(2026-07-31, ver `06-camada-de-execucao.md`) fecha a lacuna mais comum na
+prática — um restart (local, redeploy ou crash) esquecer silenciosamente uma
+posição real já persistida, ou resetar o capital acumulado de volta ao
+valor de configuração. Uma lacuna mais estreita ainda permanece — ver
+`06-camada-de-execucao.md`. Fechar as lacunas restantes é
 pré-requisito antes de qualquer capital real (Fase 6), não da validação em
 testnet.
 

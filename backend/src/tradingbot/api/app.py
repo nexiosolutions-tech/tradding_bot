@@ -44,6 +44,7 @@ async def lifespan(app: FastAPI):
     except (MissingCredentialsError, RuntimeError) as exc:
         app.state.engine_error = str(exc)
     else:
+        await orchestrator.reconcile_position_on_startup()
         app.state.orchestrator = orchestrator
         stream = BinanceKlineStream(symbols=[orchestrator.symbol], interval="1m", testnet=True)
 

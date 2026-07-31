@@ -30,6 +30,8 @@ async def main() -> None:
         print(str(exc), file=sys.stderr)
         sys.exit(1)
 
+    await orchestrator.reconcile_position_on_startup()
+
     print(
         f"Orquestrador pronto para {orchestrator.symbol} (estratégia: {orchestrator.strategy_version}). "
         f"Estado: {orchestrator.state.value}."

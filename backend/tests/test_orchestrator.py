@@ -3,6 +3,7 @@ from dataclasses import dataclass
 import pytest
 
 from tradingbot.backtesting.strategy import TradeSignal
+from tradingbot.execution.client import OrderResult
 from tradingbot.execution.orchestrator import EngineState, Orchestrator
 from tradingbot.ingestion.schema import EventType, MarketEvent
 from tradingbot.persistence.db import get_session_factory
@@ -481,3 +482,100 @@ def test_candle_history_respects_limit_and_max_length(tmp_path):
     assert len(orch.recent_candles()) == 30
     assert len(orch.recent_candles(limit=5)) == 5
     assert orch.recent_candles(limit=5)[-1].close == 129.0
+
+
+def _persist_entry_and_stop(session_factory, entry_created_at="1000", stop_raw=None, stop_status="NEW"):
+    from tradingbot.persistence import repository
+    from tradingbot.persistence.models import OrderRecord
+
+    with session_factory() as session:
+        repository.upsert_order(
+            session,
+            OrderRecord(
+                client_order_id="entry-1", symbol="BTCUSDT", side="buy", purpose="entry",
+                requested_qty=1.0, requested_price=None, status="FILLED", filled_qty=1.0,
+                avg_fill_price=100.0, created_at=entry_created_at, updated_at=entry_created_at,
+                raw_response={},
+            ),
+        )
+        repository.upsert_order(
+            session,
+            OrderRecord(
+                client_order_id="stop-1", symbol="BTCUSDT", side="sell", purpose="stop_loss",
+                requested_qty=1.0, requested_price=None, status=stop_status, filled_qty=0.0,
+                avg_fill_price=None, created_at="1001", updated_at="1001",
+                raw_response=stop_raw if stop_raw is not None else {"stop_price": 95.0},
+            ),
+        )
+
+
+def test_reconcile_on_startup_stays_flat_with_no_dangling_entry(tmp_path):
+    import asyncio
+
+    strategy = ScriptedStrategy(entry_at_ts=None)
+    orch, _ = _make_orchestrator(tmp_path, strategy)
+
+    asyncio.run(orch.reconcile_position_on_startup())
+
+    assert orch.open_position is None
+    assert orch.state == EngineState.PAUSADO  # unchanged — nothing to reconcile
+
+
+def test_reconcile_on_startup_resumes_monitoring_a_still_open_position(tmp_path):
+    import asyncio
+
+    strategy = ScriptedStrategy(entry_at_ts=None)
+    orch, session_factory = _make_orchestrator(tmp_path, strategy)
+    _persist_entry_and_stop(session_factory, stop_status="NEW")
+    orch.exchange.orders["stop-1"] = OrderResult("stop-1", "ex-1", "NEW", 0.0, None, {"stop_price": 95.0})
+
+    asyncio.run(orch.reconcile_position_on_startup())
+
+    assert orch.open_position is not None
+    assert orch.open_position.entry_price == 100.0
+    assert orch.open_position.stop_loss_price == 95.0
+    assert orch.open_position.entry_ts == 1000
+    assert orch.state == EngineState.POSICAO_ABERTA
+
+
+def test_reconcile_on_startup_finalizes_a_stop_that_filled_while_down(tmp_path):
+    import asyncio
+
+    strategy = ScriptedStrategy(entry_at_ts=None)
+    orch, session_factory = _make_orchestrator(tmp_path, strategy)
+    _persist_entry_and_stop(session_factory, stop_status="NEW")
+    orch.exchange.orders["stop-1"] = OrderResult("stop-1", "ex-1", "FILLED", 1.0, 95.0, {"stop_price": 95.0})
+
+    asyncio.run(orch.reconcile_position_on_startup())
+
+    assert orch.open_position is None  # closed out by the reconciliation itself
+    assert orch.equity == pytest.approx(1000.0 + (95.0 - 100.0) * 1.0)
+
+    session = session_factory()
+    trades = trades_in_range(session, 0, 10**15)
+    assert len(trades) == 1
+    assert trades[0].exit_reason == "stop_loss"
+
+
+def test_reconcile_on_startup_pauses_with_alert_when_no_stop_loss_record_found(tmp_path):
+    import asyncio
+    from tradingbot.persistence import repository
+    from tradingbot.persistence.models import OrderRecord
+
+    strategy = ScriptedStrategy(entry_at_ts=None)
+    orch, session_factory = _make_orchestrator(tmp_path, strategy)
+    with session_factory() as session:
+        repository.upsert_order(
+            session,
+            OrderRecord(
+                client_order_id="entry-1", symbol="BTCUSDT", side="buy", purpose="entry",
+                requested_qty=1.0, requested_price=None, status="FILLED", filled_qty=1.0,
+                avg_fill_price=100.0, created_at="1000", updated_at="1000", raw_response={},
+            ),
+        )
+
+    asyncio.run(orch.reconcile_position_on_startup())
+
+    assert orch.open_position is None
+    assert orch.state == EngineState.PAUSADO
+    assert any(a.level == "warning" and "ALERTA CRÍTICO" in a.message for a in orch.recent_activity())

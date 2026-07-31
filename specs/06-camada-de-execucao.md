@@ -104,11 +104,12 @@ muda comportamento do sistema, só a leitura humana do que está acontecendo.
   convertido/agregado. Sinalizado no código, não fabricado como zero "de
   verdade".
 - Idempotência cobre retry de rede no envio da ordem (mesmo `client_order_id`
-  → a exchange rejeita duplicata). Não cobre ainda o caso de crash do processo
-  entre a exchange confirmar o fill e o sistema persistir isso localmente —
-  reconciliação de ordens de entrada perdidas nesse intervalo é um follow-up,
-  não implementado (a reconciliação de gap hoje cobre apenas stop-loss de
-  posição já aberta).
+  → a exchange rejeita duplicata). **Ainda não cobre** o caso estreito de
+  crash do processo exatamente entre a exchange confirmar o fill e o sistema
+  persistir isso localmente (`_persist_order` nunca chega a rodar) — se não
+  há nenhum `OrderRecord` da entrada, a reconciliação de startup (abaixo) não
+  tem o que reconciliar. Janela de risco pequena na prática (seria um crash
+  no meio de uma chamada de rede específica), mas ainda não fechada.
 
 **Correções de 2026-07-30 (auditoria técnica), já implementadas:**
 - Retry + fechamento de emergência para falha ao colocar stop-loss após entrada
@@ -123,3 +124,35 @@ muda comportamento do sistema, só a leitura humana do que está acontecendo.
   e o WebSocket `/ws/engine` aceitam uma `DASHBOARD_API_KEY` opcional — ver
   [`08-dashboard-e-visualizacao.md`](./08-dashboard-e-visualizacao.md) e
   [`changes/2026-07-30-autenticacao-endpoints-controle.md`](../changes/2026-07-30-autenticacao-endpoints-controle.md).
+
+**Reconciliação de estado no startup (2026-07-31):** um restart do processo
+(reload local, redeploy no Railway, crash) nunca reconstruía `equity` nem
+sabia se havia uma posição real ainda aberta na exchange — `Orchestrator`
+sempre iniciava "flat" com o capital de configuração, independente da
+realidade. Achado ao investigar se valia a pena rodar continuamente no
+Railway em vez de localmente (a resposta acabou sendo: o gap existe nos
+dois lugares igualmente, já que o Railway também reimplanta a cada push).
+- `bootstrap.build_orchestrator` soma o P&L já realizado (persistido em
+  `TradeRecord`) ao `INITIAL_EQUITY` de configuração, em vez de sempre
+  resetar para o valor de configuração puro.
+- `Orchestrator.reconcile_position_on_startup` (chamado uma vez, antes do
+  stream de eventos começar, tanto em `api/app.py` quanto em
+  `scripts/run_live.py`): procura a entrada preenchida mais recente sem
+  `TradeRecord` correspondente e o stop-loss registrado depois dela.
+  - Se não encontrar entrada pendente: segue flat, nada a fazer.
+  - Se encontrar entrada mas nenhum stop-loss registrado depois: **alerta
+    crítico e pausa** — mesmo princípio de `_emergency_close_unprotected`,
+    não adivinha, exige intervenção humana.
+  - Se o stop já disparou na exchange enquanto o processo estava fora do ar
+    (checado via `get_order_status`, a exchange como fonte de verdade):
+    finaliza o trade agora, com o mesmo caminho de código de
+    `_finalize_exit` usado pela reconciliação de gap de WebSocket.
+  - Se o stop ainda está ativo na exchange: reconstrói `OpenPositionLive` e
+    volta a monitorar normalmente (transição para `POSICAO_ABERTA`, mesmo
+    partindo de `PAUSADO` — a posição já existe de verdade na exchange
+    independente do estado do software, então monitorá-la para fechamento
+    não é o mesmo tipo de decisão autônoma que "boots paused" existe para
+    evitar).
+  - Não cobre o caso estreito descrito na lacuna acima (crash antes do
+    `OrderRecord` da entrada ser persistido) — não há o que reconciliar sem
+    nenhum registro local da entrada.

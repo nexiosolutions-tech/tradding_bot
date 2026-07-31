@@ -17,6 +17,7 @@ from tradingbot.execution.client import BinanceTestnetClient
 from tradingbot.execution.orchestrator import Orchestrator
 from tradingbot.model.strategy import ModelStrategy
 from tradingbot.model.versioning import load_metadata, load_model
+from tradingbot.persistence import repository
 from tradingbot.persistence.db import get_session_factory
 from tradingbot.risk.manager import RiskConfig
 
@@ -75,13 +76,21 @@ def build_orchestrator(symbol: str | None = None, session_factory=None) -> Orche
     if session_factory is None:
         session_factory = get_session_factory(os.environ.get("DATABASE_URL"))
 
+    resolved_symbol = symbol or os.environ.get("SYMBOL", "BTCUSDT")
+    base_equity = float(os.environ.get("INITIAL_EQUITY", "1000"))
+    # A restart (local reload, redeploy, crash) must never silently wipe P&L already
+    # booked from real trades — reconstruct from persisted history instead of always
+    # starting fresh from the config value (2026-07-31, real gap found in production).
+    with session_factory() as session:
+        realized_pnl = repository.sum_realized_pnl(session, resolved_symbol)
+
     return Orchestrator(
-        symbol=symbol or os.environ.get("SYMBOL", "BTCUSDT"),
+        symbol=resolved_symbol,
         strategy=strategy,
         risk_config=RiskConfig(),
         exchange=exchange,
         session_factory=session_factory,
-        initial_equity=float(os.environ.get("INITIAL_EQUITY", "1000")),
+        initial_equity=base_equity + realized_pnl,
         strategy_version=strategy_version,
         now_fn=lambda: int(time.time() * 1000),
     )

@@ -75,6 +75,15 @@ class CandleSnapshot:
     rsi: float | None
 
 
+def _extract_stop_price(order: OrderRecord) -> float | None:
+    """OrderRecord.requested_price is never populated (see _persist_order) — the stop
+    price lives inside the raw exchange response instead. Covers both the real Binance
+    field name ("stopPrice") and the fake test client's ("stop_price")."""
+    raw = order.raw_response or {}
+    value = raw.get("stopPrice", raw.get("stop_price"))
+    return float(value) if value is not None else None
+
+
 class Orchestrator:
     def __init__(
         self,
@@ -128,6 +137,67 @@ class Orchestrator:
 
     def recent_candles(self, limit: int = 200) -> list[CandleSnapshot]:
         return list(self.candle_history)[-limit:]
+
+    async def reconcile_position_on_startup(self) -> None:
+        """Called once, right after construction, before the event stream starts. A
+        restart (local reload, redeploy, crash) must never silently forget a real open
+        position — self._position always starts as None otherwise, so the engine would
+        think it's flat even if a real, unprotected-or-protected position sits on the
+        exchange. Reconstructs from persisted order records, then confirms the stop
+        order's current status against the exchange (the source of truth) before
+        resuming any decision — same reconciliation philosophy as _handle_gap, just
+        triggered by process startup instead of a WebSocket gap."""
+        with self.session_factory() as session:
+            entry = repository.latest_unclosed_entry(session, self.symbol)
+            if entry is None:
+                return  # no dangling entry in our own records — genuinely flat
+            stop = repository.latest_stop_loss_after(session, self.symbol, entry.created_at)
+
+        if stop is None:
+            self._log_activity(
+                "warning",
+                f"ALERTA CRÍTICO: entrada {entry.client_order_id} sem stop-loss encontrado nos "
+                "registros ao reiniciar — posição pode estar desprotegida. Intervenção humana necessária.",
+            )
+            self._transition(EngineState.PAUSADO, "reconciliação de startup: entrada sem stop-loss registrado")
+            return
+
+        stop_price = _extract_stop_price(stop)
+        if stop_price is None:
+            self._log_activity(
+                "warning",
+                f"ALERTA CRÍTICO: não foi possível recuperar o preço do stop-loss {stop.client_order_id} "
+                "ao reiniciar — intervenção humana necessária.",
+            )
+            self._transition(EngineState.PAUSADO, "reconciliação de startup: preço de stop-loss desconhecido")
+            return
+
+        reconciled_position = OpenPositionLive(
+            entry_order_id=entry.client_order_id,
+            stop_order_id=stop.client_order_id,
+            entry_price=entry.avg_fill_price,
+            size=entry.filled_qty,
+            stop_loss_price=stop_price,
+            entry_ts=int(entry.created_at),
+        )
+
+        stop_status = await self.exchange.get_order_status(self.symbol, stop.client_order_id)
+        if stop_status is not None and stop_status.status == "FILLED":
+            # The stop already triggered while the process was down — finalize it now so
+            # equity and trade history reflect reality, instead of staying silently stale.
+            self._position = reconciled_position
+            await self._finalize_exit(self._now(), stop_status, reason="stop_loss")
+            self._log_activity(
+                "info", "Reconciliação de startup: stop-loss já havia disparado enquanto o engine estava fora do ar"
+            )
+            return
+
+        self._position = reconciled_position
+        self._log_activity(
+            "warning",
+            f"Reconciliação de startup: posição aberta reencontrada ({self.symbol} @ {entry.avg_fill_price:.2f})",
+        )
+        self._transition(EngineState.POSICAO_ABERTA, "reconciliação de startup: posição aberta reencontrada")
 
     # -- operator commands -------------------------------------------------
 
