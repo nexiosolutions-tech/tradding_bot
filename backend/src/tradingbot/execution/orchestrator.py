@@ -11,8 +11,9 @@ from dataclasses import dataclass
 from enum import Enum
 
 from tradingbot.backtesting.strategy import Strategy
-from tradingbot.execution.client import ExchangeClient, OrderResult
+from tradingbot.execution.client import ExchangeClient, OrderResult, SymbolFilters
 from tradingbot.execution.idempotency import make_client_order_id
+from tradingbot.execution.rounding import meets_min_notional, round_down_to_step, round_to_tick
 from tradingbot.features.engine import FeatureEngine, FeatureSnapshot
 from tradingbot.ingestion.schema import EventType, MarketEvent
 from tradingbot.persistence import repository
@@ -76,10 +77,16 @@ class Orchestrator:
         self._sequence = 0
         self.started_at: int | None = None
         self.activity_log: deque[ActivityLogEntry] = deque(maxlen=ACTIVITY_LOG_MAXLEN)
+        self._symbol_filters: SymbolFilters | None = None
 
     @property
     def open_position(self) -> OpenPositionLive | None:
         return self._position
+
+    async def _get_symbol_filters(self) -> SymbolFilters:
+        if self._symbol_filters is None:
+            self._symbol_filters = await self.exchange.get_symbol_filters(self.symbol)
+        return self._symbol_filters
 
     def _log_activity(self, level: str, message: str) -> None:
         self.activity_log.append(ActivityLogEntry(ts=self._now(), level=level, message=message))
@@ -109,12 +116,22 @@ class Orchestrator:
             if event is not None:
                 repository.acknowledge_circuit_breaker(session, event.id, ts=self._now(), acknowledged_by=by)
         self.risk.circuit_breaker_triggered = False  # the only path that clears it — always human
+        self.risk.reset_session_peak(self.equity)
         self._log_activity("info", f"Circuit breaker reconhecido por {by}")
         self._transition(EngineState.ANALISANDO, "circuit breaker reconhecido", human=True)
 
     # -- event loop ----------------------------------------------------------
 
     async def on_event(self, event: MarketEvent) -> None:
+        """Public entrypoint: never lets an exception escape. A background task driving
+        this from a WebSocket stream would otherwise die silently on the first unexpected
+        error, leaving the engine frozen with no operator-visible signal."""
+        try:
+            await self._handle_event(event)
+        except Exception as exc:  # noqa: BLE001 — deliberately broad, see docstring
+            self._log_activity("warning", f"Erro inesperado processando evento: {exc}")
+
+    async def _handle_event(self, event: MarketEvent) -> None:
         if event.event_type is EventType.GAP:
             await self._handle_gap()
             return
@@ -150,21 +167,38 @@ class Orchestrator:
 
         size = self.risk.cap_to_max_exposure(size, snapshot.close, self.equity)
 
+        filters = await self._get_symbol_filters()
+        size = round_down_to_step(size, filters.step_size)
+        if size <= 0 or not meets_min_notional(size, snapshot.close, filters.min_notional):
+            self._log_activity(
+                "warning",
+                f"Sinal rejeitado: notional abaixo do mínimo da exchange após arredondar ao lote "
+                f"({size:.8f} @ {snapshot.close:.2f})",
+            )
+            return  # would be hard-rejected by the exchange (LOT_SIZE/MIN_NOTIONAL) — don't even try
+
         self._sequence += 1
         entry_id = make_client_order_id(self.symbol, "entry", snapshot.knowledge_ts, self._sequence)
         entry_order = await self.exchange.place_market_order(self.symbol, "buy", size, entry_id)
         self._persist_order(entry_order, purpose="entry", requested_qty=size)
 
-        if entry_order.status not in ("FILLED", "PARTIALLY_FILLED") or not entry_order.filled_qty:
+        if (
+            entry_order.status not in ("FILLED", "PARTIALLY_FILLED")
+            or not entry_order.filled_qty
+            or entry_order.avg_fill_price is None
+        ):
             self._log_activity("warning", f"Ordem de entrada não executada (status={entry_order.status})")
-            return  # rejected or unfilled — stay flat, nothing to protect with a stop
+            return  # rejected, unfilled, or malformed fill — stay flat, nothing to protect with a stop
 
-        stop_loss_price = entry_order.avg_fill_price * (1 - signal.stop_loss_pct)
-        stop_id = make_client_order_id(self.symbol, "stop_loss", snapshot.knowledge_ts, self._sequence)
-        stop_order = await self.exchange.place_stop_loss_order(
-            self.symbol, "sell", entry_order.filled_qty, stop_loss_price, stop_id
+        stop_loss_price = round_to_tick(
+            entry_order.avg_fill_price * (1 - signal.stop_loss_pct), filters.tick_size
         )
-        self._persist_order(stop_order, purpose="stop_loss", requested_qty=entry_order.filled_qty)
+        stop_id = make_client_order_id(self.symbol, "stop_loss", snapshot.knowledge_ts, self._sequence)
+        stop_order = await self._place_stop_loss_with_retry(
+            entry_order, stop_id, stop_loss_price, snapshot.knowledge_ts
+        )
+        if stop_order is None:
+            return  # entry is open on the exchange but unprotected — handled emergency path already ran
 
         self._position = OpenPositionLive(
             entry_order_id=entry_id,
@@ -180,6 +214,65 @@ class Orchestrator:
             f"— stop em {stop_loss_price:.2f}",
         )
         self._transition(EngineState.POSICAO_ABERTA, "entrada executada")
+
+    async def _place_stop_loss_with_retry(
+        self, entry_order: OrderResult, stop_id: str, stop_loss_price: float, ts: int, attempts: int = 3
+    ) -> OrderResult | None:
+        """CLAUDE.md regra 2 is structural: an entry may never be left open without a
+        stop-loss. If placing it keeps failing (network, exchange 5xx), the entry is
+        already filled and real — the only safe move is to retry, then close the position
+        back out at market if every retry fails."""
+        last_error: Exception | None = None
+        for attempt in range(1, attempts + 1):
+            try:
+                stop_order = await self.exchange.place_stop_loss_order(
+                    self.symbol, "sell", entry_order.filled_qty, stop_loss_price, stop_id
+                )
+                self._persist_order(stop_order, purpose="stop_loss", requested_qty=entry_order.filled_qty)
+                return stop_order
+            except Exception as exc:  # noqa: BLE001 — any exchange/network failure, see docstring
+                last_error = exc
+                self._log_activity(
+                    "warning", f"Falha ao colocar stop-loss (tentativa {attempt}/{attempts}): {exc}"
+                )
+
+        await self._emergency_close_unprotected(entry_order, stop_id, ts, last_error)
+        return None
+
+    async def _emergency_close_unprotected(
+        self, entry_order: OrderResult, stop_id: str, ts: int, cause: Exception | None
+    ) -> None:
+        self._log_activity("warning", "Posição sem stop-loss após esgotar tentativas — fechando de emergência")
+        # Track the position so a failed close below still leaves the engine aware of it
+        # (never silently flat while a real, unprotected position sits on the exchange).
+        self._position = OpenPositionLive(
+            entry_order_id=entry_order.client_order_id,
+            stop_order_id=stop_id,
+            entry_price=entry_order.avg_fill_price,
+            size=entry_order.filled_qty,
+            stop_loss_price=entry_order.avg_fill_price,
+            entry_ts=ts,
+        )
+        try:
+            self._sequence += 1
+            close_id = make_client_order_id(self.symbol, "emergency_close", ts, self._sequence)
+            close_order = await self.exchange.place_market_order(self.symbol, "sell", entry_order.filled_qty, close_id)
+            self._persist_order(close_order, purpose="emergency_close", requested_qty=entry_order.filled_qty)
+            if close_order.status in ("FILLED", "PARTIALLY_FILLED") and close_order.filled_qty:
+                await self._finalize_exit(ts, close_order, reason="emergency_close_no_stop_loss")
+                return
+            close_failure: Exception | str = f"status={close_order.status}"
+        except Exception as exc:  # noqa: BLE001 — closing itself failing is the worst case, see below
+            close_failure = exc
+
+        # Software has done everything it safely can — pausing stops new entries, but the
+        # existing unprotected position remains open on the exchange and needs a human.
+        self._log_activity(
+            "warning",
+            f"ALERTA CRÍTICO: posição sem stop-loss e fechamento de emergência falhou "
+            f"(causa original: {cause}; falha no fechamento: {close_failure}) — intervenção humana necessária",
+        )
+        self._transition(EngineState.PAUSADO, "fechamento de emergência falhou — intervenção humana necessária")
 
     async def _check_exit(self, snapshot: FeatureSnapshot) -> None:
         pos = self._position

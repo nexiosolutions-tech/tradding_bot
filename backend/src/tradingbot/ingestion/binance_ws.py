@@ -114,9 +114,15 @@ class BinanceKlineStream:
                         yield gap_event
 
                     async for raw in ws:
-                        msg = json.loads(raw)
-                        self._last_event_local_ts = time.time()
-                        parsed = _parse_kline_message(msg)
+                        try:
+                            msg = json.loads(raw)
+                            self._last_event_local_ts = time.time()
+                            parsed = _parse_kline_message(msg)
+                        except Exception:
+                            # A malformed/unexpected payload should cost us this one message,
+                            # not the whole connection — the transport is still healthy.
+                            logger.warning("failed to parse ws message, skipping: %.200r", raw)
+                            continue
                         if parsed is None:
                             continue
                         symbol, payload = parsed

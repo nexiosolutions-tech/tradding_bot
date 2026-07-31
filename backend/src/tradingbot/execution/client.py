@@ -6,6 +6,7 @@ a constructor argument, never a code branch (spec 06's environment table).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Protocol
 
 
@@ -17,6 +18,17 @@ class OrderResult:
     filled_qty: float
     avg_fill_price: float | None
     raw: dict = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class SymbolFilters:
+    """Binance's LOT_SIZE / PRICE_FILTER / MIN_NOTIONAL trading rules for a symbol — an
+    order that violates any of these is hard-rejected by the exchange, not just warned
+    about, so every order must be shaped to fit before it is sent."""
+
+    step_size: Decimal
+    tick_size: Decimal
+    min_notional: Decimal
 
 
 class ExchangeClient(Protocol):
@@ -33,6 +45,8 @@ class ExchangeClient(Protocol):
     async def get_order_status(self, symbol: str, client_order_id: str) -> OrderResult | None: ...
 
     async def get_account_balance(self, asset: str) -> float: ...
+
+    async def get_symbol_filters(self, symbol: str) -> SymbolFilters: ...
 
 
 class BinanceTestnetClient:
@@ -123,6 +137,24 @@ class BinanceTestnetClient:
         client = await self._get_client()
         raw = await client.get_asset_balance(asset=asset)
         return float(raw["free"]) if raw else 0.0
+
+    async def get_symbol_filters(self, symbol: str) -> SymbolFilters:
+        client = await self._get_client()
+        info = await client.get_symbol_info(symbol)
+        step_size = tick_size = min_notional = None
+        for f in info["filters"]:
+            filter_type = f["filterType"]
+            if filter_type == "LOT_SIZE":
+                step_size = Decimal(f["stepSize"])
+            elif filter_type == "PRICE_FILTER":
+                tick_size = Decimal(f["tickSize"])
+            elif filter_type in ("MIN_NOTIONAL", "NOTIONAL"):
+                min_notional = Decimal(f.get("minNotional") or f.get("notional") or "0")
+        return SymbolFilters(
+            step_size=step_size or Decimal("0"),
+            tick_size=tick_size or Decimal("0"),
+            min_notional=min_notional or Decimal("0"),
+        )
 
     async def close(self) -> None:
         if self._client is not None:

@@ -119,7 +119,7 @@ def test_resume_then_entry_places_market_and_stop_orders(tmp_path):
 
     assert orch.state == EngineState.POSICAO_ABERTA
     kinds = [call[0] for call in exchange.call_log]
-    assert kinds == ["place_market_order", "place_stop_loss_order"]
+    assert kinds == ["get_symbol_filters", "place_market_order", "place_stop_loss_order"]
 
     session = session_factory()
     entry_order = get_order(session, orch._position.entry_order_id)
@@ -156,7 +156,7 @@ def test_rejected_entry_order_does_not_open_a_position(tmp_path):
     assert orch.state == EngineState.ANALISANDO
     assert orch._position is None
     # only the market order was attempted — no stop-loss for a position that never opened
-    assert [c[0] for c in exchange.call_log] == ["place_market_order"]
+    assert [c[0] for c in exchange.call_log] == ["get_symbol_filters", "place_market_order"]
 
 
 def test_stop_loss_fill_detected_on_exchange_finalizes_trade(tmp_path):
@@ -320,3 +320,126 @@ def test_activity_log_is_bounded(tmp_path):
     for i in range(300):
         orch._log_activity("info", f"entry {i}")
     assert len(orch.recent_activity(1000)) == 200
+
+
+def test_entry_below_min_notional_after_rounding_is_rejected(tmp_path):
+    """A signal that would produce an order Binance would hard-reject (LOT_SIZE /
+    MIN_NOTIONAL) must never reach place_market_order."""
+    import asyncio
+    from decimal import Decimal
+
+    from tradingbot.execution.client import SymbolFilters
+
+    exchange = FakeExchangeClient()
+    exchange.next_fill_price["BTCUSDT"] = 100.0
+    exchange.symbol_filters = SymbolFilters(
+        step_size=Decimal("0.001"), tick_size=Decimal("0.01"), min_notional=Decimal("1000")
+    )
+    strategy = ScriptedStrategy(entry_at_ts=60_000, stop_loss_pct=0.05)
+    risk_config = RiskConfig(risk_per_trade_pct=0.01, max_concurrent_exposure_pct=1.0)
+    orch, _ = _make_orchestrator(tmp_path, strategy, exchange, risk_config=risk_config)
+    orch.resume(by="brian")
+
+    asyncio.run(orch.on_event(_closed_kline("BTCUSDT", 100.0, 60_000)))
+
+    assert orch.state == EngineState.ANALISANDO
+    assert orch.open_position is None
+    assert "place_market_order" not in [c[0] for c in exchange.call_log]
+    assert any(a.level == "warning" and "abaixo do mínimo" in a.message for a in orch.recent_activity())
+
+
+def test_stop_loss_retries_then_succeeds(tmp_path):
+    """Transient network failures placing the stop-loss must be retried, not left as a
+    dead entry with no protection."""
+    import asyncio
+
+    exchange = FakeExchangeClient()
+    exchange.next_fill_price["BTCUSDT"] = 100.0
+    exchange.fail_stop_loss_times = 2  # fails twice, succeeds on the 3rd attempt
+    strategy = ScriptedStrategy(entry_at_ts=60_000)
+    orch, _ = _make_orchestrator(tmp_path, strategy, exchange)
+    orch.resume(by="brian")
+
+    asyncio.run(orch.on_event(_closed_kline("BTCUSDT", 100.0, 60_000)))
+
+    assert orch.state == EngineState.POSICAO_ABERTA
+    assert orch.open_position is not None
+    warnings = [a.message for a in orch.recent_activity() if a.level == "warning"]
+    assert sum("tentativa" in m for m in warnings) == 2
+
+
+def test_stop_loss_fails_all_retries_triggers_emergency_close(tmp_path):
+    """If the stop-loss can never be placed, the filled entry must not be left open and
+    unprotected — the orchestrator closes it back out at market."""
+    import asyncio
+
+    exchange = FakeExchangeClient()
+    exchange.next_fill_price["BTCUSDT"] = 100.0
+    exchange.fail_stop_loss_times = 99  # always fails
+    strategy = ScriptedStrategy(entry_at_ts=60_000)
+    orch, session_factory = _make_orchestrator(tmp_path, strategy, exchange)
+    orch.resume(by="brian")
+
+    asyncio.run(orch.on_event(_closed_kline("BTCUSDT", 100.0, 60_000)))
+
+    assert orch.open_position is None
+    assert orch.state == EngineState.ANALISANDO
+    kinds = [c[0] for c in exchange.call_log]
+    assert kinds.count("place_stop_loss_order") == 3
+    assert "place_market_order" in kinds  # entry + emergency close
+
+    session = session_factory()
+    trades = trades_in_range(session, 0, 10**15)
+    assert len(trades) == 1
+    assert trades[0].exit_reason == "emergency_close_no_stop_loss"
+
+
+def test_stop_loss_and_emergency_close_both_fail_pauses_engine(tmp_path):
+    """The absolute worst case: even the emergency close fails. Software has done
+    everything it safely can — it must not pretend to be flat, and must stop opening new
+    entries until a human intervenes."""
+    import asyncio
+
+    exchange = FakeExchangeClient()
+    exchange.next_fill_price["BTCUSDT"] = 100.0
+    exchange.fail_stop_loss_times = 99
+    exchange.fail_market_sell_times = 99
+    strategy = ScriptedStrategy(entry_at_ts=60_000)
+    orch, _ = _make_orchestrator(tmp_path, strategy, exchange)
+    orch.resume(by="brian")
+
+    asyncio.run(orch.on_event(_closed_kline("BTCUSDT", 100.0, 60_000)))
+
+    assert orch.open_position is not None  # still tracked as open — never silently flat
+    assert orch.state == EngineState.PAUSADO
+    assert any(a.level == "warning" and "ALERTA CRÍTICO" in a.message for a in orch.recent_activity())
+
+
+def test_on_event_swallows_unexpected_exception_and_keeps_processing(tmp_path):
+    """A background task driving on_event from a live WebSocket must not die on the first
+    unexpected error — the next candle still has to be processed."""
+    import asyncio
+
+    class ExplodingStrategy:
+        def __init__(self):
+            self.calls = 0
+
+        def on_features(self, snapshot):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("boom")
+            return None
+
+        def should_exit(self, snapshot):
+            return False
+
+    strategy = ExplodingStrategy()
+    orch, _ = _make_orchestrator(tmp_path, strategy)
+    orch.resume(by="brian")
+
+    asyncio.run(orch.on_event(_closed_kline("BTCUSDT", 100.0, 60_000)))
+    assert orch.state == EngineState.ANALISANDO  # did not crash / get stuck
+    assert any(a.level == "warning" and "Erro inesperado" in a.message for a in orch.recent_activity())
+
+    asyncio.run(orch.on_event(_closed_kline("BTCUSDT", 101.0, 120_000)))
+    assert strategy.calls == 2  # the next event was still processed

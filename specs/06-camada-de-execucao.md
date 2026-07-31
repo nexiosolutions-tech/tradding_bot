@@ -47,7 +47,9 @@ para execução:
 ## Tratamento de falhas
 
 - **Queda de conexão:** reconectar com backoff; ao reconectar, reconciliar
-  estado antes de tomar qualquer nova decisão de entrada.
+  estado antes de tomar qualquer nova decisão de entrada. Um payload de
+  mensagem malformado/inesperado custa apenas essa mensagem (log e ignora) —
+  não derruba a conexão inteira, já que o transporte em si continua saudável.
 - **Ordem rejeitada pela exchange:** logar motivo, não retry automático "cego"
   (evitar reenvio em loop de uma ordem estruturalmente inválida).
 - **Execução parcial:** tratada explicitamente — posição parcial ainda precisa
@@ -55,6 +57,24 @@ para execução:
 - **Latência anormal:** se o tempo entre decisão e confirmação de execução
   exceder um limite, o sinal pode estar obsoleto — a camada de execução deve
   poder cancelar/reavaliar em vez de insistir em executar a qualquer custo.
+- **Falha ao colocar o stop-loss depois da entrada já preenchida:** cenário
+  distinto de "ordem rejeitada" acima — aqui a entrada já é real e está aberta
+  na exchange, então simplesmente desistir deixaria uma posição sem proteção
+  (viola `CLAUDE.md` regra 2). A colocação do stop-loss é retentada um número
+  limitado de vezes; se todas falharem, a posição é fechada de emergência a
+  mercado. Se até o fechamento de emergência falhar, o motor se pausa
+  (`PAUSADO`) e registra um alerta crítico — esse é o limite do que o software
+  pode resolver sozinho, dali em diante é intervenção humana.
+- **Exceção inesperada no processamento de um evento:** não pode derrubar a
+  task que processa o stream de eventos para sempre — é capturada, logada, e o
+  próximo evento ainda é processado normalmente.
+- **Regras de lote/preço/notional mínimo da exchange (LOT_SIZE, PRICE_FILTER,
+  MIN_NOTIONAL):** violá-las é rejeição dura pela Binance, não um aviso.
+  Quantidade é arredondada para baixo no `stepSize` do símbolo e o preço do
+  stop no `tickSize` (usando `Decimal`, nunca float puro, para evitar erro de
+  precisão) antes de qualquer ordem ser enviada. Se o sinal, já arredondado,
+  ficar abaixo do notional mínimo, a entrada é rejeitada com log claro em vez
+  de gerar uma ordem fadada à rejeição pela exchange.
 
 ## Fora de escopo no MVP
 
@@ -89,3 +109,17 @@ muda comportamento do sistema, só a leitura humana do que está acontecendo.
   reconciliação de ordens de entrada perdidas nesse intervalo é um follow-up,
   não implementado (a reconciliação de gap hoje cobre apenas stop-loss de
   posição já aberta).
+
+**Correções de 2026-07-30 (auditoria técnica), já implementadas:**
+- Retry + fechamento de emergência para falha ao colocar stop-loss após entrada
+  preenchida; captura ampla de exceção em torno do processamento de cada
+  evento; parsing defensivo por mensagem no stream do WebSocket. Ver
+  [`changes/2026-07-30-tratamento-excecao-execucao.md`](../changes/2026-07-30-tratamento-excecao-execucao.md).
+- Validação de `LOT_SIZE`/`PRICE_FILTER`/`MIN_NOTIONAL` antes de qualquer envio
+  de ordem (`ExchangeClient.get_symbol_filters`,
+  `execution/rounding.py`). Ver
+  [`changes/2026-07-30-validacao-regras-exchange.md`](../changes/2026-07-30-validacao-regras-exchange.md).
+- Endpoints de comando do dashboard (`pause`/`resume`/`acknowledge_circuit_breaker`)
+  e o WebSocket `/ws/engine` aceitam uma `DASHBOARD_API_KEY` opcional — ver
+  [`08-dashboard-e-visualizacao.md`](./08-dashboard-e-visualizacao.md) e
+  [`changes/2026-07-30-autenticacao-endpoints-controle.md`](../changes/2026-07-30-autenticacao-endpoints-controle.md).
