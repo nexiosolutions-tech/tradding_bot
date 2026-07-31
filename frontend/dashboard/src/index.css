@@ -691,6 +691,12 @@ code {
   border: 1px solid var(--border-strong);
 }
 
+.tag--negative {
+  background: var(--negative-soft);
+  color: var(--negative);
+  border-color: rgba(230, 103, 95, 0.3);
+}
+
 .tag-list {
   display: flex;
   flex-wrap: wrap;

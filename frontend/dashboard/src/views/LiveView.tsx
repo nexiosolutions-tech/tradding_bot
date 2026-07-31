@@ -2,15 +2,17 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import { EngineControls } from "../components/EngineControls";
 import { ActivityConsole } from "../components/ActivityConsole";
+import { TradesTable } from "../components/TradesTable";
 import { IconTarget } from "../components/Icons";
 import { Timer } from "../components/Timer";
 import { MiniEquityChart } from "../components/MiniEquityChart";
-import type { EngineEvent, EngineState } from "../api/types";
+import type { EngineEvent, EngineState, Trade } from "../api/types";
 
 const MAX_EQUITY_SAMPLES = 400;
 
 export function LiveView({ state }: { state: EngineState | null }) {
   const [events, setEvents] = useState<EngineEvent[]>([]);
+  const [trades, setTrades] = useState<Trade[]>([]);
   const [equityHistory, setEquityHistory] = useState<[number, number][]>([]);
   const baselineEquity = useRef<number | null>(null);
 
@@ -18,11 +20,21 @@ export function LiveView({ state }: { state: EngineState | null }) {
     api.engineEvents(20).then(setEvents).catch(() => undefined);
   }, []);
 
+  const refreshTrades = useCallback(() => {
+    api.trades().then(setTrades).catch(() => undefined);
+  }, []);
+
   useEffect(() => {
     refreshEvents();
     const interval = setInterval(refreshEvents, 5000);
     return () => clearInterval(interval);
   }, [refreshEvents]);
+
+  useEffect(() => {
+    refreshTrades();
+    const interval = setInterval(refreshTrades, 15000);
+    return () => clearInterval(interval);
+  }, [refreshTrades]);
 
   useEffect(() => {
     if (state?.equity == null) return;
@@ -114,6 +126,11 @@ export function LiveView({ state }: { state: EngineState | null }) {
           </span>
         </div>
         <ActivityConsole entries={state.activity ?? []} />
+      </div>
+
+      <div className="panel">
+        <h3>Trades recentes</h3>
+        <TradesTable trades={trades} limit={10} />
       </div>
 
       <div className="panel">

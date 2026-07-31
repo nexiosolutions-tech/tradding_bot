@@ -2,8 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api } from "../api/client";
 import { EquityCurveChart } from "../components/EquityCurveChart";
+import { TradesTable } from "../components/TradesTable";
 import { IconBars } from "../components/Icons";
 import type { BacktestDetail, BacktestSummary } from "../api/types";
+
+// pnl_by_weekday keys follow Python's datetime.weekday() convention: Monday = 0.
+const WEEKDAY_LABEL = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
 
 export function PerformanceView() {
   const [runs, setRuns] = useState<BacktestSummary[] | null>(null);
@@ -27,6 +31,13 @@ export function PerformanceView() {
     return Object.entries(detail.metrics.pnl_by_hour)
       .map(([hour, pnl]) => ({ hour: `${hour}h`, pnl }))
       .sort((a, b) => Number(a.hour.replace("h", "")) - Number(b.hour.replace("h", "")));
+  }, [detail]);
+
+  const weekdayData = useMemo(() => {
+    if (!detail) return [];
+    return Object.entries(detail.metrics.pnl_by_weekday)
+      .map(([day, pnl]) => ({ day: WEEKDAY_LABEL[Number(day)] ?? day, dayIndex: Number(day), pnl }))
+      .sort((a, b) => a.dayIndex - b.dayIndex);
   }, [detail]);
 
   if (runs === null) {
@@ -104,6 +115,27 @@ export function PerformanceView() {
                 <Bar dataKey="pnl" fill="#d99a3d" radius={[3, 3, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
+          </div>
+
+          <div className="panel">
+            <h3>P&amp;L por dia da semana</h3>
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={weekdayData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#29271f" />
+                <XAxis dataKey="day" stroke="#7a7466" fontSize={11} fontFamily="JetBrains Mono" />
+                <YAxis stroke="#7a7466" fontSize={11} fontFamily="JetBrains Mono" />
+                <Tooltip
+                  contentStyle={{ background: "#131210", border: "1px solid #29271f", borderRadius: 8, fontSize: 12 }}
+                  labelStyle={{ color: "#b3ac9e" }}
+                />
+                <Bar dataKey="pnl" fill="#d99a3d" radius={[3, 3, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
+          <div className="panel">
+            <h3>Trades ({detail.trades.length})</h3>
+            <TradesTable trades={detail.trades} />
           </div>
         </div>
       )}
