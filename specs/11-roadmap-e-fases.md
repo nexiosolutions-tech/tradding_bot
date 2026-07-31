@@ -119,13 +119,42 @@ o que torna o projeto seguro de construir incrementalmente.
     de promoção pela primeira vez**. Ainda assim `folds_won=0/5` — a
     promoção exige vitória em **todos** os folds, não um resultado bom
     isolado; o sistema de promoção rejeitou corretamente.
+- **Iteração de 2026-07-31 (5ª rodada — variação por fold explicada por
+  tendência de mercado)**: para cada um dos 5 folds (config da 4ª rodada),
+  calculado o período de calendário e a variação de preço BTCUSDT no
+  período:
+
+  | Fold | Período | Tendência | Range | PF |
+  |---|---|---|---|---|
+  | 0 | 07-18/jun | +3.3% | 10.6% | 1.54 |
+  | 1 | 18-29/jun | -6.2% | 11.8% | 0.38 |
+  | 2 | 29/jun-10/jul | +6.8% | 11.5% | 1.03 |
+  | 3 | 10-20/jul | +2.0% | 6.2% | 0.50 |
+  | 4 | 20-31/jul | -3.2% | 6.9% | 0.20 |
+
+  - **Correlação clara com a direção da tendência**: PF médio nos 3 folds de
+    alta = **1.02** (acima do gate de promoção); PF médio nos 2 folds de
+    baixa = **0.29**. Faz sentido mecanicamente — a estratégia é **long-only**
+    (spot sem margem, já documentado em `06-camada-de-execucao.md`), então
+    não tem como se proteger estruturalmente de uma tendência de baixa.
+    Volatilidade (range) sozinha não explica a variação tão bem quanto a
+    direção da tendência (fold 3 e fold 4 têm range parecido, ~6-7%, mas PF
+    bem diferente).
+  - **Implicação**: a degradação nos folds de baixa não é necessariamente
+    falha do modelo — é limitação estrutural conhecida de qualquer
+    estratégia long-only. Isso não muda o critério de promoção (spec 07 já
+    exige checar degradação por regime antes de promover, por um motivo
+    exatamente como este), mas dá contexto real para interpretar os
+    números: o modelo parece ter algum sinal genuíno em mercado de alta
+    (PF>1 em 2 de 3 folds de alta), o problema visível é a ausência de
+    proteção/seletividade em mercado de baixa.
 - Próximos passos possíveis — iteração de modelo, não mudança de fase:
-  investigar por que o fold mais recente (cronologicamente) melhora menos
-  que os demais com o mesmo balanceamento (pode ser mudança de regime, não
-  falha do balanceamento em si — checar segmentação por regime como já
-  exige `07-backtesting-e-validacao.md`), importância de features (SHAP)
-  para entender o que o modelo está de fato usando, revisar se BTCUSDT 1m
-  tem sinal explorável nesse recorte de fato ou se vale testar outro
+  considerar um filtro de regime/tendência explícito (ex.: feature de
+  tendência de prazo mais longo, ou reduzir agressividade de entrada quando
+  o regime detectado for de baixa) em vez de tratar regime só como
+  informação de leitura pós-hoc, importância de features (SHAP) para
+  entender o que o modelo está de fato usando, revisar se BTCUSDT 1m tem
+  sinal explorável nesse recorte de fato ou se vale testar outro
   timeframe/par, ou aceitar que esse conjunto de features/target não supera
   a regra simples neste par/janela e testar outro.
 - **Limitação conhecida (2026-07-31):** o baseline placeholder da Fase 1
