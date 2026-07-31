@@ -24,6 +24,11 @@ class PromotionCriteria:
     min_trades: int = 20
     min_profit_factor_improvement: float = 0.0
     max_drawdown_regression_pct: float = 0.0
+    # "Beats the baseline" is not enough on its own — the Fase 1 placeholder baseline was
+    # found to have structurally negative expectancy (2026-07-31), so a candidate could
+    # clear the relative check above by merely being "less bad" than a broken baseline
+    # while still losing money net of costs. This is an independent, absolute gate.
+    min_profit_factor: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -69,6 +74,14 @@ def evaluate_fold(
         return FoldResult(
             fold_index, candidate_metrics, baseline_metrics, False,
             f"amostra insuficiente ({candidate_metrics.num_trades} trades < {criteria.min_trades})",
+        )
+
+    if candidate_metrics.profit_factor < criteria.min_profit_factor:
+        return FoldResult(
+            fold_index, candidate_metrics, baseline_metrics, False,
+            f"expectância líquida do candidato não é positiva (profit factor "
+            f"{candidate_metrics.profit_factor:.2f} < {criteria.min_profit_factor:.2f}) — "
+            "não basta ser 'menos ruim' que o baseline",
         )
 
     if candidate_metrics.profit_factor <= baseline_metrics.profit_factor + criteria.min_profit_factor_improvement:

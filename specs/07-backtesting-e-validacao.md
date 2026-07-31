@@ -29,6 +29,14 @@ algorítmico falha silenciosamente.
 Uma nova versão (de modelo ou de parâmetro de decisão) só é promovida a
 candidata de produção se, no backtest out-of-sample walk-forward:
 
+- **Ter expectância líquida positiva por si só** (profit factor ≥ 1, líquido
+  de taxas e slippage) — gate absoluto, independente de como o baseline
+  performou. "Superar o baseline" não é suficiente sozinho: um candidato
+  pode ser "menos ruim" que um baseline com expectância estruturalmente
+  quebrada e ainda assim perder dinheiro líquido (ver limitação conhecida
+  abaixo, adicionada em 2026-07-31 após achado real nesse sentido). Sem esse
+  gate, o critério seguinte (superar o baseline) é necessário mas não
+  suficiente.
 - Superar a versão em produção nas métricas definidas como primárias (ex.:
   profit factor e drawdown máximo — a lista exata de métricas e limiares é
   definida em `changes/` e versionada).
@@ -47,6 +55,31 @@ candidata de produção se, no backtest out-of-sample walk-forward:
   vivo — quando isso ocorre, a causa é investigada (bug de leakage, mudança de
   regime de mercado, ou diferença sutil entre implementação de backtest e
   produção) antes de qualquer nova promoção.
+
+## Limitação conhecida: baseline placeholder estruturalmente fraco (2026-07-31)
+
+Investigação de um backtest real (`BTCUSDT_1m_7d`, 65 trades, 0% win rate,
+100% das saídas via `signal_exit`) confirmou que a regra-placeholder de
+`backtesting/strategy.py` (`RsiBollingerPlaceholderStrategy`) **perde
+estruturalmente**, não por bug de direção/custo/timing (essas hipóteses
+foram checadas e descartadas — ver `changes/2026-07-31-stop-loss-intrabar-backtest-engine.md`
+para o único bug real encontrado nessa investigação, que não é a causa
+disto). A causa: a saída por "RSI voltou à linha média (50)" fecha a posição
+assim que o momentum recupera, o que tipicamente acontece **antes** do preço
+se mover o suficiente para cobrir o custo de round-trip (~0.3% = 0.2% de
+taxa + ~0.1% de slippage nos dois lados). Reproduzido em 3 janelas históricas
+distintas e não sobrepostas (30-37, 60-67 e 90-97 dias atrás): taxa de
+acerto líquida entre 0% e 9%, mesmo em uma janela onde o buy-and-hold do
+período foi levemente positivo — ou seja, não é característica de um
+regime de mercado específico (tendência de baixa), é o próprio desenho da
+regra de saída.
+
+**Implicação para `specs/11-roadmap-e-fases.md`, critério de saída da Fase
+2:** "superar o baseline ingênuo" é um critério fraco enquanto esse baseline
+tiver expectância estruturalmente negativa — um modelo candidato pode vencer
+essa régua só por ser "menos ruim", sem ter expectância líquida positiva de
+verdade. Ver critério adicional de expectância líquida positiva,
+proposto em `changes/2026-07-31-criterio-promocao-expectancia-positiva.md`.
 
 ## Métricas obrigatórias no relatório de backtest
 

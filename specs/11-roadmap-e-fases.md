@@ -38,6 +38,18 @@ o que torna o projeto seguro de construir incrementalmente.
   threshold/target (`04`), considerar novas features via `changes/`, ou
   aceitar que esse conjunto de features/target não supera a regra simples
   neste par/janela e testar outro.
+- **Limitação conhecida (2026-07-31):** o baseline placeholder da Fase 1
+  (`RsiBollingerPlaceholderStrategy`) tem expectância estruturalmente
+  negativa — sua saída por recuperação de RSI fecha a posição antes do
+  preço cobrir o custo de round-trip (~0.3%), resultando em taxa de acerto
+  líquida entre 0% e 9% em múltiplas janelas históricas distintas. Ver
+  detalhamento em `07-backtesting-e-validacao.md`. Isso torna "superar o
+  baseline" (critério de saída acima) um critério fraco por si só — antes de
+  retomar a iteração de features/target desta fase, o critério de promoção
+  em `07-backtesting-e-validacao.md` foi reforçado para também exigir
+  expectância líquida positiva do próprio candidato (ver
+  `changes/2026-07-31-criterio-promocao-expectancia-positiva.md`), não só
+  "melhor que um baseline quebrado".
 
 ## Fase 3 — Dashboard em modo observação
 
