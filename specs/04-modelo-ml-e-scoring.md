@@ -85,6 +85,14 @@ direta.
 4. Calibração do score (ex.: `CalibratedClassifierCV` ou calibração isotônica)
    para que "score 0.7" realmente signifique ~70% de acerto histórico — sem
    isso, o score não é utilizável de forma confiável pela camada de decisão.
+5. Peso de classe (`scale_pos_weight`, 2026-07-31) calculado a partir do
+   próprio desbalanceamento observado em cada fold de treino — `label=1` foi
+   observado em 0.5-6% das linhas dependendo do horizonte, e sem
+   compensação o treino podia otimizar a perda simplesmente prevendo a
+   classe majoritária. Treino usa `random_state` fixo para que comparações
+   de configuração (hiperparâmetros, sweeps) não sejam contaminadas por
+   aleatoriedade interna do treino em si. Ver
+   `changes/2026-07-31-peso-classe-e-seed-treino.md`.
 
 ## Orçamento de latência
 

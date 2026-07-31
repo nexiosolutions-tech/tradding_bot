@@ -102,14 +102,32 @@ o que torna o projeto seguro de construir incrementalmente.
   - **0 de 5 folds vencidos em todas as três combinações**, sem exceção.
     Melhor ponto agora confiável (`horizon=45min`, `entry_percentile=99`,
     90 dias): mean PF 0.41 — ainda a ~2.5x de distância do gate de promoção.
+- **Iteração de 2026-07-31 (4ª rodada — peso de classe no treino)**:
+  `ModelConfig.balance_classes` (default ligado) passa `scale_pos_weight`
+  ao LightGBM a partir do desbalanceamento real de cada fold; `random_state`
+  fixo adicionado junto (necessário para comparações limpas — sem isso,
+  duas rodadas do mesmo config podiam variar só por aleatoriedade interna
+  do treino). Ver `changes/2026-07-31-peso-classe-e-seed-treino.md`.
+  - Comparação controlada (mesma seed, mesmos folds, `horizon_minutes=45`,
+    `entry_percentile=99`, 90 dias): **todos os 5 folds melhoraram** com
+    balanceamento, não só a média — sem balancear: PF por fold
+    `[0.61, 0.23, 0.66, 0.40, 0.15]` (média 0.41); com balanceamento: PF por
+    fold `[1.54, 0.38, 1.03, 0.50, 0.20]` (média 0.73).
+  - **Primeiro sinal consistente (não isolado) desde o início desta
+    investigação** — melhora em todos os folds, não só em média, indicando
+    que não é ruído de execução. Um fold chegou a **PF=1.54, acima do gate
+    de promoção pela primeira vez**. Ainda assim `folds_won=0/5` — a
+    promoção exige vitória em **todos** os folds, não um resultado bom
+    isolado; o sistema de promoção rejeitou corretamente.
 - Próximos passos possíveis — iteração de modelo, não mudança de fase:
-  considerar peso de classe no treino (LightGBM) dado o desbalanceamento
-  observado (`label=1` em 2.7-6.1% das linhas dependendo do horizonte, com
-  90 dias), revisar se BTCUSDT 1m tem sinal explorável nesse recorte de
-  fato ou se vale testar outro timeframe/par, importância de features
-  (SHAP) para entender o que o modelo está de fato usando, ou aceitar que
-  esse conjunto de features/target não supera a regra simples neste
-  par/janela e testar outro.
+  investigar por que o fold mais recente (cronologicamente) melhora menos
+  que os demais com o mesmo balanceamento (pode ser mudança de regime, não
+  falha do balanceamento em si — checar segmentação por regime como já
+  exige `07-backtesting-e-validacao.md`), importância de features (SHAP)
+  para entender o que o modelo está de fato usando, revisar se BTCUSDT 1m
+  tem sinal explorável nesse recorte de fato ou se vale testar outro
+  timeframe/par, ou aceitar que esse conjunto de features/target não supera
+  a regra simples neste par/janela e testar outro.
 - **Limitação conhecida (2026-07-31):** o baseline placeholder da Fase 1
   (`RsiBollingerPlaceholderStrategy`) tem expectância estruturalmente
   negativa — sua saída por recuperação de RSI fecha a posição antes do

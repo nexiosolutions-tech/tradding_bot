@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from tradingbot.model.dataset import FEATURE_NAMES, DatasetRow
 from tradingbot.model.training import (
@@ -74,3 +75,38 @@ def test_choose_thresholds_are_derived_from_calibration_rows_only():
 
     entry, exit_ = choose_thresholds(model, calib_rows, entry_percentile=80, exit_percentile=50)
     assert 0.0 <= exit_ <= entry <= 1.0
+
+
+def _imbalanced_rows(n=100, positive_every=10):
+    """label=1 rate ~10%, evenly spread across the timeline so any chronological prefix
+    (as split_fit_calibration/walk_forward_splits produce) keeps the same ratio — real
+    datasets here see label=1 at 0.5-6% of rows (2026-07-31 sweep), this mirrors that."""
+    return [_row(i, rsi=90.0 if i % positive_every == positive_every - 1 else 10.0, label=int(i % positive_every == positive_every - 1)) for i in range(n)]
+
+
+def test_scale_pos_weight_reflects_class_imbalance_when_balancing_enabled():
+    rows = _imbalanced_rows(n=100, positive_every=10)  # ~9 negatives per positive
+    model = train_model(rows, ModelConfig(n_estimators=10, balance_classes=True), calibration_fraction=0.2)
+    assert model.booster.scale_pos_weight == pytest.approx(9.0, rel=0.2)
+
+
+def test_scale_pos_weight_is_a_no_op_when_balancing_disabled():
+    rows = _imbalanced_rows(n=100, positive_every=10)
+    model = train_model(rows, ModelConfig(n_estimators=10, balance_classes=False), calibration_fraction=0.2)
+    assert model.booster.scale_pos_weight == 1.0
+
+
+def test_training_is_deterministic_given_the_same_config():
+    """Without a fixed random_state, two runs of the *same* ModelConfig could produce
+    different scores purely from LightGBM's own internal randomness — making it
+    impossible to tell a real config improvement from training-run noise, exactly the
+    kind of comparison the hyperparameter sweeps (2026-07-31) depend on being clean."""
+    rows = _separable_rows(400)
+    fit_rows, calib_rows = split_fit_calibration(rows, calibration_fraction=0.2)
+
+    model_a = train_model(fit_rows, ModelConfig(n_estimators=30), calibration_fraction=0.2)
+    model_b = train_model(fit_rows, ModelConfig(n_estimators=30), calibration_fraction=0.2)
+
+    scores_a = model_a.predict_proba_batch(calib_rows)
+    scores_b = model_b.predict_proba_batch(calib_rows)
+    assert np.array_equal(scores_a, scores_b)

@@ -21,6 +21,14 @@ class ModelConfig:
     learning_rate: float = 0.05
     n_estimators: int = 200
     min_child_samples: int = 30
+    # label=1 has been observed at 0.5-6% of rows depending on horizon (2026-07-31 sweep)
+    # — without this, LightGBM can reach a low training loss by mostly predicting the
+    # majority class, exactly the failure mode a rare-opportunity target invites.
+    balance_classes: bool = True
+    # Fixed so hyperparameter sweeps compare configs, not training-run noise — without
+    # this, LGBMClassifier's own randomness (bagging/feature subsampling) could make two
+    # runs of the *same* config differ enough to look like a config difference.
+    random_state: int = 42
 
 
 @dataclass
@@ -90,11 +98,21 @@ def train_model(
     fit_rows, calib_rows = split_fit_calibration(train_rows, calibration_fraction)
 
     x_fit, y_fit = _to_matrix(fit_rows, feature_names)
+
+    scale_pos_weight = 1.0
+    if config.balance_classes:
+        n_pos = int(y_fit.sum())
+        n_neg = len(y_fit) - n_pos
+        if n_pos > 0:
+            scale_pos_weight = n_neg / n_pos
+
     booster = LGBMClassifier(
         num_leaves=config.num_leaves,
         learning_rate=config.learning_rate,
         n_estimators=config.n_estimators,
         min_child_samples=config.min_child_samples,
+        scale_pos_weight=scale_pos_weight,
+        random_state=config.random_state,
         verbosity=-1,
     )
     booster.fit(x_fit, y_fit)
