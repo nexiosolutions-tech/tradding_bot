@@ -72,20 +72,43 @@ o que torna o projeto seguro de construir incrementalmente.
 - Circuit breaker, stop-loss obrigatório, idempotência e reconciliação
   testados sob condições adversas simuladas (queda de conexão, latência,
   rejeição de ordem).
-- **Critério de saída:** operação estável em testnet por um período mínimo
-  (a definir), sem violação de nenhuma invariante de risco, com todo o ciclo
-  de vida de ordens corretamente refletido no dashboard.
+- **Critério de saída, dividido em duas sub-fases (2026-07-31, ver
+  `changes/2026-07-30-criterios-sucesso-periodo-validacao.md`):** a
+  formulação original ("período mínimo a definir") misturava duas perguntas
+  diferentes — se a execução funciona de forma confiável, e se o modelo tem
+  alguma vantagem estatística real. Como a segunda só pode ser respondida
+  depois que a Fase 2 promover um modelo, elas foram separadas:
+  - **Fase 4a — Validação mecânica** (pode rodar já, com o placeholder da
+    Fase 1): critério de saída = operação contínua em testnet sem nenhuma
+    violação de invariante de `05-gestao-de-risco.md` (ordem sem
+    stop-loss, duplicação de ordem, circuit breaker não respeitado), com
+    reconciliação de estado local vs. exchange passando em 100% das
+    checagens periódicas. Testável em dias — teste de infraestrutura, não
+    de qualidade de modelo.
+  - **Fase 4b — Validação de vantagem estatística** (só inicia quando a
+    Fase 2 promover um modelo real): critério de saída ligado a **tamanho
+    de amostra**, não a prazo fixo em calendário — piso de ≥10 trades
+    (mesmo limiar de `09-aprendizado-continuo.md`) antes de qualquer
+    conclusão; abaixo disso o resultado do período é ruído, não motivo
+    para promover capital nem abandonar o modelo. Se o modelo gerar poucos
+    trades no período (comum em estratégias seletivas), o critério se
+    estende no tempo em vez de forçar conclusão pelo calendário. Mesma
+    checagem de `07-backtesting-e-validacao.md` contra degradação
+    concentrada em regime único se aplica à leitura do resultado ao vivo.
+    **Nota de calibração:** esse piso de ≥10 trades é um mínimo para "não
+    ser obviamente ruído", não uma garantia de significância estatística —
+    ver a mesma ressalva sobre `min_profit_factor` perto de 1.0 em
+    `07-backtesting-e-validacao.md`.
 - **Status: código implementado, validação ao vivo pendente.** `Orchestrator`
   completo (máquina de estados, sizing/stop-loss/circuit breaker via o mesmo
   `RiskManager` do backtesting, idempotência de client order id,
   reconciliação de gap), testado extensivamente contra um `FakeExchangeClient`
   em memória. **Falta:** o usuário gerar chaves de API em
   `testnet.binance.vision` e configurá-las (`BINANCE_API_KEY`/`BINANCE_API_SECRET`)
-  — sem isso, o critério de saída ("operação estável em testnet por um
-  período mínimo") não pode nem começar a ser avaliado, porque não há como
+  — sem isso, nem a Fase 4a pode começar a ser avaliada, porque não há como
   testar contra a exchange real ainda. Como a Fase 2 não promoveu modelo, a
   estratégia ativa por padrão é o placeholder da Fase 1 — rodar em testnet
-  não valida qualidade de modelo, só a mecânica de execução.
+  hoje só validaria a Fase 4a (mecânica), nunca a 4b (vantagem estatística).
 
 ## Fase 5 — Motor de aprendizado contínuo
 

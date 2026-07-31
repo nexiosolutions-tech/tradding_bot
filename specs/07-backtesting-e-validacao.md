@@ -37,6 +37,21 @@ candidata de produção se, no backtest out-of-sample walk-forward:
   abaixo, adicionada em 2026-07-31 após achado real nesse sentido). Sem esse
   gate, o critério seguinte (superar o baseline) é necessário mas não
   suficiente.
+  - **Ressalva sobre amostra pequena (2026-07-31):** `profit_factor ≥ 1.0` é
+    o breakeven exato — um candidato com PF = 1.02 pode ser apenas ruído
+    estatístico se o número de trades no fold for pequeno (as janelas reais
+    testadas nesta investigação tinham 65-77 trades em 7 dias, e mesmo
+    nessa ordem de grandeza um PF perto de 1.0 não é fortemente conclusivo).
+    Este gate garante *direção* (candidato não é um perdedor líquido óbvio),
+    não *significância* — quem dá a segunda parte é `decide_promotion`
+    exigir vitória em **todos** os folds do walk-forward (não um resultado
+    agregado isolado) e o piso mínimo de amostra por leitura, mesmo
+    princípio do piso de ≥10 trades usado para validação ao vivo na Fase 4b
+    (`11-roadmap-e-fases.md`,
+    `changes/2026-07-30-criterios-sucesso-periodo-validacao.md`). Um PF
+    marginal (perto de 1.0) que só passa em folds com poucas trades deve ser
+    tratado com a mesma cautela que um resultado mensal com poucos trades ao
+    vivo — não motivo para promoção automática sem revisão humana adicional.
 - Superar a versão em produção nas métricas definidas como primárias (ex.:
   profit factor e drawdown máximo — a lista exata de métricas e limiares é
   definida em `changes/` e versionada).
