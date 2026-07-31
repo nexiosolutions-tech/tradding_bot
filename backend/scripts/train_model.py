@@ -62,7 +62,11 @@ def main() -> None:
         print("No data returned — aborting.")
         return
 
-    target_config = TargetConfig(horizon_minutes=args.horizon_minutes, move_threshold_pct=args.move_threshold_pct)
+    target_config = TargetConfig(
+        horizon_minutes=args.horizon_minutes,
+        move_threshold_pct=args.move_threshold_pct,
+        stop_loss_pct=STOP_LOSS_PCT,
+    )
     rows = build_dataset(events, target_config)
     print(f"Built {len(rows)} labeled rows (label=1 rate: {sum(r.label for r in rows) / len(rows):.1%}).")
 

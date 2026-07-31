@@ -8,10 +8,33 @@ direta.
 
 ## Definição do alvo (target)
 
-- O modelo **não prevê preço exato**. Prevê algo como: *"probabilidade de
-  movimento maior que X% na direção D nos próximos N minutos"*.
-- X, D e N são parâmetros de configuração, documentados e versionados junto com
-  o modelo — mudá-los é uma mudança de spec/`changes/`, não um ajuste solto.
+- O modelo **não prevê preço exato**. Prevê a probabilidade de o trade dar
+  lucro **dado que ele sempre é executado com stop-loss** (spec 05/06,
+  CLAUDE.md regra 2) — o label reflete o resultado real da estratégia, não um
+  cenário hipotético sem proteção.
+- **Método da tripla barreira**: dentro de um horizonte de `N` candles à
+  frente, existem três barreiras possíveis e o label é definido por qual delas
+  é tocada **primeiro**, candle a candle:
+  1. **Take-profit**: máxima do candle atinge `close_atual * (1 + X)`.
+  2. **Stop-loss**: mínima do candle atinge `close_atual * (1 - stop_loss_pct)`.
+  3. **Fim do horizonte**: nenhuma das duas é tocada dentro de `N` candles.
+  - `label = 1` somente se a barreira de take-profit for tocada antes da de
+    stop-loss. Tocar o stop-loss primeiro, ou não tocar nenhuma barreira, é
+    `label = 0`.
+- `X` (`move_threshold_pct`), `D` (direção — hoje sempre "alta"), `N`
+  (`horizon_bars`) e `stop_loss_pct` são parâmetros de configuração,
+  documentados e versionados junto com o modelo — mudar qualquer um deles é
+  mudança de spec/`changes/`, não um ajuste solto. `stop_loss_pct` em
+  particular deve ser o mesmo valor usado pela camada de execução para aquele
+  símbolo/estratégia — treinar contra um stop-loss diferente do real invalida
+  a calibração do modelo.
+- Checar apenas a máxima futura (sem olhar a mínima) foi identificado como
+  bug em auditoria técnica (2026-07-30, ver
+  `changes/2026-07-30-label-tripla-barreira.md`): o modelo aprendia a
+  reconhecer padrões que "eventualmente" alcançavam o alvo mesmo quando o
+  preço teria caído e disparado o stop-loss antes — ou seja, era treinado
+  para um mundo sem stop-loss, mas opera em um sistema que sempre tem um. O
+  método da tripla barreira é a correção estrutural desse desalinhamento.
 - Esse tipo de alvo generaliza melhor do que prever o valor exato do preço, e
   permite calibração posterior (ver seção de calibração).
 

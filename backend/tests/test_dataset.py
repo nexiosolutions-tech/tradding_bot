@@ -5,7 +5,7 @@ WARMUP_BARS = 30  # enough for RSI(14)/Bollinger(20)/MACD to leave warm-up
 BAR_MS = 60_000
 
 
-def _kline(symbol, close, high, ts, volume=100.0):
+def _kline(symbol, close, high, ts, low=None, volume=100.0):
     return MarketEvent(
         symbol=symbol,
         event_type=EventType.KLINE,
@@ -18,7 +18,7 @@ def _kline(symbol, close, high, ts, volume=100.0):
             "interval": "1m",
             "open": close,
             "high": high,
-            "low": close,
+            "low": close if low is None else low,
             "close": close,
             "volume": volume,
             "is_closed": True,
@@ -80,3 +80,53 @@ def test_last_rows_without_full_future_horizon_are_excluded():
     last_usable_ts = events[-1 - target.horizon_bars].exchange_ts
     assert rows  # sanity: the fixture must actually produce usable rows
     assert all(r.knowledge_ts <= last_usable_ts for r in rows)
+
+
+def test_label_is_zero_when_stop_loss_hit_before_take_profit():
+    """The bug this closes: checking only future highs would label this row an
+    'opportunity' (the target is eventually reached), even though the stop-loss (spec
+    05/06's structural guarantee) would have closed the trade out first."""
+    events = _warmup_events()
+    entry_ts = BAR_MS * (WARMUP_BARS + 1)
+    events.append(_kline("BTCUSDT", 100.0, 100.0, entry_ts))  # row under test
+    # Candle 1: dips through the stop-loss (1.5%) first...
+    events.append(_kline("BTCUSDT", 98.0, 100.0, BAR_MS * (WARMUP_BARS + 2), low=98.0))
+    # ...candle 2: "eventually" reaches the take-profit target too, but too late.
+    events.append(_kline("BTCUSDT", 100.0, 105.0, BAR_MS * (WARMUP_BARS + 3)))
+
+    target = TargetConfig(horizon_minutes=2, candle_minutes=1, move_threshold_pct=0.03, stop_loss_pct=0.015)
+    rows = build_dataset(events, target)
+
+    row_at_entry = next(r for r in rows if r.knowledge_ts == entry_ts)
+    assert row_at_entry.label == 0
+
+
+def test_label_is_one_when_take_profit_hit_before_stop_loss():
+    events = _warmup_events()
+    entry_ts = BAR_MS * (WARMUP_BARS + 1)
+    events.append(_kline("BTCUSDT", 100.0, 100.0, entry_ts))  # row under test
+    # Candle 1: take-profit (3%) touched first...
+    events.append(_kline("BTCUSDT", 100.0, 103.5, BAR_MS * (WARMUP_BARS + 2)))
+    # ...candle 2: price later drops through what would've been the stop-loss, too late.
+    events.append(_kline("BTCUSDT", 98.0, 100.0, BAR_MS * (WARMUP_BARS + 3), low=98.0))
+
+    target = TargetConfig(horizon_minutes=2, candle_minutes=1, move_threshold_pct=0.03, stop_loss_pct=0.015)
+    rows = build_dataset(events, target)
+
+    row_at_entry = next(r for r in rows if r.knowledge_ts == entry_ts)
+    assert row_at_entry.label == 1
+
+
+def test_label_is_zero_when_both_barriers_touched_in_same_candle():
+    """Can't tell which barrier came first within a single OHLC bar — must assume the
+    worse case (stop-loss), never the optimistic one."""
+    events = _warmup_events()
+    entry_ts = BAR_MS * (WARMUP_BARS + 1)
+    events.append(_kline("BTCUSDT", 100.0, 100.0, entry_ts))  # row under test
+    events.append(_kline("BTCUSDT", 100.0, 105.0, BAR_MS * (WARMUP_BARS + 2), low=98.0))
+
+    target = TargetConfig(horizon_minutes=1, candle_minutes=1, move_threshold_pct=0.03, stop_loss_pct=0.015)
+    rows = build_dataset(events, target)
+
+    row_at_entry = next(r for r in rows if r.knowledge_ts == entry_ts)
+    assert row_at_entry.label == 0
