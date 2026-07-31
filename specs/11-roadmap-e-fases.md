@@ -82,14 +82,34 @@ o que torna o projeto seguro de construir incrementalmente.
     nesta rodada — não invalida a decisão de adicioná-las (o raciocínio de
     cada uma continua sólido), só significa que não são, sozinhas, a peça
     que faltava.
+- **Iteração de 2026-07-31 (3ª rodada — janela de treino maior, 90 dias)**:
+  a 2ª rodada tinha ficado inconclusiva sobre se horizontes maiores
+  realmente ajudam ou se era ruído de amostra pequena (`horizon_minutes=45`
+  chegou a mean PF 0.77 mas com só 6 trades no pior fold). Buscados 90 dias
+  de BTCUSDT 1m (129.600 candles, o dobro da rodada anterior) e testados
+  `horizon_minutes` em {30, 45, 60} com `entry_percentile=99` (o melhor
+  percentil encontrado até aqui), `n_splits=5`.
+  - **A amostra maior resolveu o problema de confiabilidade**: pior fold
+    passou de 6 trades (90 dias/rodada 2) para 8-15 trades — dentro ou perto
+    do piso mínimo de 15, não mais um número isolado e ruidoso.
+  - **Mas a tendência "horizonte maior sempre ajuda" da 2ª rodada não se
+    confirmou** com dados confiáveis: `horizon=30min` → mean PF 0.37 (min
+    0.17, min_trades=8); `horizon=45min` → mean PF 0.41 (min 0.15,
+    min_trades=15); `horizon=60min` → mean PF 0.32 (min 0.11, min_trades=14).
+    Não é mais monotônico — o pico fica em torno de 45min, não "quanto
+    maior, melhor". O resultado otimista de 0.77 da 2ª rodada era mesmo
+    artefato de amostra pequena, não sinal real.
+  - **0 de 5 folds vencidos em todas as três combinações**, sem exceção.
+    Melhor ponto agora confiável (`horizon=45min`, `entry_percentile=99`,
+    90 dias): mean PF 0.41 — ainda a ~2.5x de distância do gate de promoção.
 - Próximos passos possíveis — iteração de modelo, não mudança de fase:
-  testar horizontes ainda maiores com dados de um período mais longo (para
-  manter `min_trades` alto o suficiente para confiar no resultado), revisar
-  se BTCUSDT 1m tem sinal explorável nesse recorte de fato ou se vale testar
-  outro timeframe/par, considerar peso de classe no treino (LightGBM) dado
-  o desbalanceamento observado (`label=1` em 0.5-4.5% das linhas dependendo
-  do horizonte), ou aceitar que esse conjunto de features/target não supera
-  a regra simples neste par/janela e testar outro.
+  considerar peso de classe no treino (LightGBM) dado o desbalanceamento
+  observado (`label=1` em 2.7-6.1% das linhas dependendo do horizonte, com
+  90 dias), revisar se BTCUSDT 1m tem sinal explorável nesse recorte de
+  fato ou se vale testar outro timeframe/par, importância de features
+  (SHAP) para entender o que o modelo está de fato usando, ou aceitar que
+  esse conjunto de features/target não supera a regra simples neste
+  par/janela e testar outro.
 - **Limitação conhecida (2026-07-31):** o baseline placeholder da Fase 1
   (`RsiBollingerPlaceholderStrategy`) tem expectância estruturalmente
   negativa — sua saída por recuperação de RSI fecha a posição antes do
