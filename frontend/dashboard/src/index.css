@@ -1,24 +1,24 @@
 :root {
-  --bg: #0d0c0a;
-  --bg-elevated: #131210;
-  --surface: #181613;
-  --surface-hover: #201e1a;
-  --border: #29271f;
-  --border-strong: #3a362b;
+  --bg: #faf8f4;
+  --bg-elevated: #f2efe7;
+  --surface: #ffffff;
+  --surface-hover: #f5f2ea;
+  --border: #e8e3d8;
+  --border-strong: #d7cfbd;
 
-  --text: #f3f0e9;
-  --text-secondary: #b3ac9e;
-  --text-muted: #7a7466;
+  --text: #211f1a;
+  --text-secondary: #5c574a;
+  --text-muted: #8b8474;
 
-  --accent: #d99a3d;
-  --accent-strong: #eaad55;
-  --accent-soft: rgba(217, 154, 61, 0.14);
-  --accent-border: rgba(217, 154, 61, 0.35);
+  --accent: #b45309;
+  --accent-strong: #92400e;
+  --accent-soft: rgba(180, 83, 9, 0.1);
+  --accent-border: rgba(180, 83, 9, 0.3);
 
-  --positive: #4fc98a;
-  --positive-soft: rgba(79, 201, 138, 0.14);
-  --negative: #e6675f;
-  --negative-soft: rgba(230, 103, 95, 0.14);
+  --positive: #15803d;
+  --positive-soft: rgba(21, 128, 61, 0.1);
+  --negative: #b91c1c;
+  --negative-soft: rgba(185, 28, 28, 0.1);
 
   --font-ui: "Space Grotesk", -apple-system, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
@@ -27,7 +27,7 @@
   --radius-md: 10px;
   --radius-lg: 16px;
 
-  color-scheme: dark;
+  color-scheme: light;
   color: var(--text);
   background: var(--bg);
   font-family: var(--font-ui);
@@ -198,7 +198,7 @@ code {
   padding: 0 28px;
   position: sticky;
   top: 0;
-  background: rgba(13, 12, 10, 0.85);
+  background: rgba(250, 248, 244, 0.85);
   backdrop-filter: blur(10px);
   z-index: 5;
 }
@@ -271,7 +271,7 @@ code {
 .state-badge--active {
   background: var(--positive-soft);
   color: var(--positive);
-  border-color: rgba(79, 201, 138, 0.3);
+  border-color: rgba(21, 128, 61, 0.3);
 }
 
 .state-badge--muted {
@@ -283,7 +283,7 @@ code {
 .state-badge--danger {
   background: var(--negative-soft);
   color: var(--negative);
-  border-color: rgba(230, 103, 95, 0.3);
+  border-color: rgba(185, 28, 28, 0.3);
 }
 
 /* -- panels / cards ---------------------------------------------------- */
@@ -297,7 +297,7 @@ code {
 }
 
 .panel--warning {
-  border-color: rgba(217, 154, 61, 0.3);
+  border-color: rgba(180, 83, 9, 0.3);
 }
 
 .panel h3 {
@@ -445,17 +445,17 @@ code {
 }
 
 .icon-btn--primary:hover {
-  background: rgba(217, 154, 61, 0.22);
+  background: rgba(180, 83, 9, 0.22);
 }
 
 .icon-btn--danger {
   background: var(--negative-soft);
-  border-color: rgba(230, 103, 95, 0.35);
+  border-color: rgba(185, 28, 28, 0.35);
   color: var(--negative);
 }
 
 .icon-btn--danger:hover {
-  background: rgba(230, 103, 95, 0.22);
+  background: rgba(185, 28, 28, 0.22);
 }
 
 .operator-field {
@@ -569,19 +569,19 @@ code {
   height: 6px;
   border-radius: 50%;
   background: var(--positive);
-  box-shadow: 0 0 0 0 rgba(79, 201, 138, 0.5);
+  box-shadow: 0 0 0 0 rgba(21, 128, 61, 0.5);
   animation: pulse-dot 2s ease-out infinite;
 }
 
 @keyframes pulse-dot {
   0% {
-    box-shadow: 0 0 0 0 rgba(79, 201, 138, 0.45);
+    box-shadow: 0 0 0 0 rgba(21, 128, 61, 0.45);
   }
   70% {
-    box-shadow: 0 0 0 6px rgba(79, 201, 138, 0);
+    box-shadow: 0 0 0 6px rgba(21, 128, 61, 0);
   }
   100% {
-    box-shadow: 0 0 0 0 rgba(79, 201, 138, 0);
+    box-shadow: 0 0 0 0 rgba(21, 128, 61, 0);
   }
 }
 
@@ -694,7 +694,7 @@ code {
 .tag--negative {
   background: var(--negative-soft);
   color: var(--negative);
-  border-color: rgba(230, 103, 95, 0.3);
+  border-color: rgba(185, 28, 28, 0.3);
 }
 
 .tag-list {

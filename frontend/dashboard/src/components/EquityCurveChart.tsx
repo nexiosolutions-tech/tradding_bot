@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { AreaSeries, ColorType, createChart, type IChartApi } from "lightweight-charts";
+import { theme } from "../theme";
 
 export function EquityCurveChart({ points }: { points: [number, number][] }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -12,18 +13,18 @@ export function EquityCurveChart({ points }: { points: [number, number][] }) {
       height: 280,
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
-        textColor: "#7a7466",
+        textColor: theme.textMuted,
         fontFamily: "JetBrains Mono, monospace",
         attributionLogo: false,
       },
-      grid: { horzLines: { color: "#29271f" }, vertLines: { visible: false } },
-      timeScale: { timeVisible: true, borderColor: "#29271f" },
-      rightPriceScale: { borderColor: "#29271f" },
+      grid: { horzLines: { color: theme.border }, vertLines: { visible: false } },
+      timeScale: { timeVisible: true, borderColor: theme.border },
+      rightPriceScale: { borderColor: theme.border },
     });
     const series = chart.addSeries(AreaSeries, {
-      lineColor: "#d99a3d",
-      topColor: "rgba(217, 154, 61, 0.22)",
-      bottomColor: "rgba(217, 154, 61, 0.01)",
+      lineColor: theme.accent,
+      topColor: "rgba(180, 83, 9, 0.18)",
+      bottomColor: "rgba(180, 83, 9, 0.01)",
       lineWidth: 2,
     });
 

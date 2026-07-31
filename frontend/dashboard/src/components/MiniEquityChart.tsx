@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { AreaSeries, ColorType, createChart } from "lightweight-charts";
+import { theme } from "../theme";
 
 export function MiniEquityChart({ points }: { points: [number, number][] }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -19,9 +20,9 @@ export function MiniEquityChart({ points }: { points: [number, number][] }) {
     });
 
     const series = chart.addSeries(AreaSeries, {
-      lineColor: "#d99a3d",
-      topColor: "rgba(217, 154, 61, 0.22)",
-      bottomColor: "rgba(217, 154, 61, 0.01)",
+      lineColor: theme.accent,
+      topColor: "rgba(180, 83, 9, 0.18)",
+      bottomColor: "rgba(180, 83, 9, 0.01)",
       lineWidth: 2,
       priceLineVisible: false,
       lastValueVisible: false,

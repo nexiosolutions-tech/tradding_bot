@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api } from "../api/client";
 import { IconNode } from "../components/Icons";
+import { theme } from "../theme";
 import type { ModelMetadata } from "../api/types";
 
 export function ModeloView() {
@@ -80,14 +81,14 @@ export function ModeloView() {
             <h3>Profit factor por fold (walk-forward)</h3>
             <ResponsiveContainer width="100%" height={220}>
               <BarChart data={foldData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#29271f" />
-                <XAxis dataKey="fold" stroke="#7a7466" fontSize={11} fontFamily="JetBrains Mono" />
-                <YAxis stroke="#7a7466" fontSize={11} fontFamily="JetBrains Mono" />
+                <CartesianGrid strokeDasharray="3 3" stroke={theme.border} />
+                <XAxis dataKey="fold" stroke={theme.textMuted} fontSize={11} fontFamily="JetBrains Mono" />
+                <YAxis stroke={theme.textMuted} fontSize={11} fontFamily="JetBrains Mono" />
                 <Tooltip
-                  contentStyle={{ background: "#131210", border: "1px solid #29271f", borderRadius: 8, fontSize: 12 }}
-                  labelStyle={{ color: "#b3ac9e" }}
+                  contentStyle={{ background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 8, fontSize: 12 }}
+                  labelStyle={{ color: theme.textSecondary }}
                 />
-                <Bar dataKey="profit_factor" fill="#d99a3d" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="profit_factor" fill={theme.accent} radius={[3, 3, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
