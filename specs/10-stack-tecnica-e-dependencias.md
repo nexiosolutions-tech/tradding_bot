@@ -16,6 +16,14 @@
   técnicos.
 - **LightGBM / XGBoost** como modelo baseline.
 - **`pandas`/`numpy`** para prototipagem e backtesting offline.
+- **`shap`** (2026-08-01) — importância de features via `TreeExplainer`, usado por
+  `model/importance.py` e pelo script de diagnóstico `scripts/feature_importance.py`
+  (spec 04/11). Só roda offline (treino/diagnóstico), nunca no caminho de execução.
+- **`anthropic`** (2026-08-01) — SDK oficial, usado por
+  `learning_engine/agentic_loop.py` (`AnthropicReasoningClient`) para o loop agêntico
+  de aprendizado contínuo (spec 09). Requer `ANTHROPIC_API_KEY`; roda só no ciclo de
+  investigação (`scripts/run_agentic_learning.py`), nunca no caminho de execução —
+  mesma separação estrutural de `execution/` que já vale para o resto do projeto.
 
 ### Persistência
 - **SQLAlchemy** (`backend/src/tradingbot/persistence/`) sobre **SQLite** em

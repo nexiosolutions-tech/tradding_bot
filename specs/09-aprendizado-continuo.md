@@ -69,9 +69,14 @@ que pode perder dinheiro":
     │     comparação backtest-vs-produção), registra o resultado na memória.
     ├─ 4. Achado com evidência suficiente (mesmos critérios estatísticos já
     │     usados — specs/07: amostra mínima, validação out-of-sample)?
-    │        → Sim: redige changes/ completo (proposta + rascunho de spec +
-    │          diff de código + testes) com **Status: pendente**, abre PR
-    │          numa branch dedicada, e encerra o ciclo.
+    │        → Sim: redige changes/ completo (evidência + proposta + números
+    │          reais de validação já rodada) com **Status: pendente**, e
+    │          encerra o ciclo. **v1 (implementada): só o texto da proposta**
+    │          — rascunho de spec, diff de código e testes gerados
+    │          automaticamente, e abrir PR numa branch dedicada, ficam para
+    │          uma extensão futura (ver "Status de implementação" abaixo);
+    │          por ora, quem aprova a proposta também escreve o código, como
+    │          já acontece hoje numa sessão de Claude Code dirigida por humano.
     │        → Não: volta ao passo 2, até esgotar o orçamento de iterações.
     ▼
 [changes/AAAA-MM-DD-descricao.md, pendente]  ← ponto de parada estrutural
@@ -89,8 +94,8 @@ que pode perder dinheiro":
 |---|---|
 | Ler `learnings/`/`changes/`/dado histórico, formular hipótese | Sim |
 | Rodar backtest, sweep de hiperparâmetro, análise SHAP sobre dado histórico | Sim |
-| Redigir a entrada completa em `changes/` (proposta + rascunho de spec + diff de código + testes), com **Status: pendente** | Sim |
-| Abrir branch/PR com essa proposta | Sim |
+| Redigir a entrada completa em `changes/` (evidência + proposta + números reais de validação), com **Status: pendente** | Sim — implementado |
+| Redigir também rascunho de spec + diff de código + testes, e abrir PR numa branch dedicada | Sim, é a visão da spec — **ainda não implementado** (v1 entrega só o texto da proposta) |
 | Retreino de modelo dentro da mesma arquitetura/target, promovido automaticamente se bater specs/07 | Sim — já permitido hoje, sem mudança |
 | Marcar uma proposta como `aprovada`/`rejeitada`/`aplicada` | **Não** — sempre humano |
 | Fazer merge do PR em `main` | **Não** — sempre humano |
@@ -140,22 +145,55 @@ operação em tempo real, agora com mais a mostrar.
 
 ## Status de implementação (Fase 5)
 
-**Esta spec foi reescrita em 2026-08-01 antes de qualquer código novo — SDD
-(`CLAUDE.md`, "nenhuma funcionalidade é implementada sem uma spec
-correspondente").** O que existe hoje em
-`backend/src/tradingbot/learning_engine/` (`daily_report.py`,
-`change_proposals.py`, rodados via `scripts/run_daily_learning.py`)
-implementa só a versão anterior desta spec: job único, heurística fixa
-(`win_rate < 35%` numa hora UTC), proposta rascunhada sem validação embutida.
-Isso continua funcional e é reaproveitável como uma das *ferramentas* do novo
-loop (o passo "ler achados do dia" already exists), mas o controlador de
-loop, o modelo de raciocínio, e o índice de experimentos descritos acima
-ainda não existem em código.
+**v1 implementada em 2026-08-01, no mesmo dia da reescrita da spec** (a spec
+foi escrita e commitada primeiro, código depois, por SDD):
+
+- `model/evaluation.py::evaluate_config` — walk-forward completo para uma
+  config, extraído de `train_model.py`/`sweep_thresholds.py` (que passaram a
+  reusá-lo) para não duplicar essa lógica uma terceira vez.
+- `model/importance.py::compute_feature_importance` — SHAP extraído de
+  `scripts/feature_importance.py` do mesmo jeito. A extração pegou um bug
+  real no processo: correlação de direção virava `NaN` quando uma feature
+  tinha SHAP constante (ex. `macd_pct`, que o modelo nunca usa) — corrigido.
+- `learning_engine/experiment_log.py` — memória de experimentos
+  (`learnings/experiments.jsonl`, append-only) com `already_tried` para
+  dedup.
+- `learning_engine/tools.py` — as quatro ferramentas que o loop pode chamar
+  (`evaluate_strategy_config`, `analyze_feature_importance`,
+  `list_recent_learnings`, `list_pending_changes`), fechadas sobre o
+  histórico de candles buscado uma vez no início do ciclo.
+- `learning_engine/agentic_loop.py` — o controlador (`run_agentic_cycle`):
+  orçamento de iterações, dedup contra a memória, e `draft_change_proposal`
+  (sempre `Status: pendente`). `ReasoningClient` é um Protocol — a lógica do
+  controlador é testada inteiramente com `FakeReasoningClient` (scriptado),
+  sem precisar de API key. `AnthropicReasoningClient` é a implementação real
+  (tool-use da API do Claude), escrita mas **não exercitada contra a API de
+  verdade neste ambiente** (sem `ANTHROPIC_API_KEY` de serviço configurada
+  aqui) — validar um ciclo real antes de rodar sem supervisão.
+- `scripts/run_agentic_learning.py` — entry point (mesma cadência de
+  `run_daily_learning.py`).
+- Testes: 187 passando no total, incluindo checagem estrutural (via `ast`,
+  não busca por substring) de que `agentic_loop.py`/`tools.py` nunca
+  importam `tradingbot.execution`, e um teste explícito de que o loop nunca
+  produz uma proposta com status diferente de `pendente`.
+
+**O que a v1 explicitamente não faz ainda** (é a lacuna entre a visão da
+spec e o código de hoje, não um erro): a proposta gerada é só texto
+(evidência + proposta + validação já rodada) — rascunho de spec, diff de
+código, testes automáticos e abertura de PR continuam manuais, feitos por
+quem revisa a proposta (hoje, uma sessão de Claude Code dirigida por
+humano, como esta). Fechar essa lacuna é a próxima extensão natural, não
+escopo desta rodada.
+
+O motor anterior (`daily_report.py`/`change_proposals.py`, via
+`scripts/run_daily_learning.py`) continua funcional e não foi removido —
+`list_recent_learnings` no novo loop lê exatamente o que ele gera.
 
 **Ainda não validado contra dado de produção real** — o motor de execução
-(Fase 4) só começou a gerar dado real em 2026-08-01. O primeiro ciclo do novo
-loop, quando implementado, só tem algo substancial para investigar depois de
-alguns dias de operação real acumulados.
+(Fase 4) só começou a gerar dado real em 2026-08-01, no mesmo dia. O primeiro
+ciclo do loop só tem algo substancial para investigar depois de alguns dias
+de operação real acumulados.
 
 Ver `changes/2026-08-01-loop-agentico-aprendizado-continuo.md` para a decisão
-que motivou esta reescrita.
+que motivou a reescrita da spec, e o commit desta mesma data para a
+implementação v1.

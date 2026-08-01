@@ -15,28 +15,13 @@ from __future__ import annotations
 import argparse
 import time
 
-from tradingbot.backtesting.strategy import RsiBollingerPlaceholderStrategy
 from tradingbot.ingestion.binance_rest import BinanceRestClient
-from tradingbot.model.dataset import TargetConfig, build_dataset
-from tradingbot.model.promotion import PromotionCriteria, evaluate_fold
-from tradingbot.model.strategy import ModelStrategy, RegimeFilteredStrategy, choose_regime_threshold
-from tradingbot.model.training import ModelConfig, choose_thresholds, split_fit_calibration, train_model, walk_forward_splits
+from tradingbot.model.evaluation import evaluate_config
 
-WARMUP_PREFIX_BARS = 40
-STOP_LOSS_PCT = 0.015
 MOVE_THRESHOLD_PCT = 0.008  # 2026-07-31 recalibration — held fixed across this sweep
 
 ENTRY_PERCENTILE_GRID = (80.0, 90.0, 95.0, 99.0)
 HORIZON_MINUTES_GRID = (10, 15, 30)
-
-
-def _events_in_ts_range(events, start_ts, end_ts):
-    return [e for e in events if start_ts <= e.exchange_ts <= end_ts]
-
-
-def _warmup_prefix(events, before_ts, n=WARMUP_PREFIX_BARS):
-    prior = [e for e in events if e.exchange_ts < before_ts]
-    return prior[-n:]
 
 
 def _run_combo(
@@ -48,57 +33,25 @@ def _run_combo(
     use_regime_filter: bool = True,
     regime_calib_min_trades: int = 5,
 ):
-    target_config = TargetConfig(
+    result = evaluate_config(
+        events,
         horizon_minutes=horizon_minutes,
+        entry_percentile=entry_percentile,
         move_threshold_pct=MOVE_THRESHOLD_PCT,
-        stop_loss_pct=STOP_LOSS_PCT,
+        n_splits=n_splits,
+        min_trades=min_trades,
+        use_regime_filter=use_regime_filter,
+        regime_calib_min_trades=regime_calib_min_trades,
     )
-    rows = build_dataset(events, target_config)
-    label_rate = sum(r.label for r in rows) / len(rows) if rows else 0.0
-
-    model_config = ModelConfig()
-    criteria = PromotionCriteria(min_trades=min_trades)
-    fold_results = []
-
-    for fold_index, (train_rows, test_rows) in enumerate(walk_forward_splits(rows, n_splits=n_splits)):
-        fit_rows, calib_rows = split_fit_calibration(train_rows, calibration_fraction=0.2)
-        model = train_model(fit_rows, model_config, calibration_fraction=0.2)
-        entry_threshold, exit_threshold = choose_thresholds(
-            model, calib_rows, entry_percentile=entry_percentile, exit_percentile=50.0
-        )
-        model_strategy = ModelStrategy(model=model, entry_threshold=entry_threshold, exit_threshold=exit_threshold, stop_loss_pct=STOP_LOSS_PCT)
-
-        if use_regime_filter:
-            calib_start_ts = calib_rows[0].knowledge_ts
-            calib_end_ts = calib_rows[-1].knowledge_ts
-            calib_events = _events_in_ts_range(events, calib_start_ts, calib_end_ts)
-            calib_warmup_events = _warmup_prefix(events, calib_start_ts)
-            min_trend_pct = choose_regime_threshold(
-                model_strategy, calib_events, min_trades=regime_calib_min_trades, warmup_events=calib_warmup_events
-            )
-            candidate = RegimeFilteredStrategy(inner=model_strategy, min_trend_pct=min_trend_pct)
-        else:
-            candidate = model_strategy
-        baseline = RsiBollingerPlaceholderStrategy(stop_loss_pct=STOP_LOSS_PCT)
-
-        test_start_ts = test_rows[0].knowledge_ts
-        test_end_ts = test_rows[-1].knowledge_ts
-        fold_events = _events_in_ts_range(events, test_start_ts, test_end_ts)
-        warmup_events = _warmup_prefix(events, test_start_ts)
-
-        result = evaluate_fold(fold_index, candidate, baseline, fold_events, criteria, warmup_events=warmup_events)
-        fold_results.append(result)
-
-    pfs = [r.candidate_metrics.profit_factor for r in fold_results]
     return {
         "horizon_minutes": horizon_minutes,
         "entry_percentile": entry_percentile,
-        "label_rate": label_rate,
-        "folds_won": sum(r.candidate_wins for r in fold_results),
-        "folds_total": len(fold_results),
-        "mean_pf": sum(pfs) / len(pfs) if pfs else 0.0,
-        "min_pf": min(pfs) if pfs else 0.0,
-        "min_trades_seen": min((r.candidate_metrics.num_trades for r in fold_results), default=0),
+        "label_rate": result.label_rate,
+        "folds_won": result.folds_won,
+        "folds_total": result.folds_total,
+        "mean_pf": result.mean_profit_factor,
+        "min_pf": result.min_profit_factor,
+        "min_trades_seen": min((f.num_trades for f in result.folds), default=0),
     }
 
 
