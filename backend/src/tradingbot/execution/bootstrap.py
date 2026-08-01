@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 from tradingbot.backtesting.strategy import RsiBollingerPlaceholderStrategy
 from tradingbot.execution.client import BinanceTestnetClient
 from tradingbot.execution.orchestrator import Orchestrator
-from tradingbot.model.strategy import ModelStrategy, RegimeFilteredStrategy
+from tradingbot.model.strategy import PLACEHOLDER_MIN_TREND_PCT, ModelStrategy, RegimeFilteredStrategy
 from tradingbot.model.versioning import load_metadata, load_model
 from tradingbot.persistence import repository
 from tradingbot.persistence.db import get_session_factory
@@ -32,7 +32,10 @@ load_dotenv(_REPO_ROOT / "backend" / ".env")
 
 def load_active_strategy():
     """Falls back to the Fase 1 placeholder if no model has been promoted yet — spec 11's
-    roadmap explicitly allows shipping the placeholder while Fase 2 iterates."""
+    roadmap explicitly allows shipping the placeholder while Fase 2 iterates. The third
+    return value is the regime-filter threshold to pair with the strategy: a promoted
+    model carries its own, walk-forward-calibrated value (train_model.py); the placeholder
+    was never trained/calibrated, so it gets the fixed fallback instead."""
     candidates = sorted(glob.glob(str(MODELS_DIR / "*")), reverse=True)
     for version_dir in candidates:
         metadata_path = Path(version_dir) / "metadata.json"
@@ -46,9 +49,13 @@ def load_active_strategy():
             exit_threshold=metadata["exit_threshold"],
             stop_loss_pct=metadata["stop_loss_pct"],
         )
-        return strategy, metadata["version"]
+        return strategy, metadata["version"], metadata["min_trend_pct"]
 
-    return RsiBollingerPlaceholderStrategy(stop_loss_pct=PLACEHOLDER_STOP_LOSS_PCT), "placeholder-fase1"
+    return (
+        RsiBollingerPlaceholderStrategy(stop_loss_pct=PLACEHOLDER_STOP_LOSS_PCT),
+        "placeholder-fase1",
+        PLACEHOLDER_MIN_TREND_PCT,
+    )
 
 
 class MissingCredentialsError(Exception):
@@ -71,10 +78,10 @@ def build_orchestrator(symbol: str | None = None, session_factory=None) -> Orche
             "Isso exige confirmação humana explícita fora deste código."
         )
 
-    strategy, strategy_version = load_active_strategy()
+    strategy, strategy_version, min_trend_pct = load_active_strategy()
     # Long-only limitation (spec 06) applies to whatever is live, model or placeholder —
     # gate entries the same way the backtest/promotion pipeline does (spec 04, 2026-07-31).
-    strategy = RegimeFilteredStrategy(inner=strategy)
+    strategy = RegimeFilteredStrategy(inner=strategy, min_trend_pct=min_trend_pct)
     exchange = BinanceTestnetClient(api_key, api_secret, testnet=True)
     if session_factory is None:
         session_factory = get_session_factory(os.environ.get("DATABASE_URL"))

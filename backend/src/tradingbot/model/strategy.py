@@ -9,6 +9,8 @@ from dataclasses import dataclass
 
 from tradingbot.backtesting.strategy import Strategy, TradeSignal
 from tradingbot.features.engine import FeatureSnapshot
+from tradingbot.ingestion.schema import MarketEvent
+from tradingbot.model.promotion import run_backtest
 from tradingbot.model.training import TrainedModel
 
 
@@ -33,6 +35,15 @@ class ModelStrategy:
         return self.model.predict_proba(snapshot.features) < self.exit_threshold
 
 
+# -0.005, not 0.0: trend_regime_pct is close vs. a 240-candle (~4h) EMA, which lags and
+# oscillates slightly negative during ordinary pullbacks inside an uptrend. This is only
+# the fallback for when there's no calibration data to derive a fold-specific threshold
+# from (e.g. the Fase 1 placeholder, which isn't trained/calibrated at all) — a real
+# candidate model picks its own value from training-side data via choose_regime_threshold
+# below.
+PLACEHOLDER_MIN_TREND_PCT = -0.005
+
+
 @dataclass
 class RegimeFilteredStrategy:
     """Wraps another strategy, suppressing new entries when the market's longer-term
@@ -44,15 +55,7 @@ class RegimeFilteredStrategy:
     tradeable moments — exits are never blocked, only new entries."""
 
     inner: Strategy
-    # Not 0.0: trend_regime_pct is close vs. a 240-candle (~4h) EMA, which lags and
-    # oscillates slightly negative during ordinary pullbacks inside an uptrend. A hard
-    # cutoff at 0.0 blocked those too, and measured *worse* than no filter at all (2026-
-    # 08-01 A/B on the 90-day cache: mean PF 0.62 vs. 0.73 unfiltered). -0.005 was the
-    # best of {-0.01, -0.005, 0.0, +0.005, +0.01, +0.02} tried against those same five
-    # test folds (mean PF 0.81) — that's a coarse, in-sample calibration on one dataset,
-    # not an out-of-sample validation, so treat this constant as provisional pending a
-    # walk-forward-clean re-check (changes/2026-07-31-filtro-regime-tendencia.md).
-    min_trend_pct: float = -0.005
+    min_trend_pct: float = PLACEHOLDER_MIN_TREND_PCT
 
     def on_features(self, snapshot: FeatureSnapshot) -> TradeSignal | None:
         trend = snapshot.features.get("trend_regime_pct")
@@ -62,3 +65,37 @@ class RegimeFilteredStrategy:
 
     def should_exit(self, snapshot: FeatureSnapshot) -> bool:
         return self.inner.should_exit(snapshot)
+
+
+# 2026-07-31's first cut picked -0.005 by sweeping candidates against the same five test
+# folds used to report the result — in-sample calibration, the same mistake
+# min_profit_factor's small-sample caveat already warned about
+# (changes/2026-07-31-criterio-promocao-expectancia-positiva.md). This mirrors
+# choose_thresholds (training.py): pick from calibration-slice events only, never the
+# out-of-sample test fold.
+DEFAULT_REGIME_THRESHOLD_CANDIDATES: tuple[float, ...] = (-0.02, -0.015, -0.01, -0.005, 0.0, 0.005, 0.01)
+
+
+def choose_regime_threshold(
+    inner_strategy: Strategy,
+    calib_events: list[MarketEvent],
+    min_trades: int,
+    warmup_events: list[MarketEvent] | None = None,
+    candidates: tuple[float, ...] = DEFAULT_REGIME_THRESHOLD_CANDIDATES,
+) -> float:
+    """Backtests each candidate min_trend_pct against the calibration-side events only and
+    keeps whichever profit factor is best. Falls back to the most permissive candidate (the
+    lowest — blocks the fewest entries) when none clears min_trades on this slice: an
+    unvalidated filter is worse than none, exactly the failure mode this function exists to
+    avoid repeating."""
+    best_threshold = min(candidates)
+    best_pf = float("-inf")
+    for candidate in candidates:
+        strategy = RegimeFilteredStrategy(inner=inner_strategy, min_trend_pct=candidate)
+        metrics = run_backtest(strategy, calib_events, warmup_events=warmup_events)
+        if metrics.num_trades < min_trades:
+            continue
+        if metrics.profit_factor > best_pf:
+            best_pf = metrics.profit_factor
+            best_threshold = candidate
+    return best_threshold

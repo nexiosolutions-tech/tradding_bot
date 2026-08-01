@@ -183,13 +183,37 @@ o que torna o projeto seguro de construir incrementalmente.
     treino/calibração, como já se faz para `entry_threshold`/`exit_threshold`.
   - Ver `changes/2026-07-31-filtro-regime-tendencia.md` para o detalhamento
     completo.
+- **Iteração de 2026-08-01 (7ª rodada — calibração out-of-sample de
+  `min_trend_pct`)**: fechada a ressalva da 6ª rodada. Nova função
+  `choose_regime_threshold` (`model/strategy.py`) escolhe `min_trend_pct`
+  por fold backtestando cada candidato só contra a fatia de calibração
+  (mesmo princípio de `choose_thresholds` para `entry_threshold`/
+  `exit_threshold` — nunca o fold de teste), com fallback para "sem
+  filtro" se nenhum candidato atingir a amostra mínima. Ligado em
+  `train_model.py`/`sweep_thresholds.py`; o valor calibrado por fold é
+  persistido em `metadata.json` (`model/versioning.py`) e é o que
+  `execution/bootstrap.py` usa para a estratégia ao vivo.
+  - **Resultado honesto**: refeito o mesmo A/B da 6ª rodada, agora com o
+    limiar calibrado corretamente (não mais escolhido contra o fold de
+    teste): PF médio **0.71** (vs. 0.73 sem filtro), PF mínimo **0.19**
+    (vs. 0.20 sem filtro), `folds_won=2/5` nos dois casos. O ganho de PF
+    médio 0.81 reportado na 6ª rodada **era artefato da calibração dentro
+    da amostra** — ao remover esse vazamento, o filtro fica neutro a
+    levemente pior que não filtrar nada, nesta janela de 90 dias.
+  - **Interpretação**: o raciocínio mecanístico por trás do filtro (limitação
+    estrutural long-only) continua válido, mas o mecanismo em si não está
+    demonstrando vantagem mensurável além do que o modelo já evita sozinho
+    desde que `trend_regime_pct` deixou de ser input direto dele (achado 1
+    da 6ª rodada). Mantido no pipeline — é a forma estatisticamente correta
+    de calibrar e não piora nada fora do ruído — mas o valor real do filtro
+    fica como questão em aberto, não como resultado assentado.
+  - Ver `changes/2026-08-01-calibracao-out-of-sample-filtro-regime.md`.
 - Próximos passos possíveis — iteração de modelo, não mudança de fase:
-  recalibrar `min_trend_pct` de forma out-of-sample (não mais o achado
-  provisório de -0.005 contra o fold de teste), importância de features
-  (SHAP) para entender o que o modelo está de fato usando, revisar se
-  BTCUSDT 1m tem sinal explorável nesse recorte de fato ou se vale testar
-  outro timeframe/par, ou aceitar que esse conjunto de features/target não
-  supera a regra simples neste par/janela e testar outro.
+  importância de features (SHAP) para entender o que o modelo está de fato
+  usando, revisar se BTCUSDT 1m tem sinal explorável nesse recorte de fato
+  ou se vale testar outro timeframe/par, ou aceitar que esse conjunto de
+  features/target não supera a regra simples neste par/janela e testar
+  outro.
 - **Limitação conhecida (2026-07-31):** o baseline placeholder da Fase 1
   (`RsiBollingerPlaceholderStrategy`) tem expectância estruturalmente
   negativa — sua saída por recuperação de RSI fecha a posição antes do

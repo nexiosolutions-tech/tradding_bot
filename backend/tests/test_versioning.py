@@ -39,6 +39,7 @@ def test_save_and_load_model_round_trip(tmp_path):
         entry_threshold=0.7,
         exit_threshold=0.4,
         stop_loss_pct=0.02,
+        min_trend_pct=-0.005,
         validation_summary={"folds_won": 3, "folds_total": 3},
     )
 
@@ -48,5 +49,6 @@ def test_save_and_load_model_round_trip(tmp_path):
     metadata = load_metadata(version_dir)
     assert metadata["version"] == "v1"
     assert metadata["entry_threshold"] == 0.7
+    assert metadata["min_trend_pct"] == -0.005
     assert metadata["validation_summary"]["folds_won"] == 3
     assert set(metadata["feature_names"]) == set(MODEL_FEATURE_NAMES)

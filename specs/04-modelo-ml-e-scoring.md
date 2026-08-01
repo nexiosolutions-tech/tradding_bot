@@ -78,9 +78,9 @@ ou se proteger numa tendência de baixa.
 - `RegimeFilteredStrategy` (`model/strategy.py`) embrulha qualquer
   `Strategy` (o `ModelStrategy` ou o placeholder da Fase 1) e **suprime
   novos sinais de entrada** quando `trend_regime_pct` (spec 03) está abaixo
-  de um limiar configurável (`min_trend_pct`, default **`-0.005`**). Saídas
-  de posições já abertas (`should_exit`) nunca são bloqueadas pelo filtro —
-  ele só afeta a decisão de *começar* uma posição nova.
+  de um limiar configurável (`min_trend_pct`). Saídas de posições já
+  abertas (`should_exit`) nunca são bloqueadas pelo filtro — ele só afeta a
+  decisão de *começar* uma posição nova.
 - É um **gate explícito na camada de decisão**, não uma feature a mais para
   o modelo aprender sozinho. Testado empiricamente: `trend_regime_pct` como
   input direto do LightGBM (`model/dataset.FEATURE_NAMES`) faz o modelo
@@ -90,16 +90,28 @@ ou se proteger numa tendência de baixa.
   `model/dataset.MODEL_FEATURE_NAMES` **exclui** `trend_regime_pct` do que
   o modelo treina, mesmo a feature continuando disponível no snapshot para
   o filtro ler.
-- **Limiar não é 0.0**: `trend_regime_pct` usa uma EMA de 240 candles
-  (~4h), que atrasa e oscila levemente negativo em recuos normais dentro de
-  uma tendência de alta real. Um corte rígido em 0.0 mediu *pior* que não
-  filtrar nada (PF médio 0.62 vs. 0.73 sem filtro, no A/B de
-  2026-08-01) — inclusive nos folds de baixa que deveria ajudar.
-  `-0.005` foi o melhor de um sweep grosseiro contra o cache de 90 dias
-  (PF médio 0.81) e é **calibração dentro da amostra** (mesmos folds de
-  teste usados para medir), não validação out-of-sample — tratar como
-  provisório até recalibrar a partir de dados de treino/calibração, como já
-  se faz para `entry_threshold`/`exit_threshold`.
+- **Limiar não é 0.0, e não é mais uma constante fixa**: `trend_regime_pct`
+  usa uma EMA de 240 candles (~4h), que atrasa e oscila levemente negativo
+  em recuos normais dentro de uma tendência de alta real — um corte rígido
+  em 0.0 mediu *pior* que não filtrar nada (PF médio 0.62 vs. 0.73 sem
+  filtro, primeiro A/B de 2026-08-01). A primeira correção (`-0.005`) foi
+  escolhida testando candidatos contra os mesmos folds de teste usados para
+  medir o resultado — calibração dentro da amostra, o mesmo tipo de erro já
+  advertido pela ressalva de `min_profit_factor`
+  (`changes/2026-07-31-criterio-promocao-expectancia-positiva.md`).
+  `choose_regime_threshold` (`model/strategy.py`) corrige isso: para cada
+  fold do walk-forward, faz backtest de cada candidato de `min_trend_pct`
+  só contra a **fatia de calibração** (o mesmo intervalo de tempo já usado
+  por `choose_thresholds` para `entry_threshold`/`exit_threshold`, nunca o
+  fold de teste) e mantém o de melhor profit factor — a mesma disciplina
+  já aplicada aos outros dois thresholds, agora estendida a este. Se nenhum
+  candidato atingir a amostra mínima na fatia de calibração, cai de volta
+  no candidato mais permissivo (sem filtro) em vez de aplicar um limiar não
+  validado. Ligado em `train_model.py` e `sweep_thresholds.py`; o valor
+  escolhido por fold vai para `metadata.json` do modelo salvo
+  (`model/versioning.py`) e é o que `execution/bootstrap.py` usa ao montar
+  a estratégia ao vivo. O placeholder da Fase 1 (nunca treinado/calibrado)
+  continua usando o fallback fixo `PLACEHOLDER_MIN_TREND_PCT = -0.005`.
 - **O que não muda:** nenhum parâmetro de risco/execução (`stop_loss_pct`,
   sizing, circuit breaker) é afetado — o filtro só decide *quando* tentar
   uma entrada, nunca *como* dimensioná-la ou protegê-la uma vez aberta.

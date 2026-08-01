@@ -17,7 +17,7 @@ from tradingbot.backtesting.strategy import RsiBollingerPlaceholderStrategy
 from tradingbot.ingestion.binance_rest import BinanceRestClient
 from tradingbot.model.dataset import TargetConfig, build_dataset
 from tradingbot.model.promotion import PromotionCriteria, decide_promotion, evaluate_fold
-from tradingbot.model.strategy import ModelStrategy, RegimeFilteredStrategy
+from tradingbot.model.strategy import ModelStrategy, RegimeFilteredStrategy, choose_regime_threshold
 from tradingbot.model.training import ModelConfig, choose_thresholds, split_fit_calibration, train_model, walk_forward_splits
 from tradingbot.model.versioning import save_model
 
@@ -48,6 +48,13 @@ def main() -> None:
     parser.add_argument("--entry-percentile", type=float, default=80.0)
     parser.add_argument("--exit-percentile", type=float, default=50.0)
     parser.add_argument("--min-trades", type=int, default=15)
+    parser.add_argument(
+        "--regime-calib-min-trades",
+        type=int,
+        default=5,
+        help="min_trades exigido de cada candidato de min_trend_pct na fatia de calibração "
+        "(menor que --min-trades pois a fatia de calibração é menor que o fold de teste)",
+    )
     parser.add_argument("--testnet", action="store_true")
     args = parser.parse_args()
 
@@ -75,6 +82,7 @@ def main() -> None:
     fold_results = []
     last_model = None
     last_thresholds = None
+    last_min_trend_pct = None
 
     for fold_index, (train_rows, test_rows) in enumerate(
         walk_forward_splits(rows, n_splits=args.n_splits)
@@ -84,15 +92,22 @@ def main() -> None:
         entry_threshold, exit_threshold = choose_thresholds(
             model, calib_rows, entry_percentile=args.entry_percentile, exit_percentile=args.exit_percentile
         )
-
-        candidate = RegimeFilteredStrategy(
-            inner=ModelStrategy(
-                model=model,
-                entry_threshold=entry_threshold,
-                exit_threshold=exit_threshold,
-                stop_loss_pct=STOP_LOSS_PCT,
-            )
+        model_strategy = ModelStrategy(
+            model=model,
+            entry_threshold=entry_threshold,
+            exit_threshold=exit_threshold,
+            stop_loss_pct=STOP_LOSS_PCT,
         )
+
+        calib_start_ts = calib_rows[0].knowledge_ts
+        calib_end_ts = calib_rows[-1].knowledge_ts
+        calib_events = _events_in_ts_range(events, calib_start_ts, calib_end_ts)
+        calib_warmup_events = _warmup_prefix(events, calib_start_ts)
+        min_trend_pct = choose_regime_threshold(
+            model_strategy, calib_events, min_trades=args.regime_calib_min_trades, warmup_events=calib_warmup_events
+        )
+
+        candidate = RegimeFilteredStrategy(inner=model_strategy, min_trend_pct=min_trend_pct)
         # Baseline stays unfiltered on purpose — it's what's actually deployed today
         # (spec 04/2026-07-31); the promotion question is "does candidate+filter beat
         # what's live", not "does the model beat an equally-filtered baseline".
@@ -107,10 +122,10 @@ def main() -> None:
             fold_index, candidate, baseline, fold_events, criteria, warmup_events=warmup_events
         )
         fold_results.append(result)
-        last_model, last_thresholds = model, (entry_threshold, exit_threshold)
+        last_model, last_thresholds, last_min_trend_pct = model, (entry_threshold, exit_threshold), min_trend_pct
 
         print(
-            f"Fold {fold_index}: candidate pf={result.candidate_metrics.profit_factor:.2f} "
+            f"Fold {fold_index}: min_trend_pct={min_trend_pct:+.3f} candidate pf={result.candidate_metrics.profit_factor:.2f} "
             f"trades={result.candidate_metrics.num_trades} dd={result.candidate_metrics.max_drawdown_pct:.1%} | "
             f"baseline pf={result.baseline_metrics.profit_factor:.2f} "
             f"trades={result.baseline_metrics.num_trades} dd={result.baseline_metrics.max_drawdown_pct:.1%} "
@@ -136,6 +151,7 @@ def main() -> None:
         entry_threshold=entry_threshold,
         exit_threshold=exit_threshold,
         stop_loss_pct=STOP_LOSS_PCT,
+        min_trend_pct=last_min_trend_pct,
         validation_summary={
             "folds_won": sum(r.candidate_wins for r in fold_results),
             "folds_total": len(fold_results),

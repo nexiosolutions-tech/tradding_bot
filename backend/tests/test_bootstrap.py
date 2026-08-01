@@ -21,10 +21,11 @@ def test_load_active_strategy_falls_back_to_placeholder_when_no_models(tmp_path,
 
     monkeypatch.setattr(bootstrap, "MODELS_DIR", tmp_path / "empty")
 
-    strategy, version = bootstrap.load_active_strategy()
+    strategy, version, min_trend_pct = bootstrap.load_active_strategy()
 
     assert version == "placeholder-fase1"
     assert strategy.stop_loss_pct == bootstrap.PLACEHOLDER_STOP_LOSS_PCT
+    assert min_trend_pct == bootstrap.PLACEHOLDER_MIN_TREND_PCT
 
 
 def test_load_active_strategy_picks_latest_promoted_version(tmp_path, monkeypatch):
@@ -43,15 +44,17 @@ def test_load_active_strategy_picks_latest_promoted_version(tmp_path, monkeypatc
             entry_threshold=0.7,
             exit_threshold=0.4,
             stop_loss_pct=0.02,
+            min_trend_pct=-0.01,
             validation_summary={},
         )
 
     monkeypatch.setattr(bootstrap, "MODELS_DIR", tmp_path)
 
-    strategy, version = bootstrap.load_active_strategy()
+    strategy, version, min_trend_pct = bootstrap.load_active_strategy()
 
     assert version == "BTCUSDT_1m_2000"  # lexicographically (and numerically) latest
     assert strategy.entry_threshold == 0.7
+    assert min_trend_pct == -0.01
 
 
 def test_build_orchestrator_requires_credentials(monkeypatch):

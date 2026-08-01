@@ -24,6 +24,7 @@ def save_model(
     entry_threshold: float,
     exit_threshold: float,
     stop_loss_pct: float,
+    min_trend_pct: float,
     validation_summary: dict,
 ) -> Path:
     version_dir = output_dir / version
@@ -38,6 +39,7 @@ def save_model(
         "entry_threshold": entry_threshold,
         "exit_threshold": exit_threshold,
         "stop_loss_pct": stop_loss_pct,
+        "min_trend_pct": min_trend_pct,
         "validation_summary": validation_summary,
     }
     (version_dir / "metadata.json").write_text(json.dumps(metadata, indent=2, default=str))
