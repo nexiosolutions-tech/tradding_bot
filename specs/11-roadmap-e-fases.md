@@ -148,15 +148,48 @@ o que torna o projeto seguro de construir incrementalmente.
     números: o modelo parece ter algum sinal genuíno em mercado de alta
     (PF>1 em 2 de 3 folds de alta), o problema visível é a ausência de
     proteção/seletividade em mercado de baixa.
+- **Iteração de 2026-08-01 (6ª rodada — filtro de regime explícito)**:
+  implementado `trend_regime_pct` (spec 03) e `RegimeFilteredStrategy`
+  (spec 04), ligados em `train_model.py`, `sweep_thresholds.py` e
+  `execution/bootstrap.py`. A/B controlado no cache de 90 dias (mesmos 5
+  folds da 5ª rodada):
+  - **Achado 1 (correção necessária antes do A/B fazer sentido)**: dar
+    `trend_regime_pct` como input direto ao LightGBM (join natural desde
+    que a feature já existia) degradou tudo — modelo passou a "grudar" no
+    sinal macro lento e disparar entradas em excesso e correlacionadas
+    (um fold foi de 12 para 98 trades, PF de 1.17 para 0.21). Corrigido
+    excluindo a feature de `MODEL_FEATURE_NAMES` (novo, em
+    `model/dataset.py`) — ela continua no snapshot, só não é mais input de
+    treino. Com essa correção, o baseline sem filtro reproduziu
+    exatamente o resultado da 4ª rodada: PF por fold
+    `[1.54, 0.38, 1.03, 0.50, 0.20]`, média 0.73.
+  - **Achado 2 (o filtro por si só, limiar ingênuo em 0.0, não ajudou)**:
+    com `min_trend_pct=0.0`, PF por fold caiu para
+    `[1.17, 0.27, 1.06, 0.55, 0.07]`, média **0.62** — pior que sem filtro,
+    inclusive nos dois folds de baixa (fold 1 e 4) que o filtro deveria
+    proteger. A EMA de 240 candles (~4h) atrasa e oscila levemente negativa
+    em recuos normais dentro de uma alta real; um corte rígido em 0.0
+    bloqueia essas entradas boas junto com as ruins.
+  - **Achado 3 (limiar calibrado)**: sweep de `min_trend_pct` em
+    `{-0.01, -0.005, 0.0, +0.005, +0.01, +0.02}` contra os mesmos 5 folds —
+    melhor ponto em **-0.005**: PF por fold `[1.54, 0.33, 1.41, 0.57, 0.19]`,
+    média **0.81**. `folds_won` permanece 2/5 nos dois casos (com e sem
+    filtro) — nenhum modelo seria promovido hoje de qualquer forma, então a
+    mudança não altera nenhuma decisão de promoção real neste momento.
+  - **Ressalva importante**: `-0.005` foi escolhido testando contra os
+    mesmos folds de teste usados para medir o resultado — calibração
+    dentro da amostra, não validação out-of-sample. Tratar como provisório;
+    próxima iteração deveria derivar esse limiar de dados de
+    treino/calibração, como já se faz para `entry_threshold`/`exit_threshold`.
+  - Ver `changes/2026-07-31-filtro-regime-tendencia.md` para o detalhamento
+    completo.
 - Próximos passos possíveis — iteração de modelo, não mudança de fase:
-  considerar um filtro de regime/tendência explícito (ex.: feature de
-  tendência de prazo mais longo, ou reduzir agressividade de entrada quando
-  o regime detectado for de baixa) em vez de tratar regime só como
-  informação de leitura pós-hoc, importância de features (SHAP) para
-  entender o que o modelo está de fato usando, revisar se BTCUSDT 1m tem
-  sinal explorável nesse recorte de fato ou se vale testar outro
-  timeframe/par, ou aceitar que esse conjunto de features/target não supera
-  a regra simples neste par/janela e testar outro.
+  recalibrar `min_trend_pct` de forma out-of-sample (não mais o achado
+  provisório de -0.005 contra o fold de teste), importância de features
+  (SHAP) para entender o que o modelo está de fato usando, revisar se
+  BTCUSDT 1m tem sinal explorável nesse recorte de fato ou se vale testar
+  outro timeframe/par, ou aceitar que esse conjunto de features/target não
+  supera a regra simples neste par/janela e testar outro.
 - **Limitação conhecida (2026-07-31):** o baseline placeholder da Fase 1
   (`RsiBollingerPlaceholderStrategy`) tem expectância estruturalmente
   negativa — sua saída por recuperação de RSI fecha a posição antes do

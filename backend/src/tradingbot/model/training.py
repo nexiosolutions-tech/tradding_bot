@@ -12,7 +12,7 @@ import numpy as np
 from lightgbm import LGBMClassifier
 from sklearn.isotonic import IsotonicRegression
 
-from tradingbot.model.dataset import FEATURE_NAMES, DatasetRow
+from tradingbot.model.dataset import MODEL_FEATURE_NAMES, DatasetRow
 
 
 @dataclass(frozen=True)
@@ -89,7 +89,7 @@ def split_fit_calibration(
 def train_model(
     train_rows: list[DatasetRow],
     config: ModelConfig,
-    feature_names: tuple[str, ...] = FEATURE_NAMES,
+    feature_names: tuple[str, ...] = MODEL_FEATURE_NAMES,
     calibration_fraction: float = 0.2,
 ) -> TrainedModel:
     """Splits train_rows further: fits the booster on the earlier slice, calibrates on the

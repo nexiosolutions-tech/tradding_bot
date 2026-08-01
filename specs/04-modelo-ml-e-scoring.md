@@ -64,6 +64,47 @@ direta.
   uma extensão silenciosa desta.
 - Ver `changes/2026-07-31-recalibracao-target-move-threshold.md`.
 
+## Filtro de regime de tendência (2026-07-31)
+
+O score do modelo (calibrado, comparado contra `entry_threshold`) decide
+"esse candle específico parece uma oportunidade?" — uma pergunta diferente
+de "o regime de mercado atual favorece esta estratégia de forma alguma?".
+Investigação de walk-forward (`11-roadmap-e-fases.md`) mostrou que a
+segunda pergunta importa mais do que o esperado: PF médio 1.02 em folds de
+mercado em alta, 0.29 em folds de baixa, com a estratégia sendo long-only
+por design (`06-camada-de-execucao.md`) e sem forma estrutural de lucrar
+ou se proteger numa tendência de baixa.
+
+- `RegimeFilteredStrategy` (`model/strategy.py`) embrulha qualquer
+  `Strategy` (o `ModelStrategy` ou o placeholder da Fase 1) e **suprime
+  novos sinais de entrada** quando `trend_regime_pct` (spec 03) está abaixo
+  de um limiar configurável (`min_trend_pct`, default **`-0.005`**). Saídas
+  de posições já abertas (`should_exit`) nunca são bloqueadas pelo filtro —
+  ele só afeta a decisão de *começar* uma posição nova.
+- É um **gate explícito na camada de decisão**, não uma feature a mais para
+  o modelo aprender sozinho. Testado empiricamente: `trend_regime_pct` como
+  input direto do LightGBM (`model/dataset.FEATURE_NAMES`) faz o modelo
+  "grudar" nesse sinal macro lento e disparar entradas em excesso e
+  correlacionadas em qualquer período de tendência favorável (um fold foi
+  de 12 para 98 trades, PF caindo de 1.17 para 0.21) — por isso
+  `model/dataset.MODEL_FEATURE_NAMES` **exclui** `trend_regime_pct` do que
+  o modelo treina, mesmo a feature continuando disponível no snapshot para
+  o filtro ler.
+- **Limiar não é 0.0**: `trend_regime_pct` usa uma EMA de 240 candles
+  (~4h), que atrasa e oscila levemente negativo em recuos normais dentro de
+  uma tendência de alta real. Um corte rígido em 0.0 mediu *pior* que não
+  filtrar nada (PF médio 0.62 vs. 0.73 sem filtro, no A/B de
+  2026-08-01) — inclusive nos folds de baixa que deveria ajudar.
+  `-0.005` foi o melhor de um sweep grosseiro contra o cache de 90 dias
+  (PF médio 0.81) e é **calibração dentro da amostra** (mesmos folds de
+  teste usados para medir), não validação out-of-sample — tratar como
+  provisório até recalibrar a partir de dados de treino/calibração, como já
+  se faz para `entry_threshold`/`exit_threshold`.
+- **O que não muda:** nenhum parâmetro de risco/execução (`stop_loss_pct`,
+  sizing, circuit breaker) é afetado — o filtro só decide *quando* tentar
+  uma entrada, nunca *como* dimensioná-la ou protegê-la uma vez aberta.
+- Ver `changes/2026-07-31-filtro-regime-tendencia.md`.
+
 ## Modelo baseline
 
 - **LightGBM/XGBoost** como baseline — bom desempenho em features tabulares de

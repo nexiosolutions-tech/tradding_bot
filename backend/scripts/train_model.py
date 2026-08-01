@@ -17,7 +17,7 @@ from tradingbot.backtesting.strategy import RsiBollingerPlaceholderStrategy
 from tradingbot.ingestion.binance_rest import BinanceRestClient
 from tradingbot.model.dataset import TargetConfig, build_dataset
 from tradingbot.model.promotion import PromotionCriteria, decide_promotion, evaluate_fold
-from tradingbot.model.strategy import ModelStrategy
+from tradingbot.model.strategy import ModelStrategy, RegimeFilteredStrategy
 from tradingbot.model.training import ModelConfig, choose_thresholds, split_fit_calibration, train_model, walk_forward_splits
 from tradingbot.model.versioning import save_model
 
@@ -85,12 +85,17 @@ def main() -> None:
             model, calib_rows, entry_percentile=args.entry_percentile, exit_percentile=args.exit_percentile
         )
 
-        candidate = ModelStrategy(
-            model=model,
-            entry_threshold=entry_threshold,
-            exit_threshold=exit_threshold,
-            stop_loss_pct=STOP_LOSS_PCT,
+        candidate = RegimeFilteredStrategy(
+            inner=ModelStrategy(
+                model=model,
+                entry_threshold=entry_threshold,
+                exit_threshold=exit_threshold,
+                stop_loss_pct=STOP_LOSS_PCT,
+            )
         )
+        # Baseline stays unfiltered on purpose — it's what's actually deployed today
+        # (spec 04/2026-07-31); the promotion question is "does candidate+filter beat
+        # what's live", not "does the model beat an equally-filtered baseline".
         baseline = RsiBollingerPlaceholderStrategy(stop_loss_pct=STOP_LOSS_PCT)
 
         test_start_ts = test_rows[0].knowledge_ts

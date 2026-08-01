@@ -36,6 +36,9 @@ regras de decisão isoladas:
 - Features cíclicas de hora-do-dia e dia-da-semana (`sin`/`cos`), derivadas
   do timestamp de fechamento do candle — sem risco de leakage, já que o
   horário é sempre conhecido de antemão (2026-07-31)
+- `trend_regime_pct` — distância do close a uma EMA de período longo (4h),
+  proxy de tendência de prazo mais longo que os indicadores de entrada
+  (EMA 12/26, MACD) enxergam (2026-07-31, ver seção própria abaixo)
 
 Novas features entram via `changes/` após o motor de aprendizado identificar
 sinal de que agregam valor — não são adicionadas ad-hoc sem justificativa
@@ -72,6 +75,35 @@ o modelo não tinha como aprender esse efeito de sessão, só tratá-lo como
 ruído. `dow` segue a mesma convenção de `datetime.weekday()` (segunda=0) já
 usada em `pnl_by_weekday` (`backtesting/metrics.py`), para os dois ficarem
 comparáveis.
+
+### Regime de tendência (2026-07-31)
+
+Investigação da variação de profit factor entre folds do walk-forward
+(ver `11-roadmap-e-fases.md`) encontrou correlação clara entre desempenho
+do candidato e a direção da tendência de mercado no período: PF médio 1.02
+em folds de alta, 0.29 em folds de baixa (BTCUSDT, 90 dias, 5 folds). Faz
+sentido mecanicamente — a estratégia é long-only (spot sem margem, ver
+`06-camada-de-execucao.md`), sem forma estrutural de se proteger de uma
+tendência de baixa.
+
+- `trend_regime_pct = (close - ema_longa) / close`, com `ema_longa` num
+  período bem maior (240 candles de 1 minuto = 4h) que as EMAs de entrada
+  (12/26 candles) — captura tendência de prazo mais longo que o timing de
+  entrada em si não enxerga. Positivo quando o preço está acima da média de
+  longo prazo (regime de alta), negativo quando abaixo (regime de baixa).
+  Segue a mesma regra de normalização das demais features de nível de
+  preço (`Invariante de escala` acima).
+- Diferente das demais features desta spec, `trend_regime_pct` **não é
+  input do modelo** — `model/dataset.MODEL_FEATURE_NAMES` a exclui
+  deliberadamente do que o LightGBM treina, mesmo continuando disponível no
+  snapshot. Ela alimenta só um **filtro explícito na camada de decisão**
+  (`04-modelo-ml-e-scoring.md`, `RegimeFilteredStrategy`), que suprime
+  novas entradas quando o regime detectado é de baixa. Testado
+  empiricamente: dar essa feature diretamente ao modelo (em vez de só ao
+  filtro) fazia o LightGBM grudar nesse sinal macro lento e disparar
+  entradas em excesso e correlacionadas em qualquer período de tendência
+  favorável — gatear *quando* operar por ela funciona; deixar o modelo
+  tratá-la como só mais um input, não.
 
 ## Feature store
 

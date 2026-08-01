@@ -117,3 +117,32 @@ def test_cyclical_time_features_wrap_around_midnight_continuously():
         return math.hypot(a.features["hour_sin"] - b.features["hour_sin"], a.features["hour_cos"] - b.features["hour_cos"])
 
     assert _dist(late, early) < 1.0  # close on the cycle, not the ~22h a raw integer implies
+
+
+def test_trend_regime_pct_is_always_present_no_warmup():
+    """Unlike RSI/Bollinger, EMA (and therefore trend_regime_pct) has no warm-up gate —
+    it should be available from the very first candle."""
+    engine = FeatureEngine()
+    snapshot = engine.on_event(_kline_event("BTCUSDT", 100.0, 10.0, True, 60_000, 0))
+    assert snapshot is not None
+    assert "trend_regime_pct" in snapshot.features
+
+
+def test_trend_regime_pct_is_positive_in_a_sustained_uptrend():
+    engine = FeatureEngine()
+    snapshot = None
+    price = 100.0
+    for i in range(300):  # well past the 240-candle trend EMA window
+        price += 0.5  # steady climb
+        snapshot = engine.on_event(_kline_event("BTCUSDT", price, 10.0, True, (i + 1) * 60_000, i))
+    assert snapshot.features["trend_regime_pct"] > 0
+
+
+def test_trend_regime_pct_is_negative_in_a_sustained_downtrend():
+    engine = FeatureEngine()
+    snapshot = None
+    price = 200.0
+    for i in range(300):
+        price -= 0.5  # steady decline
+        snapshot = engine.on_event(_kline_event("BTCUSDT", price, 10.0, True, (i + 1) * 60_000, i))
+    assert snapshot.features["trend_regime_pct"] < 0

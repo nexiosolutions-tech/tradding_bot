@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 from tradingbot.backtesting.strategy import RsiBollingerPlaceholderStrategy
 from tradingbot.execution.client import BinanceTestnetClient
 from tradingbot.execution.orchestrator import Orchestrator
-from tradingbot.model.strategy import ModelStrategy
+from tradingbot.model.strategy import ModelStrategy, RegimeFilteredStrategy
 from tradingbot.model.versioning import load_metadata, load_model
 from tradingbot.persistence import repository
 from tradingbot.persistence.db import get_session_factory
@@ -72,6 +72,9 @@ def build_orchestrator(symbol: str | None = None, session_factory=None) -> Orche
         )
 
     strategy, strategy_version = load_active_strategy()
+    # Long-only limitation (spec 06) applies to whatever is live, model or placeholder —
+    # gate entries the same way the backtest/promotion pipeline does (spec 04, 2026-07-31).
+    strategy = RegimeFilteredStrategy(inner=strategy)
     exchange = BinanceTestnetClient(api_key, api_secret, testnet=True)
     if session_factory is None:
         session_factory = get_session_factory(os.environ.get("DATABASE_URL"))

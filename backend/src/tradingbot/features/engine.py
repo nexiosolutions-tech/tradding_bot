@@ -22,6 +22,10 @@ from tradingbot.features.indicators import (
 )
 from tradingbot.ingestion.schema import EventType, MarketEvent
 
+# 4h on 1-minute candles — long enough to characterize a trend regime distinct from the
+# entry-timing EMAs (12/26 candles), short enough to react within a trading day.
+TREND_REGIME_EMA_PERIOD = 240
+
 
 @dataclass(frozen=True)
 class FeatureSnapshot:
@@ -57,6 +61,7 @@ class SymbolFeatureState:
         self.rel_volume = RelativeVolume()
         self.volatility = RealizedVolatility()
         self.atr = ATR(14)
+        self.trend_ema = EMA(TREND_REGIME_EMA_PERIOD)
 
     def update(self, close: float, high: float, low: float, volume: float) -> dict[str, float]:
         ema_fast = self.ema_fast.update(close)
@@ -68,6 +73,7 @@ class SymbolFeatureState:
         rel_vol = self.rel_volume.update(volume)
         vol = self.volatility.update(close)
         atr = self.atr.update(high, low, close)
+        trend_ema = self.trend_ema.update(close)
 
         # EMA/MACD/Bollinger/ATR level features are expressed relative to `close` (%
         # terms), not as raw price — a model trained mostly on one price regime (e.g. BTC
@@ -86,6 +92,7 @@ class SymbolFeatureState:
             "relative_volume": rel_vol,
             "volatility": vol,
             "atr_pct": None if atr is None else atr / close,
+            "trend_regime_pct": (close - trend_ema) / close,
         }
         return {k: v for k, v in raw.items() if v is not None}
 

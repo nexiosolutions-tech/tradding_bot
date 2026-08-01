@@ -35,7 +35,18 @@ FEATURE_NAMES = (
     "hour_cos",
     "dow_sin",
     "dow_cos",
+    "trend_regime_pct",
 )
+
+# trend_regime_pct is stored on every DatasetRow (FEATURE_NAMES above) so
+# RegimeFilteredStrategy can read it straight off the live snapshot, but it is
+# deliberately excluded from what the model itself trains on. A/B test on the 90-day
+# cache (2026-08-01) showed handing it to LightGBM directly causes the model to key on
+# this slow-moving macro signal and fire far more, highly-correlated low-quality entries
+# (e.g. one fold went from 12 trades / PF 1.17 to 98 trades / PF 0.21) — gating *when* to
+# trade on it beats letting the model treat it as just another input. See
+# changes/2026-07-31-filtro-regime-tendencia.md.
+MODEL_FEATURE_NAMES = tuple(name for name in FEATURE_NAMES if name != "trend_regime_pct")
 
 
 @dataclass(frozen=True)

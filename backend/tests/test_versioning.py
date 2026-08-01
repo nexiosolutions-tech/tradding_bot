@@ -1,6 +1,6 @@
 import numpy as np
 
-from tradingbot.model.dataset import FEATURE_NAMES, DatasetRow, TargetConfig
+from tradingbot.model.dataset import FEATURE_NAMES, MODEL_FEATURE_NAMES, DatasetRow, TargetConfig
 from tradingbot.model.training import ModelConfig, split_fit_calibration, train_model
 from tradingbot.model.versioning import load_metadata, load_model, save_model
 
@@ -49,4 +49,4 @@ def test_save_and_load_model_round_trip(tmp_path):
     assert metadata["version"] == "v1"
     assert metadata["entry_threshold"] == 0.7
     assert metadata["validation_summary"]["folds_won"] == 3
-    assert set(metadata["feature_names"]) == set(FEATURE_NAMES)
+    assert set(metadata["feature_names"]) == set(MODEL_FEATURE_NAMES)

@@ -19,7 +19,7 @@ from tradingbot.backtesting.strategy import RsiBollingerPlaceholderStrategy
 from tradingbot.ingestion.binance_rest import BinanceRestClient
 from tradingbot.model.dataset import TargetConfig, build_dataset
 from tradingbot.model.promotion import PromotionCriteria, evaluate_fold
-from tradingbot.model.strategy import ModelStrategy
+from tradingbot.model.strategy import ModelStrategy, RegimeFilteredStrategy
 from tradingbot.model.training import ModelConfig, choose_thresholds, split_fit_calibration, train_model, walk_forward_splits
 
 WARMUP_PREFIX_BARS = 40
@@ -39,7 +39,9 @@ def _warmup_prefix(events, before_ts, n=WARMUP_PREFIX_BARS):
     return prior[-n:]
 
 
-def _run_combo(events, horizon_minutes: float, entry_percentile: float, n_splits: int, min_trades: int):
+def _run_combo(
+    events, horizon_minutes: float, entry_percentile: float, n_splits: int, min_trades: int, use_regime_filter: bool = True
+):
     target_config = TargetConfig(
         horizon_minutes=horizon_minutes,
         move_threshold_pct=MOVE_THRESHOLD_PCT,
@@ -58,7 +60,8 @@ def _run_combo(events, horizon_minutes: float, entry_percentile: float, n_splits
         entry_threshold, exit_threshold = choose_thresholds(
             model, calib_rows, entry_percentile=entry_percentile, exit_percentile=50.0
         )
-        candidate = ModelStrategy(model=model, entry_threshold=entry_threshold, exit_threshold=exit_threshold, stop_loss_pct=STOP_LOSS_PCT)
+        model_strategy = ModelStrategy(model=model, entry_threshold=entry_threshold, exit_threshold=exit_threshold, stop_loss_pct=STOP_LOSS_PCT)
+        candidate = RegimeFilteredStrategy(inner=model_strategy) if use_regime_filter else model_strategy
         baseline = RsiBollingerPlaceholderStrategy(stop_loss_pct=STOP_LOSS_PCT)
 
         test_start_ts = test_rows[0].knowledge_ts
