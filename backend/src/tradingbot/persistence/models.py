@@ -4,7 +4,7 @@ against Postgres once the Railway addon is provisioned (spec 10) — only DATABA
 
 from __future__ import annotations
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, Integer, String
+from sqlalchemy import JSON, BigInteger, Boolean, DateTime, Float, Integer, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -41,8 +41,12 @@ class TradeRecord(Base):
     symbol: Mapped[str] = mapped_column(String, index=True)
     entry_order_id: Mapped[str] = mapped_column(String)
     exit_order_id: Mapped[str] = mapped_column(String)
-    entry_ts: Mapped[int] = mapped_column(Integer)
-    exit_ts: Mapped[int] = mapped_column(Integer)
+    # Millisecond epoch timestamps (~1.7e12 today) already exceed a 32-bit INTEGER's
+    # ~2.1e9 range — BigInteger, not Integer. SQLite's dynamic INTEGER never caught this
+    # in local dev; only surfaced against real Postgres (2026-08-01, first real
+    # engine_events insert in production hit the same bug on the `ts` column below).
+    entry_ts: Mapped[int] = mapped_column(BigInteger)
+    exit_ts: Mapped[int] = mapped_column(BigInteger)
     entry_price: Mapped[float] = mapped_column(Float)
     exit_price: Mapped[float] = mapped_column(Float)
     size: Mapped[float] = mapped_column(Float)
@@ -58,11 +62,11 @@ class CircuitBreakerEvent(Base):
     __tablename__ = "circuit_breaker_events"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    triggered_at: Mapped[int] = mapped_column(Integer)
+    triggered_at: Mapped[int] = mapped_column(BigInteger)
     equity_at_trigger: Mapped[float] = mapped_column(Float)
     peak_equity: Mapped[float] = mapped_column(Float)
     drawdown_pct: Mapped[float] = mapped_column(Float)
-    acknowledged_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    acknowledged_at: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     acknowledged_by: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
@@ -72,7 +76,7 @@ class EngineEvent(Base):
     __tablename__ = "engine_events"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    ts: Mapped[int] = mapped_column(Integer)
+    ts: Mapped[int] = mapped_column(BigInteger)
     from_state: Mapped[str] = mapped_column(String)
     to_state: Mapped[str] = mapped_column(String)
     reason: Mapped[str] = mapped_column(String)

@@ -23,7 +23,15 @@
   em produção via addon do Railway — troca de banco é só a variável
   `DATABASE_URL`, nenhum model/query muda. Schema (Fase 4): `orders`,
   `trades`, `circuit_breaker_events`, `engine_events` — ver
-  `persistence/models.py` para os campos exatos.
+  `persistence/models.py` para os campos exatos. **Todo timestamp é epoch em
+  milissegundos e usa `BigInteger`, nunca `Integer`** — um `INTEGER` de 32
+  bits do Postgres estoura com epoch-ms (~1.7e12 > ~2.1e9), bug real
+  encontrado em produção na primeira escrita real em `engine_events`
+  (2026-08-01, `changes/2026-08-01-timestamps-integer-overflow-postgres.md`);
+  SQLite não pega esse erro em dev local porque seu `INTEGER` não tem largura
+  fixa. Projeto não usa Alembic — mudança de schema em coluna já existente em
+  produção precisa de `ALTER TABLE` manual, `Base.metadata.create_all()` só
+  cria tabelas novas.
 - Artefatos de modelo (spec 04) continuam versionados como arquivos em
   `results/models/<version>/` (`model.joblib` + `metadata.json`), não no
   banco — são grandes, binários, e já têm seu próprio versionamento por
