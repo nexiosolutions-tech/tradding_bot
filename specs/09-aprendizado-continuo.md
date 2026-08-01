@@ -2,102 +2,160 @@
 
 ## Objetivo
 
-Fazer o sistema revisar a própria performance diariamente e propor melhorias de
-forma estruturada e versionada — sem contornar a exigência de revisão humana
-para mudanças de risco ou de lógica de negócio (`CLAUDE.md`, regra 6).
+Fazer o sistema investigar a própria performance de forma contínua e autônoma —
+não só analisar, mas formular hipóteses, rodar experimentos, validá-los e
+redigir a mudança pronta para revisão — sem nunca aplicar sozinho uma mudança
+de risco, execução ou arquitetura (`CLAUDE.md`, regra 6). A fronteira entre
+"autônomo" e "exige humano" não é "análise vs. ação" — é **"proposta pronta
+vs. aplicada"**. Tudo até o ponto de gerar uma entrada completa e validada em
+`changes/` pode rodar sozinho; cruzar de `pendente` para `aplicada` continua
+exigindo uma decisão humana explícita, registrada.
 
-## O ciclo diário
+## Os quatro elementos do loop
+
+Todo agente de raciocínio contínuo precisa de quatro peças. Esta seção fixa o
+que cada uma é *neste projeto*, não em abstrato:
+
+1. **Modelo de raciocínio** — um LLM (Claude) que lê o estado atual (seção
+   "Memória de estado" abaixo) e decide a próxima ação: rodar um experimento,
+   ler mais dado, encerrar a investigação, ou redigir uma proposta.
+2. **Ferramentas** — os scripts já existentes em `backend/scripts/`
+   (`train_model.py`, `sweep_thresholds.py`, `feature_importance.py`,
+   `run_backtest.py`) e as funções de `learning_engine/`, expostas como ações
+   que o loop pode invocar — os mesmos scripts que hoje um humano roda
+   manualmente numa sessão de investigação.
+3. **Memória de estado** — `learnings/`, `changes/` e um novo índice de
+   experimentos (ver abaixo), tudo em arquivo, versionado.
+4. **Controlador de loop** — substitui o job único de `run_daily_learning.py`
+   por um ciclo iterativo com orçamento e condição de parada explícitos (ver
+   "O ciclo" abaixo).
+
+## Isolamento e limites estruturais (não negociáveis, mesmo padrão de `CLAUDE.md`)
+
+Estas invariantes existem para que "autônomo" nunca signifique "com acesso ao
+que pode perder dinheiro":
+
+1. **O loop nunca tem credenciais de execução.** Não recebe
+   `BINANCE_API_KEY`/`BINANCE_API_SECRET`, não importa `execution/client.py`
+   nem `execution/orchestrator.py`. Só lê histórico já persistido (trades,
+   `engine_events`) e roda backtests sobre dado histórico — a mesma
+   separação que já existe entre `backtesting/` (sem rede/execução) e
+   `execution/` (com rede/execução).
+2. **O loop nunca escreve em `main`.** Toda saída do loop — proposta em
+   `changes/`, rascunho de spec, diff de código, testes — vai para uma branch
+   dedicada (ou fica como patch não commitado). Abrir PR é permitido; fazer
+   merge não é.
+3. **O loop nunca marca sua própria proposta como `aprovada` ou `aplicada`.**
+   Só quem revisa (humano, ou uma sessão de Claude Code dirigida por humano,
+   como hoje) muda esse campo — mesma regra do template de `changes/`.
+4. **Orçamento por ciclo é explícito e finito.** Máximo de N iterações (a
+   fixar na implementação, ex. 10) e/ou tempo máximo de execução por ciclo —
+   nunca um loop sem teto que possa rodar indefinidamente consumindo API/custo
+   sem supervisão.
+
+## O ciclo
 
 ```
-[Fim do dia de trading]
+[Novo dia de dado real disponível]         ← cadência inicial: diária, como hoje;
+        │                                    nada aqui impede aumentar a frequência
+        ▼                                    depois, mas o dado (um dia de trading)
+[Loop de investigação — até N iterações]      não muda mais rápido que isso por ora.
+    │
+    ├─ 1. Lê memória de estado (learnings/, changes/ pendentes/aplicadas,
+    │     índice de experimentos) — nunca repete um experimento já registrado
+    │     com o mesmo resultado.
+    ├─ 2. Modelo de raciocínio decide: investigar mais, ou encerrar o ciclo.
+    ├─ 3. Se investigar: invoca uma ferramenta (backtest, sweep, SHAP,
+    │     comparação backtest-vs-produção), registra o resultado na memória.
+    ├─ 4. Achado com evidência suficiente (mesmos critérios estatísticos já
+    │     usados — specs/07: amostra mínima, validação out-of-sample)?
+    │        → Sim: redige changes/ completo (proposta + rascunho de spec +
+    │          diff de código + testes) com **Status: pendente**, abre PR
+    │          numa branch dedicada, e encerra o ciclo.
+    │        → Não: volta ao passo 2, até esgotar o orçamento de iterações.
+    ▼
+[changes/AAAA-MM-DD-descricao.md, pendente]  ← ponto de parada estrutural
         │
         ▼
-[Job de análise de performance]  ← lê apenas dados de produção (read-only)
+[Revisão humana do PR/proposta]               ← única porta de decisão
         │
         ▼
-[learnings/AAAA-MM-DD.md]  ← relatório objetivo, dados não julgamento
-        │
-        ▼
-[Revisão: humana, ou sessão dedicada de Claude Code]
-        │
-        ▼
-[changes/AAAA-MM-DD-descricao-curta.md]  ← proposta de mudança concreta
-        │
-        ▼
-[Aprovação humana]
-        │
-        ▼
-[Mudança entra em specs/ e depois em código]
+[Aprovado → aplicada, spec+código entram | Rejeitado → rejeitada, registrado]
 ```
 
-## O job de análise (gera `learnings/`)
+## Fronteira autônomo vs. revisão humana
 
-- Roda uma vez por dia (cron), **somente leitura** sobre a persistência de
-  produção — nunca aplica mudanças diretamente.
-- Analisa: quais setups/condições de score geraram acerto vs. erro, em que
-  horários, em que condições de volatilidade, qual foi o comportamento do
-  circuit breaker (se acionado), divergência entre backtest esperado e
-  resultado real.
-- Gera um arquivo `learnings/AAAA-MM-DD.md` com **achados objetivos** — números
-  e observações, não decisões. Ver template em
-  [`learnings/README.md`](../learnings/README.md).
-
-## O backlog de mudanças (`changes/`)
-
-- Cada achado relevante do `learnings/` que sugere uma ação concreta vira uma
-  entrada em `changes/AAAA-MM-DD-descricao-curta.md`, com:
-  - O que se propõe mudar (parâmetro, feature, threshold, lógica).
-  - A evidência do `learnings/` que motiva a proposta.
-  - O impacto esperado e como será validado (ligação com
-    `07-backtesting-e-validacao.md`).
-- Ver template em [`changes/README.md`](../changes/README.md).
-
-## Regras de automação vs. revisão humana
-
-Esta é a distinção central desta spec — reforçando `CLAUDE.md`:
-
-| Tipo de mudança | Pode ser automatizado? |
+| Tipo de ação | Pode ser autônomo? |
 |---|---|
-| Retreino de modelo (mesmos hiperparâmetros/arquitetura/target) | Sim, desde que passe no critério de promoção de `07-backtesting-e-validacao.md` |
-| Novo valor de hiperparâmetro dentro de um range já aprovado | Sim, via validação estatística automática |
-| Nova feature | Não — proposta em `changes/`, revisão humana antes de entrar em `03-motor-de-features.md` |
-| Mudança de threshold de decisão, position sizing, stop-loss, circuit breaker | Não — sempre revisão humana explícita, mesmo com evidência forte em `learnings/` |
-| Mudança de arquitetura de modelo ou definição de target | Não — é uma mudança de spec, segue o processo SDD completo |
+| Ler `learnings/`/`changes/`/dado histórico, formular hipótese | Sim |
+| Rodar backtest, sweep de hiperparâmetro, análise SHAP sobre dado histórico | Sim |
+| Redigir a entrada completa em `changes/` (proposta + rascunho de spec + diff de código + testes), com **Status: pendente** | Sim |
+| Abrir branch/PR com essa proposta | Sim |
+| Retreino de modelo dentro da mesma arquitetura/target, promovido automaticamente se bater specs/07 | Sim — já permitido hoje, sem mudança |
+| Marcar uma proposta como `aprovada`/`rejeitada`/`aplicada` | **Não** — sempre humano |
+| Fazer merge do PR em `main` | **Não** — sempre humano |
+| Qualquer mudança de threshold de decisão, position sizing, stop-loss, circuit breaker chegar a rodar em produção | **Não** — só depois de `aplicada` |
+| Qualquer mudança de arquitetura de modelo ou definição de target chegar a rodar em produção | **Não** — só depois de `aplicada` |
+
+A diferença para a versão anterior desta spec: antes, o motor só *analisava*
+e deixava a investigação/validação para uma sessão humana de Claude Code.
+Agora, a investigação e validação em si — a parte demorada — também é
+autônoma; só a decisão final de aplicar continua sendo humana. O motor entrega
+uma proposta já testada e pronta para um "aprovar" ou "rejeitar" rápido, não
+um achado cru que ainda precisa de trabalho.
+
+## Memória de estado
+
+- `learnings/AAAA-MM-DD.md` — achados objetivos do dia, como hoje.
+- `changes/AAAA-MM-DD-descricao.md` — propostas, como hoje, mas agora podendo
+  chegar já com validação embutida (ver template atualizado em
+  `changes/README.md` — a seção "Validação proposta" passa a conter o
+  resultado real do backtest/experimento, não só uma promessa de validação
+  futura).
+- **Novo**: um índice de experimentos (formato a definir na implementação,
+  ex. `learnings/experiments.jsonl`) registrando cada hipótese testada,
+  parâmetros, e resultado — para o loop nunca repetir um experimento já
+  feito e para um humano auditar o que o loop tentou, mesmo quando não gerou
+  proposta nenhuma.
 
 ## Por que esse limite existe
 
-Um sistema que analisa e aplica mudanças de risco sozinho, sem revisão, é
+Um sistema que investiga e aplica mudanças de risco sozinho, sem revisão, é
 exatamente o cenário onde um bug na análise se transforma em prejuízo real da
 noite para o dia, sem ninguém no circuito para pegar o erro antes que ele
-aconteça. Separar "propor" de "aplicar" é o que torna esse ciclo seguro de
-automatizar na parte de análise, sem herdar esse risco.
+aconteça — e bugs de análise são reais e já aconteceram neste projeto mais de
+uma vez (ex. indexação errada de dia da semana, filtro de regime que piorava
+o resultado até ser recalibrado corretamente). Ampliar o que o motor pode
+*investigar e propor* sozinho não muda esse risco, porque a decisão de
+aplicar continua humana; automatizar a *aplicação* mudaria, e é exatamente
+isso que esta spec continua recusando a fazer.
 
 ## Relação com o dashboard
 
 A view "Aprendizado" do dashboard (`08-dashboard-e-visualizacao.md`) expõe o
-histórico de `learnings/` e `changes/`, com o status de cada proposta —
-mantendo o ciclo de aprendizado tão visível quanto a operação em tempo real.
+histórico de `learnings/` e `changes/`, com o status de cada proposta, e passa
+a também expor o que o loop está investigando *agora* (iteração atual,
+hipótese em teste) — mantendo o ciclo de aprendizado tão visível quanto a
+operação em tempo real, agora com mais a mostrar.
 
 ## Status de implementação (Fase 5)
 
-`backend/src/tradingbot/learning_engine/` — `daily_report.py` (lê
-`trades`/`engine_events` do dia via `persistence/repository.py`, somente
-leitura, reaproveita as mesmas funções de métrica do backtesting para que dia
-real e backtest sejam julgados pelo mesmo critério) e
-`change_proposals.py` (rascunha uma entrada em `changes/` só para achados com
-amostra ≥ 10 trades — abaixo disso, o achado fica marcado "preliminar" no
-`learnings/` e nenhuma proposta é gerada). Roda via `scripts/run_daily_learning.py`
-(pensado para Railway Cron Jobs).
+**Esta spec foi reescrita em 2026-08-01 antes de qualquer código novo — SDD
+(`CLAUDE.md`, "nenhuma funcionalidade é implementada sem uma spec
+correspondente").** O que existe hoje em
+`backend/src/tradingbot/learning_engine/` (`daily_report.py`,
+`change_proposals.py`, rodados via `scripts/run_daily_learning.py`)
+implementa só a versão anterior desta spec: job único, heurística fixa
+(`win_rate < 35%` numa hora UTC), proposta rascunhada sem validação embutida.
+Isso continua funcional e é reaproveitável como uma das *ferramentas* do novo
+loop (o passo "ler achados do dia" already exists), mas o controlador de
+loop, o modelo de raciocínio, e o índice de experimentos descritos acima
+ainda não existem em código.
 
-**Heurística atual é mecânica, não estatística/ML:** o único achado
-implementado por ora é "win rate abaixo de 35% num horário UTC específico".
-Isso é deliberadamente simples — o objetivo desta fase era o *fluxo*
-`learnings/ → changes/ → revisão humana` funcionar de ponta a ponta, não ter
-heurísticas sofisticadas. Novas heurísticas de achado são elas mesmas uma
-mudança de spec/`changes/`, não algo a adicionar livremente depois.
+**Ainda não validado contra dado de produção real** — o motor de execução
+(Fase 4) só começou a gerar dado real em 2026-08-01. O primeiro ciclo do novo
+loop, quando implementado, só tem algo substancial para investigar depois de
+alguns dias de operação real acumulados.
 
-**Ainda não validado contra dado de produção real** — não há trades reais
-ainda (Fase 4 depende de chaves de testnet que o usuário ainda não configurou).
-Toda a lógica está coberta por testes unitários com dados sintéticos
-(`backend/tests/test_daily_report.py`, `test_change_proposals.py`); o primeiro
-relatório "de verdade" só existe depois de um dia de operação real em testnet.
+Ver `changes/2026-08-01-loop-agentico-aprendizado-continuo.md` para a decisão
+que motivou esta reescrita.

@@ -41,6 +41,9 @@ pendentes de revisão humana antes de virar spec/código
 ## Validação proposta
 - Como será testado antes de produção (referência a specs/07)
 - Critério objetivo de sucesso/fracasso
+- Se a proposta veio do loop autônomo de aprendizado contínuo (specs/09):
+  resultado real do backtest/experimento já rodado, não só uma promessa de
+  validação futura — a revisão humana julga um resultado, não uma hipótese
 
 ## Decisão
 - Aprovado/rejeitado por: [nome]
