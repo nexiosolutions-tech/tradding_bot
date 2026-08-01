@@ -208,12 +208,73 @@ o que torna o projeto seguro de construir incrementalmente.
     de calibrar e não piora nada fora do ruído — mas o valor real do filtro
     fica como questão em aberto, não como resultado assentado.
   - Ver `changes/2026-08-01-calibracao-out-of-sample-filtro-regime.md`.
+- **Iteração de 2026-08-01 (8ª rodada — importância de features via SHAP,
+  diagnóstico, sem mudança de código)**: `scripts/feature_importance.py`
+  (novo, usa `shap.TreeExplainer`) treina o modelo do fold final do
+  walk-forward e explica as previsões só nas linhas do fold de teste
+  (nunca vistas em treino/calibração — SHAP no conjunto de treino
+  descreveria memorização, não generalização). Rodado contra o cache de
+  90 dias, config estabelecida (`horizon_minutes=45`,
+  `move_threshold_pct=0.008`):
+
+  | feature | \|SHAP\| médio | direção (correlação) |
+  |---|---|---|
+  | `atr_pct` | **1.70** | +0.91 |
+  | `hour_sin` | 0.68 | -0.16 |
+  | `hour_cos` | 0.56 | -0.44 |
+  | `volatility` | 0.32 | +0.65 |
+  | `dow_sin` | 0.31 | -0.13 |
+  | `dow_cos` | 0.17 | +0.59 |
+  | `macd_signal_pct` | 0.10 | -0.11 |
+  | `bollinger_percent_b` | 0.10 | -0.63 |
+  | `ema_cross_pct` | 0.07 | -0.67 |
+  | `relative_volume` | 0.07 | +0.26 |
+  | `macd_hist_pct` | 0.05 | -0.22 |
+  | `rsi` | 0.03 | +0.18 |
+  | `ema_fast_dist_pct` | 0.02 | -0.42 |
+  | `ema_slow_dist_pct` | 0.02 | -0.16 |
+  | `macd_pct` | 0.00 | n/a |
+
+  - **Achado principal**: `atr_pct` (volatilidade recente) domina disparado
+    — mais que o dobro de importância da segunda feature, fortemente
+    correlacionado positivo (mais volatilidade → maior probabilidade
+    prevista de "oportunidade"). Confirmado que não é bug de dado:
+    `macd_pct` (SHAP ≈ 0, aparentemente não usado) tem variância real
+    (`std≈0.0006`, não é constante) — o modelo genuinamente descartou essa
+    feature, provavelmente redundante com `macd_signal_pct`/`macd_hist_pct`.
+  - **Explicação mecanística plausível**: o alvo usa barreiras fixas
+    (`move_threshold_pct=0.8%` de take-profit, `stop_loss_pct=1.5%` de
+    stop) — em regime de volatilidade mais alta, qualquer barreira fica
+    mais fácil de tocar dentro do horizonte, e como o take-profit está mais
+    perto que o stop-loss, um pico de volatilidade favorece
+    estatisticamente tocar o take-profit primeiro mesmo sem nenhuma
+    habilidade direcional real. Ou seja: o modelo pode estar aprendendo
+    majoritariamente "quando a volatilidade favorece a assimetria das
+    barreiras", não "para onde o preço deve ir" — o que explicaria por que
+    seis rodadas de iteração em feature/target/threshold não fecharam o gap
+    de promoção: os indicadores de momentum/direção que motivaram o desenho
+    original (RSI, família MACD, Bollinger %B, distância de EMA) ficam
+    todos no fim do ranking, com pouca contribuição real.
+  - **Achado secundário**: features cíclicas de tempo (`hour_sin/cos`,
+    `dow_sin/cos`) somadas ocupam uma fatia relevante de importância —
+    plausível (padrões de liquidez por sessão), mas com só ~90 dias
+    (~12-13 semanas) de dado, sazonalidade por dia-da-semana em particular
+    tem poucas amostras independentes por dia — risco real de
+    sobreajuste a ruído de calendário, não confirmado nem descartado por
+    esta análise isolada.
+  - **Isto é diagnóstico, não uma mudança de código** — nenhuma spec ou
+    parâmetro foi alterado por esta rodada. A implicação natural (barreiras
+    do alvo escaladas por volatilidade em vez de fixas, para impedir esse
+    atalho) é mudança de arquitetura do target (`CLAUDE.md` regra 7),
+    pendente de decisão explícita do usuário antes de qualquer
+    implementação.
 - Próximos passos possíveis — iteração de modelo, não mudança de fase:
-  importância de features (SHAP) para entender o que o modelo está de fato
-  usando, revisar se BTCUSDT 1m tem sinal explorável nesse recorte de fato
-  ou se vale testar outro timeframe/par, ou aceitar que esse conjunto de
-  features/target não supera a regra simples neste par/janela e testar
-  outro.
+  redesenhar o alvo com barreiras normalizadas por volatilidade (resposta
+  direta ao achado da 8ª rodada, mudança de arquitetura — exige aprovação
+  explícita antes de implementar), revisar se BTCUSDT 1m tem sinal
+  explorável nesse recorte de fato ou se vale testar outro timeframe/par,
+  ou aceitar que esse conjunto de features/target não supera a regra
+  simples neste par/janela e testar outro.
 - **Limitação conhecida (2026-07-31):** o baseline placeholder da Fase 1
   (`RsiBollingerPlaceholderStrategy`) tem expectância estruturalmente
   negativa — sua saída por recuperação de RSI fecha a posição antes do

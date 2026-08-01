@@ -12,3 +12,4 @@ fastapi==0.115.0
 uvicorn[standard]==0.31.0
 python-binance==1.0.19
 python-dotenv==1.2.2
+shap==0.52.0
