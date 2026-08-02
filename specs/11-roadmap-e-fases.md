@@ -304,14 +304,58 @@ o que torna o projeto seguro de construir incrementalmente.
     aprendizado contínuo (`evaluate_strategy_config`/
     `analyze_feature_importance`, specs/09) para investigação futura.
   - Ver `changes/2026-08-02-target-take-profit-escalado-por-volatilidade.md`.
-- Próximos passos possíveis — iteração de modelo, não mudança de fase:
-  revisar se BTCUSDT 1m tem sinal explorável nesse recorte de fato ou se
-  vale testar outro timeframe/par (reforçado pela 9ª rodada), redesenhar o
-  alvo escalando também o stop-loss real por volatilidade (proposta maior,
-  mudança de parâmetro de risco — `CLAUDE.md` regra 6, exige aprovação
-  explícita separada, não tentada nesta rodada), ou aceitar que esse
-  conjunto de features/target não supera a regra simples neste par/janela e
-  testar outro.
+- **Iteração de 2026-08-02 (10ª rodada — timeframe e par, testando os dois
+  eixos que a 9ª rodada apontou como próximo passo)**: `evaluate_config`/
+  `compute_feature_importance` ganharam o parâmetro `candle_minutes`
+  (faltava — sem ele, `horizon_minutes` em dado de 5m/15m seria interpretado
+  como número de candles de 1m por engano). Testado contra dado real de 90
+  dias buscado direto da Binance (não o cache anterior, específico de
+  `BTCUSDT_1m`):
+  - **Timeframe** (`BTCUSDT`, 5m e 15m, sem filtro de regime, grade de
+    `horizon_minutes` × `entry_percentile`): nenhuma combinação superou o
+    baseline de 1m (`folds_won=2/5`, mean_pf 0.73). Melhor resultado em 5m
+    empatou em `folds_won=2/5` (`horizon=30` ou `45`, `entry_pct=99`,
+    mean_pf 0.76–0.91) — não superou, só igualou. **15m ficou pior que
+    ambos** (`folds_won` 0/5 em 6 de 8 combinações testadas, 1/5 nas
+    outras duas) — 90 dias em candles de 15 minutos rende poucas barras
+    totais (8640), e vários folds ficaram com amostra de 1 a 7 trades,
+    ruído demais para confiar.
+  - **Par** (`ETHUSDT`, 1m, mesmos `horizon_minutes`/`entry_percentile` já
+    validados para `BTCUSDT`): melhor resultado `folds_won=1/5`
+    (`horizon=45`, `entry_pct=99`, mean_pf 0.55, min_pf 0.17) — **pior**
+    que o baseline `BTCUSDT` no mesmo ponto (`folds_won=2/5`, mean_pf 0.73,
+    min_pf 0.20).
+  - **Conclusão**: nenhum dos dois eixos ajudou — trocar timeframe ou par
+    não destrava o gap de promoção; se algo, ambos pioram em relação ao
+    ponto já conhecido (`BTCUSDT`/`1m`/`horizon=45`/`entry_pct=99`).
+  - Ver `changes/2026-08-02-timeframe-e-par-nao-melhoram.md`.
+- **Balanço consolidado após 10 rodadas de iteração** (normalização de
+  features, recalibração de target, ATR/features cíclicas, sweeps
+  sistemáticos, janela mais longa, balanceamento de classe — a única
+  melhoria real e limpa até aqui —, filtro de regime, calibração
+  out-of-sample do filtro, diagnóstico SHAP, target escalado por
+  volatilidade, timeframe e par): o teto observado é consistentemente
+  **2 de 5 folds vencidos**, independente da intervenção. PF por fold
+  individual às vezes passa de 1.0 (algum sinal parece real, não é ruído
+  puro), mas nunca nos 5 folds ao mesmo tempo — o modelo não erra por
+  completo, mas também não generaliza de forma confiável entre regimes de
+  mercado diferentes dentro da janela de 90 dias.
+  - **Duas leituras possíveis, não mutuamente exclusivas**: (a) o
+    conjunto de features/arquitetura atual (indicadores técnicos clássicos
+    + LightGBM binário) tem um teto real de capacidade preditiva para este
+    tipo de mercado, e destravar mais precisaria de uma mudança maior — mais
+    dado (order book, dado on-chain, sentimento), outra formulação do
+    problema (regressão de valor esperado em vez de classificação binária,
+    ensemble), não só mais um ajuste de hiperparâmetro; (b) o critério de
+    promoção (vencer **todos** os 5 folds) é rigoroso o suficiente para que
+    um modelo com edge real mas modesto falhe 1-2 folds por variância
+    sozinha, mesmo tendo valor esperado positivo agregado — não foi testado
+    ainda quanto desse resultado é "sem edge" vs. "edge real, mas o gate é
+    estrito demais para medir isso com confiança em 90 dias de dado".
+  - Isso não é uma recomendação para afrouxar o critério de promoção
+    silenciosamente — mudar `decide_promotion` é mudança de spec/risco
+    (`07-backtesting-e-validacao.md`, `CLAUDE.md` regra 6), exige a mesma
+    aprovação explícita de qualquer mudança dessa classe.
 - **Limitação conhecida (2026-07-31):** o baseline placeholder da Fase 1
   (`RsiBollingerPlaceholderStrategy`) tem expectância estruturalmente
   negativa — sua saída por recuperação de RSI fecha a posição antes do

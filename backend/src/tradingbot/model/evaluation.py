@@ -72,15 +72,20 @@ def evaluate_config(
     move_threshold_pct: float = 0.008,
     move_threshold_atr_multiple: float | None = None,
     n_splits: int = 5,
+    candle_minutes: int = 1,
     min_trades: int = 8,
     use_regime_filter: bool = True,
     regime_calib_min_trades: int = 5,
 ) -> ConfigEvaluation:
     """Walk-forward-evaluates one (horizon, entry_percentile, ...) configuration end to end
     — dataset build, per-fold train/calibrate/evaluate, exactly like train_model.py's exit
-    criterion, but returning structured per-fold results instead of printing/saving."""
+    criterion, but returning structured per-fold results instead of printing/saving.
+    candle_minutes must match the actual interval of `events` (e.g. 5 for 5-minute klines)
+    — it's what converts horizon_minutes (wall-clock) into horizon_bars (candle count);
+    left at the wrong value, horizon_minutes silently means the wrong amount of real time."""
     target_config = TargetConfig(
         horizon_minutes=horizon_minutes,
+        candle_minutes=candle_minutes,
         move_threshold_pct=move_threshold_pct,
         move_threshold_atr_multiple=move_threshold_atr_multiple,
         stop_loss_pct=STOP_LOSS_PCT,

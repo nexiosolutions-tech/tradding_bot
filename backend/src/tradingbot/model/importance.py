@@ -37,12 +37,14 @@ def compute_feature_importance(
     horizon_minutes: int,
     move_threshold_pct: float = 0.008,
     move_threshold_atr_multiple: float | None = None,
+    candle_minutes: int = 1,
     n_splits: int = 5,
 ) -> tuple[FeatureImportance, ...]:
     """Trains on the final walk-forward fold's fit rows, explains the model's held-out test
     rows, and returns features sorted by importance (most important first)."""
     target_config = TargetConfig(
         horizon_minutes=horizon_minutes,
+        candle_minutes=candle_minutes,
         move_threshold_pct=move_threshold_pct,
         move_threshold_atr_multiple=move_threshold_atr_multiple,
         stop_loss_pct=STOP_LOSS_PCT,

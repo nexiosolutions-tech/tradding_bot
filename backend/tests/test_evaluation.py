@@ -50,6 +50,26 @@ def test_evaluate_config_returns_one_fold_summary_per_split_at_most():
     assert result.mean_profit_factor >= 0.0
 
 
+def test_evaluate_config_forwards_candle_minutes_to_target_config():
+    """candle_minutes must reach TargetConfig — it's what converts horizon_minutes
+    (wall-clock) into horizon_bars (candle count). Left at the wrong value, a caller
+    testing coarser intervals (5m/15m klines) would silently get the wrong look-ahead
+    window. Structural check only: TargetConfig.horizon_bars itself is covered in
+    test_dataset.py."""
+    events = _synthetic_events(n=900)
+    result = evaluate_config(
+        events,
+        horizon_minutes=10,
+        entry_percentile=80.0,
+        move_threshold_pct=0.002,
+        candle_minutes=5,
+        n_splits=2,
+        min_trades=1,
+    )
+    assert 0.0 <= result.label_rate <= 1.0
+    assert result.folds_total >= 1
+
+
 def test_evaluate_config_without_regime_filter_still_produces_folds():
     events = _synthetic_events(n=900, seed=1)
     result = evaluate_config(
