@@ -38,6 +38,60 @@ direta.
 - Esse tipo de alvo generaliza melhor do que prever o valor exato do preço, e
   permite calibração posterior (ver seção de calibração).
 
+## Take-profit escalado por volatilidade (2026-08-02)
+
+A análise de importância de features via SHAP (`11-roadmap-e-fases.md`, 8ª
+rodada) encontrou `atr_pct` (volatilidade recente) dominando a decisão do
+modelo — mais que o dobro de importância de qualquer outra feature,
+correlação de +0.91. Explicação mecanística: com `move_threshold_pct` e
+`stop_loss_pct` **fixos** (0.8% e 1.5%), em regime de volatilidade mais alta
+qualquer barreira fica mais fácil de tocar — e como o take-profit está mais
+perto, um pico de volatilidade favorece estatisticamente acertar o
+take-profit primeiro **mesmo sem nenhuma habilidade direcional real**. O
+modelo pode estar aprendendo majoritariamente essa assimetria, não sinal
+direcional genuíno.
+
+- `TargetConfig.move_threshold_atr_multiple: float | None` (novo,
+  `model/dataset.py`) — quando definido, a distância do take-profit deixa de
+  ser o `move_threshold_pct` fixo e passa a ser
+  `move_threshold_atr_multiple * atr_pct_da_barra_de_entrada`. `None`
+  (default) preserva o comportamento anterior — mudança aditiva, não
+  destrutiva.
+- **Escopo deliberadamente contido**: só o take-profit escala com
+  volatilidade. `stop_loss_pct` continua fixo em 0.015, o mesmo valor usado
+  pela camada de execução real (`06-camada-de-execucao.md`) — não há mudança
+  de parâmetro de risco/execução aqui (`CLAUDE.md` regra 6 não se aplica),
+  só de definição de label de treino (`CLAUDE.md` regra 7: mudança de
+  arquitetura/target, processo SDD completo, sem tocar em produção com
+  capital real). Escalar o stop-loss real também é uma proposta
+  estruturalmente diferente e maior — ver "Próximos passos possíveis" em
+  `11-roadmap-e-fases.md`, não decidida nesta rodada.
+- Se ambas as barreiras escalassem junto com a volatilidade, a assimetria
+  que o SHAP encontrou desapareceria por construção: um pico de volatilidade
+  deixa de favorecer mecanicamente o take-profit, porque ele também fica mais
+  longe. Essa é a mudança cirúrgica que testa diretamente o mecanismo
+  identificado, sem alterar o que a camada de execução realmente arrisca por
+  trade.
+- `atr_pct` já é obrigatório em `FEATURE_NAMES` (sem warm-up, spec 03) — toda
+  linha que chega em `build_dataset` já tem esse valor disponível, nenhuma
+  mudança adicional de warm-up necessária.
+- **Resultado empírico, honesto**: o mecanismo funcionou exatamente como
+  previsto — SHAP em cima do target escalado mostra `atr_pct` caindo de
+  |SHAP| médio 1.45 para 0.53, e a correlação de direção **invertendo de
+  sinal** (+0.89 → -0.83), confirmando que o atalho de volatilidade
+  identificado foi neutralizado. **Mas isso não melhorou o profit factor —
+  piorou**: nenhum dos 6 multiplicadores testados (8 a 22, contra o cache de
+  90 dias, mesma config de referência) bateu o baseline em `folds_won`
+  (baseline 2/5; candidatos 0/5 ou 1/5 em todos os casos) nem em PF mínimo
+  (baseline 0.20; nenhum candidato passou de 0.15). Ver detalhamento
+  completo em `11-roadmap-e-fases.md` (9ª rodada) e
+  `changes/2026-08-02-target-take-profit-escalado-por-volatilidade.md`.
+- **Não adotado como default** — a funcionalidade fica no código (é aditiva,
+  `None` preserva o comportamento anterior, e continua disponível como
+  ferramenta do loop agêntico de aprendizado contínuo para investigação
+  futura), mas `move_threshold_pct` fixo continua sendo o que
+  `train_model.py` usa por padrão.
+
 ### Calibração de `move_threshold_pct` vs. custo de round-trip (2026-07-31)
 
 - `move_threshold_pct` (default anterior: 0.3%) estava **exatamente no

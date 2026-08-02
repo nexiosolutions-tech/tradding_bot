@@ -43,6 +43,7 @@ class ConfigEvaluation:
     horizon_minutes: int
     entry_percentile: float
     move_threshold_pct: float
+    move_threshold_atr_multiple: float | None
     use_regime_filter: bool
     label_rate: float
     folds: tuple[FoldSummary, ...]
@@ -69,6 +70,7 @@ def evaluate_config(
     horizon_minutes: int,
     entry_percentile: float,
     move_threshold_pct: float = 0.008,
+    move_threshold_atr_multiple: float | None = None,
     n_splits: int = 5,
     min_trades: int = 8,
     use_regime_filter: bool = True,
@@ -78,7 +80,10 @@ def evaluate_config(
     — dataset build, per-fold train/calibrate/evaluate, exactly like train_model.py's exit
     criterion, but returning structured per-fold results instead of printing/saving."""
     target_config = TargetConfig(
-        horizon_minutes=horizon_minutes, move_threshold_pct=move_threshold_pct, stop_loss_pct=STOP_LOSS_PCT
+        horizon_minutes=horizon_minutes,
+        move_threshold_pct=move_threshold_pct,
+        move_threshold_atr_multiple=move_threshold_atr_multiple,
+        stop_loss_pct=STOP_LOSS_PCT,
     )
     rows = build_dataset(events, target_config)
     label_rate = sum(r.label for r in rows) / len(rows) if rows else 0.0
@@ -133,6 +138,7 @@ def evaluate_config(
         horizon_minutes=horizon_minutes,
         entry_percentile=entry_percentile,
         move_threshold_pct=move_threshold_pct,
+        move_threshold_atr_multiple=move_threshold_atr_multiple,
         use_regime_filter=use_regime_filter,
         label_rate=label_rate,
         folds=tuple(folds),

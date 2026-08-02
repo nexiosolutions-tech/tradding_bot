@@ -59,6 +59,14 @@ class TargetConfig:
     # parameter, out of scope here (see specs/04-modelo-ml-e-scoring.md).
     move_threshold_pct: float = 0.008
     stop_loss_pct: float = 0.015
+    # 2026-08-02: when set, the take-profit barrier is move_threshold_atr_multiple *
+    # atr_pct-at-entry instead of the fixed move_threshold_pct above — SHAP found the
+    # model mostly learning the fixed-barrier volatility shortcut (higher vol mechanically
+    # favors the closer, fixed take-profit), not real direction (specs/04). None preserves
+    # the original fixed-threshold behavior — additive, not a breaking default change.
+    # stop_loss_pct is deliberately left fixed either way: it's also the real execution
+    # stop-loss (spec 06), out of scope for this target-only change (CLAUDE.md regra 6).
+    move_threshold_atr_multiple: float | None = None
 
     @property
     def horizon_bars(self) -> int:
@@ -75,9 +83,18 @@ class DatasetRow:
 
 
 def _triple_barrier_label(
-    entry_close: float, future_highs: list[float], future_lows: list[float], target: TargetConfig
+    entry_close: float,
+    atr_pct_at_entry: float | None,
+    future_highs: list[float],
+    future_lows: list[float],
+    target: TargetConfig,
 ) -> int:
-    take_profit = entry_close * (1 + target.move_threshold_pct)
+    if target.move_threshold_atr_multiple is not None:
+        assert atr_pct_at_entry is not None  # build_dataset only calls this once atr_pct has warmed up
+        move_threshold_pct = target.move_threshold_atr_multiple * atr_pct_at_entry
+    else:
+        move_threshold_pct = target.move_threshold_pct
+    take_profit = entry_close * (1 + move_threshold_pct)
     stop_loss = entry_close * (1 - target.stop_loss_pct)
     for high, low in zip(future_highs, future_lows):
         hit_take_profit = high >= take_profit
@@ -118,7 +135,7 @@ def build_dataset(events: list[MarketEvent], target: TargetConfig) -> list[Datas
         snapshot = snapshots[i]
         highs_window = future_highs[i + 1 : i + 1 + horizon]
         lows_window = future_lows[i + 1 : i + 1 + horizon]
-        label = _triple_barrier_label(snapshot.close, highs_window, lows_window, target)
+        label = _triple_barrier_label(snapshot.close, snapshot.features.get("atr_pct"), highs_window, lows_window, target)
         rows.append(
             DatasetRow(
                 symbol=snapshot.symbol,

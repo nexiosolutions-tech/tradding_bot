@@ -37,6 +37,7 @@ def _evaluate_strategy_config(events: list[MarketEvent], **kwargs) -> dict:
         horizon_minutes=kwargs["horizon_minutes"],
         entry_percentile=kwargs["entry_percentile"],
         move_threshold_pct=kwargs.get("move_threshold_pct", 0.008),
+        move_threshold_atr_multiple=kwargs.get("move_threshold_atr_multiple"),
         n_splits=kwargs.get("n_splits", 5),
         min_trades=kwargs.get("min_trades", 8),
         use_regime_filter=kwargs.get("use_regime_filter", True),
@@ -44,6 +45,7 @@ def _evaluate_strategy_config(events: list[MarketEvent], **kwargs) -> dict:
     return {
         "horizon_minutes": result.horizon_minutes,
         "entry_percentile": result.entry_percentile,
+        "move_threshold_atr_multiple": result.move_threshold_atr_multiple,
         "use_regime_filter": result.use_regime_filter,
         "label_rate": result.label_rate,
         "folds_won": result.folds_won,
@@ -69,6 +71,7 @@ def _analyze_feature_importance(events: list[MarketEvent], **kwargs) -> dict:
         events,
         horizon_minutes=kwargs["horizon_minutes"],
         move_threshold_pct=kwargs.get("move_threshold_pct", 0.008),
+        move_threshold_atr_multiple=kwargs.get("move_threshold_atr_multiple"),
         n_splits=kwargs.get("n_splits", 5),
     )
     return {
@@ -119,7 +122,19 @@ def build_tools(events: list[MarketEvent]) -> list[Tool]:
                 "properties": {
                     "horizon_minutes": {"type": "integer"},
                     "entry_percentile": {"type": "number"},
-                    "move_threshold_pct": {"type": "number", "default": 0.008},
+                    "move_threshold_pct": {
+                        "type": "number",
+                        "default": 0.008,
+                        "description": "Distância fixa do take-profit. Ignorada se move_threshold_atr_multiple for informado.",
+                    },
+                    "move_threshold_atr_multiple": {
+                        "type": "number",
+                        "description": (
+                            "Se informado, o take-profit vira este múltiplo do atr_pct da barra de "
+                            "entrada em vez de um percentual fixo (specs/04, 2026-08-02) — testa se o "
+                            "modelo depende de volatilidade em vez de sinal direcional real."
+                        ),
+                    },
                     "n_splits": {"type": "integer", "default": 5},
                     "min_trades": {"type": "integer", "default": 8},
                     "use_regime_filter": {"type": "boolean", "default": True},
@@ -139,6 +154,10 @@ def build_tools(events: list[MarketEvent]) -> list[Tool]:
                 "properties": {
                     "horizon_minutes": {"type": "integer"},
                     "move_threshold_pct": {"type": "number", "default": 0.008},
+                    "move_threshold_atr_multiple": {
+                        "type": "number",
+                        "description": "Mesmo significado de evaluate_strategy_config — use para checar se isso reduz a dependência de atr_pct.",
+                    },
                     "n_splits": {"type": "integer", "default": 5},
                 },
                 "required": ["horizon_minutes"],

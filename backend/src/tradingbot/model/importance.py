@@ -36,12 +36,16 @@ def compute_feature_importance(
     events: list[MarketEvent],
     horizon_minutes: int,
     move_threshold_pct: float = 0.008,
+    move_threshold_atr_multiple: float | None = None,
     n_splits: int = 5,
 ) -> tuple[FeatureImportance, ...]:
     """Trains on the final walk-forward fold's fit rows, explains the model's held-out test
     rows, and returns features sorted by importance (most important first)."""
     target_config = TargetConfig(
-        horizon_minutes=horizon_minutes, move_threshold_pct=move_threshold_pct, stop_loss_pct=STOP_LOSS_PCT
+        horizon_minutes=horizon_minutes,
+        move_threshold_pct=move_threshold_pct,
+        move_threshold_atr_multiple=move_threshold_atr_multiple,
+        stop_loss_pct=STOP_LOSS_PCT,
     )
     rows = build_dataset(events, target_config)
 

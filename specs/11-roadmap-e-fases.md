@@ -268,13 +268,50 @@ o que torna o projeto seguro de construir incrementalmente.
     atalho) é mudança de arquitetura do target (`CLAUDE.md` regra 7),
     pendente de decisão explícita do usuário antes de qualquer
     implementação.
+- **Iteração de 2026-08-02 (9ª rodada — take-profit escalado por
+  volatilidade, resposta direta ao achado da 8ª rodada)**: implementado
+  `TargetConfig.move_threshold_atr_multiple` (`model/dataset.py`) — quando
+  definido, a distância do take-profit vira esse múltiplo do `atr_pct` da
+  barra de entrada em vez de `move_threshold_pct` fixo. Só o take-profit
+  muda; `stop_loss_pct` continua fixo em 1.5% (mesmo valor da execução
+  real) — mudança cirúrgica, sem tocar parâmetro de risco/execução.
+  `k ≈ 15` reproduz a distância média atual (0.8%) na volatilidade típica do
+  cache de 90 dias (`mean(atr_pct) ≈ 0.00053`); testados `k` em
+  `{8, 10, 12, 15, 18, 22}`.
+  - **O mecanismo funcionou**: SHAP no target escalado mostra `atr_pct`
+    caindo de \|SHAP\| médio 1.45 (baseline) para 0.53, e a correlação de
+    direção **invertendo de sinal** (+0.89 → -0.83) — confirma que o atalho
+    de assimetria fixa identificado na 8ª rodada foi neutralizado por
+    construção.
+  - **Mas o profit factor não melhorou — piorou**: nenhum dos 6
+    multiplicadores testados bateu o baseline (`move_threshold_pct=0.008`
+    fixo: PF por fold `[1.54, 0.38, 1.03, 0.50, 0.20]`, mean 0.73, min 0.20,
+    `folds_won=2/5`) nem em `folds_won` (todos os candidatos ficaram em 0/5
+    ou 1/5) nem em PF mínimo (nenhum candidato passou de 0.15). O melhor
+    `mean_pf` entre os candidatos (`k=12`, mean 0.96) veio com `min_pf=0.07`
+    e só 1/5 folds vencidos — pior amostra, não melhor modelo.
+  - **Interpretação**: a correção fechou exatamente o buraco mecânico que o
+    SHAP apontou, mas o modelo não tinha sinal direcional genuíno suficiente
+    para preencher a lacuna — trocou um atalho de volatilidade (positivo)
+    por outro (negativo, `atr_pct` agora anti-correlacionado), sem ganho
+    líquido. Isso é evidência a mais (não definitiva) de que
+    `BTCUSDT`/`1m`/este conjunto de features pode não ter sinal direcional
+    explorável suficiente com a arquitetura atual — fortalece a opção
+    "testar outro par/timeframe" abaixo.
+  - **Não adotado como default** — `move_threshold_pct` fixo continua sendo
+    o que `train_model.py` usa. O código fica disponível (aditivo, `None`
+    preserva o comportamento anterior) como ferramenta do loop agêntico de
+    aprendizado contínuo (`evaluate_strategy_config`/
+    `analyze_feature_importance`, specs/09) para investigação futura.
+  - Ver `changes/2026-08-02-target-take-profit-escalado-por-volatilidade.md`.
 - Próximos passos possíveis — iteração de modelo, não mudança de fase:
-  redesenhar o alvo com barreiras normalizadas por volatilidade (resposta
-  direta ao achado da 8ª rodada, mudança de arquitetura — exige aprovação
-  explícita antes de implementar), revisar se BTCUSDT 1m tem sinal
-  explorável nesse recorte de fato ou se vale testar outro timeframe/par,
-  ou aceitar que esse conjunto de features/target não supera a regra
-  simples neste par/janela e testar outro.
+  revisar se BTCUSDT 1m tem sinal explorável nesse recorte de fato ou se
+  vale testar outro timeframe/par (reforçado pela 9ª rodada), redesenhar o
+  alvo escalando também o stop-loss real por volatilidade (proposta maior,
+  mudança de parâmetro de risco — `CLAUDE.md` regra 6, exige aprovação
+  explícita separada, não tentada nesta rodada), ou aceitar que esse
+  conjunto de features/target não supera a regra simples neste par/janela e
+  testar outro.
 - **Limitação conhecida (2026-07-31):** o baseline placeholder da Fase 1
   (`RsiBollingerPlaceholderStrategy`) tem expectância estruturalmente
   negativa — sua saída por recuperação de RSI fecha a posição antes do
