@@ -109,6 +109,23 @@ para execução:
   startup com posição real aberta é um caminho raro. Corrigido pedindo
   `newOrderRespType="RESULT"` (stop-loss) e `"FULL"` (mercado, explícito
   por consistência, já era o comportamento implícito).
+- **Stop-loss preenchido de verdade, mas `avg_fill_price` ficava `None`,
+  travando o fechamento da posição** (2026-08-10, incidente real de
+  produção — ver `changes/2026-08-10-avg-fill-price-none-em-consulta-de-ordem.md`):
+  `GET /api/v3/order` (o que `get_order_status` chama pra checar se o
+  stop-loss preencheu) **nunca** inclui o campo `fills` — esse campo só
+  existe na resposta de `create_order`. `_to_order_result` calculava
+  `avg_fill_price` só a partir de `fills`, então toda vez que uma ordem era
+  consultada por status (não colocada), `avg_fill_price` ficava `None`
+  mesmo com `status: "FILLED"` de verdade. `_finalize_exit` calcula
+  `pnl = (avg_fill_price - entry_price) * size` — com `None`, isso quebra
+  (`TypeError`) antes de `self._position` ser limpo, repetindo a cada
+  candle: o stop-loss **funcionou corretamente** (protegeu a posição, como
+  desenhado), mas o sistema não conseguia processar esse fechamento.
+  Corrigido calculando `avg_fill_price` como `cummulativeQuoteQty /
+  executedQty` — campo presente nas duas formas de resposta (consulta e
+  criação), matematicamente equivalente à média ponderada de `fills` — só
+  cai de volta em `fills` se `cummulativeQuoteQty` estiver ausente.
 
 ## Fora de escopo no MVP
 

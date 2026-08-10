@@ -130,3 +130,56 @@ async def test_get_order_status_propagates_errors_other_than_unknown_order():
 
     with pytest.raises(BinanceAPIException):
         await client.get_order_status("BTCUSDT", "some-client-order-id")
+
+
+@pytest.mark.asyncio
+async def test_get_order_status_computes_avg_fill_price_from_a_real_filled_stop_loss_response():
+    """2026-08-10 incident: GET /api/v3/order (what get_order_status calls) never includes
+    a "fills" array, even for a genuinely FILLED order — only create_order's response has
+    one. Relying on "fills" alone left avg_fill_price silently None for every order looked
+    up by status, crashing _finalize_exit's pnl calc every candle instead of closing the
+    position. This is the exact real response captured from testnet.binance.vision for a
+    stop-loss that filled correctly."""
+    client = BinanceTestnetClient(api_key="x", api_secret="y", testnet=True)
+    client._client = _FakeAsyncClientGetOrder(
+        result={
+            "symbol": "BTCUSDT",
+            "orderId": 1417354,
+            "clientOrderId": "tb-820644df29bde02f7fd4",
+            "price": "63955.86000000",
+            "origQty": "0.00308000",
+            "executedQty": "0.00308000",
+            "cummulativeQuoteQty": "196.98404880",
+            "status": "FILLED",
+            "type": "STOP_LOSS_LIMIT",
+            "side": "SELL",
+            "stopPrice": "64019.88000000",
+        }
+    )
+
+    result = await client.get_order_status("BTCUSDT", "tb-820644df29bde02f7fd4")
+
+    assert result is not None
+    assert result.status == "FILLED"
+    assert result.avg_fill_price == pytest.approx(196.98404880 / 0.00308000)
+
+
+@pytest.mark.asyncio
+async def test_get_order_status_avg_fill_price_is_none_for_a_resting_unfilled_order():
+    """A resting NEW order has executedQty=0 — must not divide by zero, must stay None."""
+    client = BinanceTestnetClient(api_key="x", api_secret="y", testnet=True)
+    client._client = _FakeAsyncClientGetOrder(
+        result={
+            "symbol": "BTCUSDT",
+            "orderId": 1,
+            "clientOrderId": "test-resting",
+            "executedQty": "0.00000000",
+            "cummulativeQuoteQty": "0.00000000",
+            "status": "NEW",
+        }
+    )
+
+    result = await client.get_order_status("BTCUSDT", "test-resting")
+
+    assert result.status == "NEW"
+    assert result.avg_fill_price is None

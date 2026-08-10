@@ -80,13 +80,30 @@ class BinanceTestnetClient:
 
     @staticmethod
     def _to_order_result(client_order_id: str, raw: dict) -> OrderResult:
-        fills = raw.get("fills", [])
+        # "fills" only ever appears in create_order's response — GET /api/v3/order (what
+        # get_order_status calls to check on a resting stop-loss) never includes it, even
+        # for a genuinely FILLED order, so relying on "fills" alone made avg_fill_price
+        # silently None for every order looked up by status instead of just placed.
+        # cummulativeQuoteQty/executedQty is present in both response shapes and is exactly
+        # the same average (quote spent or received / base filled) — prefer it, and only
+        # fall back to summing "fills" if it's somehow absent. Confirmed directly against
+        # testnet.binance.vision (2026-08-10 incident): a real, correctly-filled stop-loss
+        # (status=FILLED, executedQty=0.00308, cummulativeQuoteQty=196.98404880, no "fills"
+        # key at all) crashed _finalize_exit's pnl calc every candle
+        # (unsupported operand type(s) for -: 'NoneType' and 'float') instead of closing
+        # the position — see changes/.
         filled_qty = float(raw.get("executedQty", 0.0))
         avg_price = None
-        if fills:
-            total_cost = sum(float(f["price"]) * float(f["qty"]) for f in fills)
-            total_qty = sum(float(f["qty"]) for f in fills)
-            avg_price = total_cost / total_qty if total_qty else None
+        if filled_qty > 0:
+            cumulative_quote = raw.get("cummulativeQuoteQty")
+            if cumulative_quote is not None:
+                avg_price = float(cumulative_quote) / filled_qty
+            else:
+                fills = raw.get("fills", [])
+                if fills:
+                    total_cost = sum(float(f["price"]) * float(f["qty"]) for f in fills)
+                    total_qty = sum(float(f["qty"]) for f in fills)
+                    avg_price = total_cost / total_qty if total_qty else None
         return OrderResult(
             client_order_id=client_order_id,
             exchange_order_id=str(raw.get("orderId")) if raw.get("orderId") is not None else None,
