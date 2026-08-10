@@ -64,6 +64,33 @@ async def test_stop_loss_without_tick_size_falls_back_to_unrounded_price():
     assert limit_price == pytest.approx(stop_price * 0.999)
 
 
+@pytest.mark.asyncio
+async def test_stop_loss_order_requests_a_response_type_that_includes_status_and_price():
+    """2026-08-09 incident: Binance defaults newOrderRespType to ACK for STOP_LOSS_LIMIT
+    (bare {symbol, orderId, clientOrderId, transactTime} — no "status", no "stopPrice"),
+    unlike MARKET orders which default to FULL. _extract_stop_price (orchestrator.py)
+    reads stopPrice back from exactly this response when reconciling state on restart —
+    with ACK, that always silently failed. Must request RESULT (or FULL) explicitly."""
+    client = BinanceTestnetClient(api_key="x", api_secret="y", testnet=True)
+    fake = _FakeAsyncClient()
+    client._client = fake
+
+    await client.place_stop_loss_order("BTCUSDT", "sell", 0.01, 63759.74, "test-stop-3")
+
+    assert fake.create_order_calls[0]["newOrderRespType"] in ("RESULT", "FULL")
+
+
+@pytest.mark.asyncio
+async def test_market_order_requests_a_full_response_type():
+    client = BinanceTestnetClient(api_key="x", api_secret="y", testnet=True)
+    fake = _FakeAsyncClient()
+    client._client = fake
+
+    await client.place_market_order("BTCUSDT", "buy", 0.01, "test-market-1")
+
+    assert fake.create_order_calls[0]["newOrderRespType"] == "FULL"
+
+
 class _FakeAsyncClientGetOrder:
     def __init__(self, exc: Exception | None = None, result: dict | None = None):
         self._exc = exc

@@ -91,9 +91,24 @@ para execução:
   finaliza como `stop_loss`; se não foi preenchida e simplesmente sumiu,
   prossegue com a venda a mercado mesmo assim (a estratégia já decidiu
   sair e não há stop funcional para confiar). `get_order_status` também
-  passou a distinguir "ordem não existe" (código -2011, resposta legítima
-  `None`) de qualquer outra falha (rede, rate limit — propaga, em vez de
-  ser silenciosamente tratada como "não preenchida").
+  passou a distinguir "ordem não existe" (códigos -2011 e -2013 — Binance
+  usa códigos diferentes no endpoint de cancelamento vs. consulta,
+  confirmado direto contra a testnet real; resposta legítima `None`) de
+  qualquer outra falha (rede, rate limit — propaga, em vez de ser
+  silenciosamente tratada como "não preenchida").
+- **Resposta da exchange ao colocar o stop-loss vinha sem `status`/`price`**
+  (2026-08-09, descoberto durante a mesma investigação do incidente acima —
+  ver `changes/2026-08-09-posicao-travada-cancel-order-sem-tratamento.md`):
+  `create_order` para `STOP_LOSS_LIMIT` nunca pedia `newOrderRespType`
+  explicitamente, e a Binance usa `ACK` (resposta mínima — só `symbol`,
+  `orderId`, `clientOrderId`, `transactTime`) por padrão para esse tipo de
+  ordem, ao contrário de `MARKET`, que já vem em `FULL`. Isso fazia
+  `_extract_stop_price` (usado só na reconciliação de estado no restart)
+  falhar silenciosamente pra **toda** ordem de stop-loss real colocada,
+  desde sempre — só nunca tinha sido exercitado porque reconciliação de
+  startup com posição real aberta é um caminho raro. Corrigido pedindo
+  `newOrderRespType="RESULT"` (stop-loss) e `"FULL"` (mercado, explícito
+  por consistência, já era o comportamento implícito).
 
 ## Fora de escopo no MVP
 

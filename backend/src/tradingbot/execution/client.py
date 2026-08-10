@@ -106,6 +106,7 @@ class BinanceTestnetClient:
             type="MARKET",
             quantity=quantity,
             newClientOrderId=client_order_id,
+            newOrderRespType="FULL",
         )
         return self._to_order_result(client_order_id, raw)
 
@@ -136,6 +137,15 @@ class BinanceTestnetClient:
             stopPrice=f"{stop_price:.8f}",
             timeInForce="GTC",
             newClientOrderId=client_order_id,
+            # Binance defaults newOrderRespType to ACK (just symbol/orderId/clientOrderId/
+            # transactTime) for non-MARKET/LIMIT types — silently missing "status" and
+            # "stopPrice" entirely. _extract_stop_price (orchestrator.py) reads stopPrice
+            # back from exactly this response when reconciling state on restart; ACK made
+            # that always fail (2026-08-09 incident: startup reconciliation for a real
+            # position paused with "stop-loss price unrecoverable" — this is why, a
+            # separate/latent gap from the -2011/-2013 order-not-found issue fixed
+            # alongside it, uncovered by the same incident investigation).
+            newOrderRespType="RESULT",
         )
         return self._to_order_result(client_order_id, raw)
 
