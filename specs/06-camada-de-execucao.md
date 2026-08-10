@@ -75,6 +75,25 @@ para execução:
   precisão) antes de qualquer ordem ser enviada. Se o sinal, já arredondado,
   ficar abaixo do notional mínimo, a entrada é rejeitada com log claro em vez
   de gerar uma ordem fadada à rejeição pela exchange.
+- **Ordem de stop-loss que a exchange não reconhece mais no momento de
+  cancelar para sair por sinal** (2026-08-09, incidente real de produção —
+  ver `changes/2026-08-09-posicao-travada-cancel-order-sem-tratamento.md`):
+  cenário distinto de "falha ao colocar o stop-loss" acima — aqui a posição
+  já está aberta com stop-loss ativo há tempo, e o próprio `should_exit` da
+  estratégia decide sair, mas cancelar o stop antes de vender a mercado
+  falha porque a exchange não reconhece mais aquela ordem (código -2011,
+  "Unknown order sent" — já preenchida, já cancelada, ou perdida por algum
+  motivo do lado da exchange, ex. reset de dado em testnet). Sem tratamento,
+  isso travava a checagem de saída inteira indefinidamente — a posição
+  nunca mais fechava, mesmo com um sinal de saída válido todo candle. Agora:
+  falha ao cancelar dispara uma re-checagem do status da ordem — se foi de
+  fato preenchida (a posição já fechou via stop-loss, não vender de novo),
+  finaliza como `stop_loss`; se não foi preenchida e simplesmente sumiu,
+  prossegue com a venda a mercado mesmo assim (a estratégia já decidiu
+  sair e não há stop funcional para confiar). `get_order_status` também
+  passou a distinguir "ordem não existe" (código -2011, resposta legítima
+  `None`) de qualquer outra falha (rede, rate limit — propaga, em vez de
+  ser silenciosamente tratada como "não preenchida").
 
 ## Fora de escopo no MVP
 

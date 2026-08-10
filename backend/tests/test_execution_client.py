@@ -7,11 +7,17 @@ single stop-loss placement with PRICE_FILTER in production, since multiplying an
 already-tick-aligned price by 0.999 almost always breaks that alignment again.
 """
 
+import json
 from decimal import Decimal
 
 import pytest
+from binance.exceptions import BinanceAPIException
 
 from tradingbot.execution.client import BinanceTestnetClient
+
+
+def _binance_api_exception(code: int, msg: str = "error") -> BinanceAPIException:
+    return BinanceAPIException(response=None, status_code=400, text=json.dumps({"code": code, "msg": msg}))
 
 
 class _FakeAsyncClient:
@@ -56,3 +62,40 @@ async def test_stop_loss_without_tick_size_falls_back_to_unrounded_price():
 
     limit_price = float(fake.create_order_calls[0]["price"])
     assert limit_price == pytest.approx(stop_price * 0.999)
+
+
+class _FakeAsyncClientGetOrder:
+    def __init__(self, exc: Exception | None = None, result: dict | None = None):
+        self._exc = exc
+        self._result = result
+
+    async def get_order(self, **kwargs):
+        if self._exc is not None:
+            raise self._exc
+        return self._result
+
+
+@pytest.mark.asyncio
+async def test_get_order_status_returns_none_when_exchange_has_no_record_of_the_order():
+    """Binance code -2011 ("Unknown order sent") is a legitimate "not found" answer —
+    already filled and pruned, cancelled, or lost (e.g. a testnet data reset)."""
+    client = BinanceTestnetClient(api_key="x", api_secret="y", testnet=True)
+    client._client = _FakeAsyncClientGetOrder(exc=_binance_api_exception(-2011))
+
+    result = await client.get_order_status("BTCUSDT", "some-client-order-id")
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_get_order_status_propagates_errors_other_than_unknown_order():
+    """2026-08-09 incident: collapsing every failure (network blips included) into the
+    same None as a real -2011 let a transient error be misread as 'this order doesn't
+    exist', which downstream logic then acted on incorrectly. Only -2011 is swallowed —
+    anything else must propagate so the caller's broad exception handler retries instead
+    of silently misinterpreting the failure."""
+    client = BinanceTestnetClient(api_key="x", api_secret="y", testnet=True)
+    client._client = _FakeAsyncClientGetOrder(exc=_binance_api_exception(-1021, "Timestamp outside recvWindow"))
+
+    with pytest.raises(BinanceAPIException):
+        await client.get_order_status("BTCUSDT", "some-client-order-id")

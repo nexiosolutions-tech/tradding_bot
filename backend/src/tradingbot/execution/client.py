@@ -145,11 +145,24 @@ class BinanceTestnetClient:
         return self._to_order_result(client_order_id, raw)
 
     async def get_order_status(self, symbol: str, client_order_id: str) -> OrderResult | None:
+        """None means the exchange has no record of this order (Binance code -2011,
+        "Unknown order sent") — a legitimate "not found" answer (already filled and
+        pruned, cancelled, or lost, e.g. a testnet data reset). Any other failure
+        (network, rate limit, ...) propagates instead of being silently folded into the
+        same None — on_event's broad handler logs it and the next candle retries, rather
+        than the caller misreading a transient blip as "this order doesn't exist" (2026-
+        08-09 incident: that conflation is what let a stuck exit retry -2011 forever
+        instead of surfacing a distinguishable failure — see changes/).
+        """
+        from binance.exceptions import BinanceAPIException
+
         client = await self._get_client()
         try:
             raw = await client.get_order(symbol=symbol, origClientOrderId=client_order_id)
-        except Exception:
-            return None
+        except BinanceAPIException as exc:
+            if exc.code == -2011:
+                return None
+            raise
         return self._to_order_result(client_order_id, raw)
 
     async def get_account_balance(self, asset: str) -> float:

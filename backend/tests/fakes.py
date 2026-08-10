@@ -23,6 +23,7 @@ class FakeExchangeClient:
         self.call_log: list[tuple] = []
         self.fail_stop_loss_times: int = 0
         self.fail_market_sell_times: int = 0
+        self.fail_cancel_times: int = 0
         self.symbol_filters: SymbolFilters = _PERMISSIVE_FILTERS
 
     async def place_market_order(self, symbol, side, quantity, client_order_id) -> OrderResult:
@@ -67,6 +68,9 @@ class FakeExchangeClient:
 
     async def cancel_order(self, symbol, client_order_id) -> OrderResult:
         self.call_log.append(("cancel_order", symbol, client_order_id))
+        if self.fail_cancel_times > 0:
+            self.fail_cancel_times -= 1
+            raise RuntimeError("simulated -2011 Unknown order sent")
         existing = self.orders.get(client_order_id)
         if existing is None:
             return OrderResult(client_order_id, None, "CANCELED", 0.0, None, {})

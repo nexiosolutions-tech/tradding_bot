@@ -417,7 +417,28 @@ class Orchestrator:
             return
 
         if self.strategy.should_exit(snapshot):
-            await self.exchange.cancel_order(self.symbol, pos.stop_order_id)
+            try:
+                await self.exchange.cancel_order(self.symbol, pos.stop_order_id)
+            except Exception as exc:  # noqa: BLE001 — the stop may already be gone (filled,
+                # cancelled, or lost — e.g. a testnet data reset); cancelling it is best-effort
+                # cleanup before the market exit below, not a precondition for it. Re-checking
+                # status here (rather than assuming "not filled" and blindly selling again) is
+                # what closed the 2026-08-09 incident: a stop-loss that had actually filled,
+                # combined with an unguarded cancel_order, retried the same -2011 forever and
+                # never reached _finalize_exit, leaving the position "open" in our state for a
+                # week with no further trading possible — see changes/.
+                self._log_activity(
+                    "warning", f"Falha ao cancelar stop-loss antes da saída por sinal: {exc}"
+                )
+                stop_status = await self.exchange.get_order_status(self.symbol, pos.stop_order_id)
+                if stop_status is not None and stop_status.status == "FILLED":
+                    await self._finalize_exit(snapshot.knowledge_ts, stop_status, reason="stop_loss")
+                    return
+                self._log_activity(
+                    "warning",
+                    "Stop-loss não encontrado na exchange (e não preenchido) — prosseguindo com a saída por sinal mesmo assim",
+                )
+
             self._sequence += 1
             exit_id = make_client_order_id(self.symbol, "exit", snapshot.knowledge_ts, self._sequence)
             exit_order = await self.exchange.place_market_order(self.symbol, "sell", pos.size, exit_id)

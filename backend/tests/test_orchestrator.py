@@ -211,6 +211,68 @@ def test_signal_exit_cancels_stop_and_sells_at_market(tmp_path):
     assert trades[0].pnl > 0
 
 
+def test_signal_exit_when_cancel_fails_but_stop_already_filled_finalizes_as_stop_loss(tmp_path):
+    """If cancelling the stop-loss fails because it already filled (a real race: price hit
+    the stop right as the signal-exit was about to cancel it), the code must not blindly
+    place a second market sell — it must detect the fill and finalize as stop_loss."""
+    import asyncio
+
+    exchange = FakeExchangeClient()
+    exchange.next_fill_price["BTCUSDT"] = 100.0
+    strategy = ScriptedStrategy(entry_at_ts=60_000, stop_loss_pct=0.05, exit_at_ts=120_000)
+    orch, session_factory = _make_orchestrator(tmp_path, strategy, exchange)
+    orch.resume(by="brian")
+
+    asyncio.run(orch.on_event(_closed_kline("BTCUSDT", 100.0, 60_000)))
+
+    stop_order_id = next(call[5] for call in exchange.call_log if call[0] == "place_stop_loss_order")
+    exchange.simulate_fill(stop_order_id, fill_price=95.0)
+    exchange.fail_cancel_times = 1
+
+    asyncio.run(orch.on_event(_closed_kline("BTCUSDT", 110.0, 120_000)))
+
+    assert orch.state == EngineState.ANALISANDO
+    kinds = [c[0] for c in exchange.call_log]
+    assert kinds.count("place_market_order") == 1  # only the entry buy — no redundant exit sell
+
+    session = session_factory()
+    trades = trades_in_range(session, 0, 10**15)
+    assert len(trades) == 1
+    assert trades[0].exit_reason == "stop_loss"
+
+
+def test_signal_exit_when_cancel_fails_and_stop_not_filled_still_closes_position(tmp_path):
+    """Regression test for the 2026-08-09 incident: a stop-loss order the exchange no
+    longer recognizes (not filled, just gone — e.g. a testnet data reset, or already
+    cancelled in a previous interrupted attempt) made cancel_order raise -2011 every
+    candle forever, silently swallowed by on_event, with the position never closing —
+    stuck for a week. It must now fall through to closing the position via a market
+    exit instead of retrying the same failing cancel indefinitely."""
+    import asyncio
+
+    exchange = FakeExchangeClient()
+    exchange.next_fill_price["BTCUSDT"] = 100.0
+    strategy = ScriptedStrategy(entry_at_ts=60_000, stop_loss_pct=0.05, exit_at_ts=120_000)
+    orch, session_factory = _make_orchestrator(tmp_path, strategy, exchange)
+    orch.resume(by="brian")
+
+    asyncio.run(orch.on_event(_closed_kline("BTCUSDT", 100.0, 60_000)))
+
+    stop_order_id = next(call[5] for call in exchange.call_log if call[0] == "place_stop_loss_order")
+    del exchange.orders[stop_order_id]  # the exchange has no record of it at all anymore
+    exchange.fail_cancel_times = 1
+    exchange.next_fill_price["BTCUSDT"] = 110.0
+
+    asyncio.run(orch.on_event(_closed_kline("BTCUSDT", 110.0, 120_000)))
+
+    assert orch.state == EngineState.ANALISANDO  # closed, not stuck in POSICAO_ABERTA forever
+    session = session_factory()
+    trades = trades_in_range(session, 0, 10**15)
+    assert len(trades) == 1
+    assert trades[0].exit_reason == "signal_exit"
+    assert trades[0].pnl > 0
+
+
 def test_circuit_breaker_trips_and_requires_human_acknowledgement(tmp_path):
     import asyncio
 
