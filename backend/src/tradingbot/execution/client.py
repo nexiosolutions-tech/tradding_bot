@@ -144,15 +144,22 @@ class BinanceTestnetClient:
         raw = await client.cancel_order(symbol=symbol, origClientOrderId=client_order_id)
         return self._to_order_result(client_order_id, raw)
 
+    # Binance uses two different codes for "no record of this order" depending on which
+    # endpoint asks: -2013 ("Order does not exist") from the query endpoint used here,
+    # -2011 ("Unknown order sent") from the cancel endpoint. Confirmed directly against
+    # testnet.binance.vision during the 2026-08-09 incident (a real order queried right
+    # after a testnet data reset raised -2013, not -2011 as first assumed) — both mean the
+    # same thing and both must map to the same None.
+    _ORDER_NOT_FOUND_CODES = (-2011, -2013)
+
     async def get_order_status(self, symbol: str, client_order_id: str) -> OrderResult | None:
-        """None means the exchange has no record of this order (Binance code -2011,
-        "Unknown order sent") — a legitimate "not found" answer (already filled and
-        pruned, cancelled, or lost, e.g. a testnet data reset). Any other failure
-        (network, rate limit, ...) propagates instead of being silently folded into the
-        same None — on_event's broad handler logs it and the next candle retries, rather
-        than the caller misreading a transient blip as "this order doesn't exist" (2026-
-        08-09 incident: that conflation is what let a stuck exit retry -2011 forever
-        instead of surfacing a distinguishable failure — see changes/).
+        """None means the exchange has no record of this order — a legitimate "not found"
+        answer (already filled and pruned, cancelled, or lost, e.g. a testnet data reset).
+        Any other failure (network, rate limit, ...) propagates instead of being silently
+        folded into the same None — on_event's broad handler logs it and the next candle
+        retries, rather than the caller misreading a transient blip as "this order doesn't
+        exist" (2026-08-09 incident: that conflation is what let a stuck exit retry the
+        same failure forever instead of surfacing a distinguishable one — see changes/).
         """
         from binance.exceptions import BinanceAPIException
 
@@ -160,7 +167,7 @@ class BinanceTestnetClient:
         try:
             raw = await client.get_order(symbol=symbol, origClientOrderId=client_order_id)
         except BinanceAPIException as exc:
-            if exc.code == -2011:
+            if exc.code in self._ORDER_NOT_FOUND_CODES:
                 return None
             raise
         return self._to_order_result(client_order_id, raw)

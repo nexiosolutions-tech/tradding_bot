@@ -76,11 +76,15 @@ class _FakeAsyncClientGetOrder:
 
 
 @pytest.mark.asyncio
-async def test_get_order_status_returns_none_when_exchange_has_no_record_of_the_order():
-    """Binance code -2011 ("Unknown order sent") is a legitimate "not found" answer —
-    already filled and pruned, cancelled, or lost (e.g. a testnet data reset)."""
+@pytest.mark.parametrize("code", [-2011, -2013])
+async def test_get_order_status_returns_none_when_exchange_has_no_record_of_the_order(code):
+    """Both codes mean "no record of this order", just from different endpoints: -2011
+    ("Unknown order sent") from cancel, -2013 ("Order does not exist") from query — the
+    one get_order_status actually calls. Confirmed directly against testnet.binance.vision
+    during the 2026-08-09 incident that the query endpoint raises -2013, not -2011 as
+    first assumed — both must map to the same None."""
     client = BinanceTestnetClient(api_key="x", api_secret="y", testnet=True)
-    client._client = _FakeAsyncClientGetOrder(exc=_binance_api_exception(-2011))
+    client._client = _FakeAsyncClientGetOrder(exc=_binance_api_exception(code))
 
     result = await client.get_order_status("BTCUSDT", "some-client-order-id")
 

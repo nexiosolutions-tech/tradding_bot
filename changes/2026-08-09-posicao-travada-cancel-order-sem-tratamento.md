@@ -14,33 +14,46 @@
   — o motor só entra em posição nova quando está flat.
 - Logs do Railway daquela janela específica (03/08) já tinham expirado por
   retenção quando a investigação começou (7 dias depois) — a causa raiz foi
-  determinada por leitura de código, não pelo traceback original, e
-  confirmada pela reprodução exata do sintoma em teste automatizado (ver
-  abaixo).
+  determinada por leitura de código e confirmada consultando a testnet
+  diretamente (`get_order` real via `python-binance`, credenciais do
+  serviço via `railway run`): tanto a ordem de entrada quanto a de
+  stop-loss retornam `APIError(code=-2013): Order does not exist`, e o
+  saldo da conta está em `1.00000000 BTC` / `10000.00000000 USDT` — os
+  valores padrão de uma conta nova. **A causa raiz de origem é um reset de
+  dado da testnet da Binance** (comportamento documentado/periódico de
+  `testnet.binance.vision`, fora do nosso controle) — o bug real, que é
+  nosso, é a ausência total de resiliência do código a essa classe de
+  evento.
 
 ## Causa raiz
 - `execution/orchestrator.py::_check_exit` (saída por sinal): ao decidir
   sair, chamava `await self.exchange.cancel_order(...)` **sem nenhum
   tratamento de exceção**, antes de vender a mercado. Se essa chamada
   falhar por qualquer motivo — e falha com certeza se a exchange não
-  reconhece mais aquela ordem (código -2011: já preenchida, já cancelada
-  em uma tentativa anterior interrompida, ou perdida por reset de dado em
-  testnet) — a exceção propaga por `_handle_event` até o handler amplo de
-  `on_event`, que só loga e segue para o próximo candle. `self._position`
-  nunca é limpo (só acontece dentro de `_finalize_exit`, nunca alcançado).
-  Resultado: todo candle seguinte repete exatamente a mesma tentativa e a
-  mesma falha, para sempre — nem a checagem de preenchimento do stop-loss
-  nem a saída por sinal conseguem completar.
+  reconhece mais aquela ordem — a exceção propaga por `_handle_event` até
+  o handler amplo de `on_event`, que só loga e segue para o próximo
+  candle. `self._position` nunca é limpo (só acontece dentro de
+  `_finalize_exit`, nunca alcançado). Resultado: todo candle seguinte
+  repete exatamente a mesma tentativa e a mesma falha, para sempre — nem a
+  checagem de preenchimento do stop-loss nem a saída por sinal conseguem
+  completar.
 - Agravante: `execution/client.py::get_order_status` tinha
   `except Exception: return None` — qualquer falha (rede, rate limit, ou
-  -2011 de verdade) virava `None` igualmente, misturando "esta ordem
-  definitivamente não existe" com "não consegui checar agora". Isso tira do
-  chamador a informação que precisaria para decidir com segurança o que
-  fazer.
+  ordem de fato inexistente) virava `None` igualmente, misturando "esta
+  ordem definitivamente não existe" com "não consegui checar agora". Isso
+  tira do chamador a informação que precisaria para decidir com segurança
+  o que fazer.
+- Binance usa **dois códigos diferentes** para "não há registro dessa
+  ordem", dependendo do endpoint: `-2011` ("Unknown order sent") do
+  endpoint de cancelamento, `-2013` ("Order does not exist") do endpoint de
+  consulta — que é o que `get_order_status` realmente chama. A primeira
+  versão deste fix só tratava `-2011`; a consulta direta à testnet real
+  (acima) mostrou que o código de fato retornado pela consulta é `-2013` —
+  corrigido para tratar os dois.
 
 ## Proposta
-- `execution/client.py::get_order_status`: só o código -2011 vira `None`
-  (resposta legítima de "não encontrada"); qualquer outra
+- `execution/client.py::get_order_status`: só os códigos `-2011`/`-2013`
+  viram `None` (resposta legítima de "não encontrada"); qualquer outra
   `BinanceAPIException` (ou falha de rede) propaga — o handler amplo de
   `on_event` já loga e tenta de novo no próximo candle, mais seguro que
   interpretar uma falha transitória como "a ordem não existe".
@@ -76,9 +89,19 @@
      removida do fake, simulando sumiço) → reproduz o incidente real e
      confirma que agora a posição fecha (`state == ANALISANDO`,
      `exit_reason == "signal_exit"`) em vez de ficar presa.
-- Dois testes novos em `test_execution_client.py` para
-  `get_order_status`: -2011 vira `None`; qualquer outro código propaga.
-- Suíte completa: 195 passed, 1 deselected (rede) — sem regressão.
+- Testes novos em `test_execution_client.py` para `get_order_status`,
+  parametrizados em `-2011` e `-2013`: ambos viram `None`; qualquer outro
+  código propaga.
+- Suíte completa: 196 passed, 1 deselected (rede) — sem regressão.
+- **Ressalva sobre o dado gerado quando a posição travada for finalmente
+  fechada**: como a testnet resetou o saldo da conta, o trade que vai
+  fechar essa posição específica (assim que `should_exit` disparar, ou
+  imediatamente se já estiver disparando) vai calcular P&L real
+  (`preço_de_saída_atual - preço_de_entrada_de_uma_semana_atrás`), mas sem
+  corresponder a um holding contínuo de verdade — é aritmeticamente
+  correto, mas não é um dado econômico representativo. Recomendado tratar
+  esse trade específico como outlier/artefato na análise da semana, não
+  como sinal real da estratégia.
 
 ## Decisão
 - Aprovado por: Brian (usuário, dono do projeto)
