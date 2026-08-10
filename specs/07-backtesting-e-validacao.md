@@ -96,6 +96,45 @@ essa régua só por ser "menos ruim", sem ter expectância líquida positiva de
 verdade. Ver critério adicional de expectância líquida positiva,
 proposto em `changes/2026-07-31-criterio-promocao-expectancia-positiva.md`.
 
+## Limitação conhecida: testnet não cobra taxa real — ponto cego econômico da validação ao vivo (2026-08-10)
+
+Primeira semana de operação real em testnet (Fase 4) gerou 22 trades reais
+do baseline placeholder, todos via `signal_exit` (nenhum via `stop_loss`).
+Números brutos, como persistidos (`trades.pnl`, sem custo): **77% de
+acerto (17/22), PnL total +$1.87** — aparentemente contradizendo o achado
+acima (expectância estruturalmente negativa em backtest).
+
+Investigação: toda ordem preenchida na conta de testnet retorna
+`commission: "0.00000000"` no `raw_response` da Binance, sem exceção —
+**a testnet não cobra taxa real nenhuma**, ao contrário do
+`backtesting.costs.FeeModel` (`taker_fee_pct=0.001`, 0.1% por lado) usado
+em todo backtest. Recalculando o PnL desses mesmos 22 trades aplicando essa
+mesma taxa retroativamente: **5% de acerto (1/22), PnL total -$6.93** — bate
+exatamente com o padrão já documentado acima (movimentos pequenos demais
+para cobrir custo de round-trip real).
+
+- **Isto não é uma divergência entre backtest e produção** no sentido de
+  "um dos dois está errado" — é uma diferença real e esperada de ambiente.
+  O motor de backtest modela custo corretamente; a conta de testnet da
+  Binance, coerente com ser dinheiro fictício, simplesmente não cobra nada.
+- **Implicação estrutural para `CLAUDE.md` regra 1** ("testnet primeiro,
+  sempre"): testnet valida corretitude **operacional** (o sistema coloca
+  ordem certo, gerencia estado, reconcilia corretamente — exatamente o que
+  a Fase 4 desta semana testou, incluindo o incidente de
+  `changes/2026-08-09-posicao-travada-cancel-order-sem-tratamento.md`), mas
+  **não valida lucratividade real** — qualquer leitura de PnL/win rate
+  direto do testnet precisa ser recalculada com um custo realista
+  (`FeeModel` do próprio backtest) antes de significar algo economicamente,
+  do contrário superestima performance de forma sistemática e na direção
+  errada (o baseline placeholder parece lucrativo quando na verdade não é).
+- **Não é ação a tomar agora** — `fees_paid=0.0` já é uma lacuna conhecida
+  e documentada no código (`execution/orchestrator.py::_finalize_exit`);
+  esta seção só registra que, neste ambiente específico (testnet), esse
+  valor é literalmente correto (a taxa real é zero), não uma lacuna de
+  instrumentação — a lacuna real é não recalcular/exibir o PnL líquido de
+  um custo realista em algum lugar (dashboard ou relatório), para quem olhar
+  os números de testnet não precisar refazer essa conta manualmente.
+
 ## Métricas obrigatórias no relatório de backtest
 
 - Equity curve completa (não só retorno final).
