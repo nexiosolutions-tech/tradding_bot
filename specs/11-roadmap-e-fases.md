@@ -356,6 +356,55 @@ o que torna o projeto seguro de construir incrementalmente.
     silenciosamente — mudar `decide_promotion` é mudança de spec/risco
     (`07-backtesting-e-validacao.md`, `CLAUDE.md` regra 6), exige a mesma
     aprovação explícita de qualquer mudança dessa classe.
+- **Iteração de 2026-08-12 (11ª rodada — análise de poder estatístico:
+  qual das duas leituras da 10ª rodada é mais provável)**: simulação de
+  Monte Carlo (bootstrap, 8000 repetições) usando os P&Ls individuais reais
+  de 85 trades (5 folds, config de referência `horizon=45`/
+  `entry_pct=99`, dado de 90 dias buscado nesta data — janela mais recente
+  que a das rodadas anteriores, resultado nominal ainda mais fraco:
+  `folds_won=0/5` desta vez, PF por fold `[0.89, 0.72, 0.58, 0.03, 0.23]`).
+  Pergunta: dado o tamanho de fold que já temos (7 a 24 trades), que
+  deslocamento no P&L médio por trade seria necessário para ter alguma
+  chance real de vencer os 5 folds simultaneamente?
+
+  | deslocamento no P&L médio/trade | novo P&L médio/trade | P(1 fold só) | P(5/5 folds) |
+  |---|---|---|---|
+  | 0 (observado) | -3.57 | 18% | 0% |
+  | +4 | +0.43 | 54% | 5% |
+  | +8 | +4.43 | 87% | 50% |
+  | +10 | +6.43 | 95% | 75% |
+  | +14 | +10.43 | 99% | 96% |
+
+  - **Resultado**: pra ter 50% de chance de vencer os 5 folds com o
+    tamanho de amostra atual, o P&L médio por trade precisaria saltar de
+    -$3.57 para +$4.43 — mais de meio desvio-padrão do resultado de um
+    trade individual (`std≈15.55`). Essa distância é grande demais para
+    ser explicada por falta de amostra: como a média observada já é
+    negativa, mais trades por fold tornaria essa estimativa **mais**
+    confiável (mais claramente negativa), não abriria uma chance de passar
+    por sorte.
+  - **Resolve a dúvida da 10ª rodada a favor da leitura (a)**: o teto
+    observado em 10 rodadas de iteração é muito mais consistente com "o
+    conjunto de features/arquitetura atual tem um limite real de
+    capacidade preditiva" do que com "edge real e modesto sendo barrado
+    por um gate rigoroso demais". Não elimina totalmente a leitura (b) —
+    o achado secundário abaixo mostra que o gate é de fato matematicamente
+    exigente por natureza — mas a distância atual é grande demais para ser
+    predominantemente efeito do gate.
+  - **Achado secundário sobre o próprio gate**: mesmo num cenário de edge
+    forte (P&L médio +$4.43, que já passa em 87% dos folds individuais),
+    a chance de bater os 5 simultaneamente cai pra 50% — vencer todos os 5
+    folds independentes é uma exigência multiplicativa, por design
+    (`specs/07`: evita promover por sorte de regime). Fica registrado como
+    contexto para uma eventual futura revisão do critério de promoção
+    (mudança de risco, `CLAUDE.md` regra 6, não decidida nem proposta
+    aqui), não como conclusão desta rodada.
+  - **Limitação do método**: o bootstrap junta os trades dos 5 folds num
+    único pool antes de simular — ignora que o edge por regime varia
+    (achado da 5ª/8ª rodadas). Um teste mais fino simularia por regime
+    separadamente; não foi necessário aqui porque a distância encontrada é
+    grande o bastante para não depender dessa nuance.
+  - Ver `changes/2026-08-12-analise-poder-estatistico-criterio-promocao.md`.
 - **Limitação conhecida (2026-07-31):** o baseline placeholder da Fase 1
   (`RsiBollingerPlaceholderStrategy`) tem expectância estruturalmente
   negativa — sua saída por recuperação de RSI fecha a posição antes do
