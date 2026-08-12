@@ -405,6 +405,56 @@ o que torna o projeto seguro de construir incrementalmente.
     separadamente; não foi necessário aqui porque a distância encontrada é
     grande o bastante para não depender dessa nuance.
   - Ver `changes/2026-08-12-analise-poder-estatistico-criterio-promocao.md`.
+- **Iteração de 2026-08-12 (12ª rodada — confluência multi-timeframe,
+  resposta direta à 11ª rodada)**: implementado `rsi_5m`, `rsi_15m`,
+  `bollinger_percent_b_5m`, `bollinger_percent_b_15m` (`features/engine.py`,
+  `model/dataset.py`, detalhamento em `03-motor-de-features.md`) — dá ao
+  modelo contexto de prazos mais longos que o candle de entrada, já que a
+  11ª rodada apontou um teto real de capacidade preditiva do conjunto
+  features/arquitetura, não falta de amostra.
+  - **Metodologia**: para isolar o efeito das features novas de deriva de
+    regime de mercado (o dado de cada rodada é buscado num dia diferente,
+    logo numa janela de 90 dias diferente), buscado um único conjunto de
+    90 dias de klines de 1 minuto (`BTCUSDT`, 129.600 candles) e rodado
+    `evaluate_config` **duas vezes sobre exatamente o mesmo dado**: uma vez
+    com `FEATURE_NAMES` revertido às 16 features anteriores, outra com as
+    20 atuais — mesma config de referência (`horizon_minutes=45`,
+    `entry_percentile=99`, sem filtro de regime, `min_trades=15`).
+    Confirmado determinístico (reroda idêntica em bits nos dois casos, dado
+    o mesmo input — `random_state=42` do LightGBM se sustenta).
+
+  | | fold 0 | fold 1 | fold 2 | fold 3 | fold 4 | mean_pf | min_pf | folds_won |
+  |---|---|---|---|---|---|---|---|---|
+  | sem multi-timeframe | 0.61 (33) | 0.45 (21) | 0.71 (13) | 0.06 (8) | 0.18 (17) | 0.40 | 0.06 | 0/5 |
+  | com multi-timeframe | 0.56 (21) | 0.34 (84) | 1.01 (10) | 0.05 (9) | 0.33 (10) | 0.46 | 0.05 | 0/5 |
+
+  (PF por fold, número de trades entre parênteses.)
+
+  - **Resultado**: `folds_won=0/5` **nos dois casos** — as features novas
+    não fecham o gap de promoção nesta janela. O delta de `mean_pf`
+    (+0.06) é pequeno demais para separar de ruído: comparando com a
+    própria janela de 90 dias da 11ª rodada (buscada horas antes, no mesmo
+    dia, mesma config), o baseline sem filtro já variou de PF por fold
+    `[0.89, 0.72, 0.58, 0.03, 0.23]` (11ª rodada) para `[0.61, 0.45, 0.71,
+    0.06, 0.18]` (aqui) — só pela janela de fetch ter avançado algumas
+    horas. Com folds de 7 a 84 trades, um punhado de candles a mais ou a
+    menos perto do limiar do percentil 99 muda quem entra, então esse nível
+    de variação de janela-para-janela é esperado, não uma anomalia — e é
+    maior que o delta que estou tentando atribuir às features novas.
+  - **Interpretação**: resultado inconclusivo, não claramente positivo nem
+    negativo — mesma situação do filtro de regime (7ª rodada): mecanismo
+    bem motivado (spec 03), não piora nada além do ruído já observado, mas
+    não há evidência de que resolve o teto identificado na 11ª rodada.
+  - **Decisão**: mantido no pipeline (`FEATURE_NAMES`/`MODEL_FEATURE_NAMES`
+    de `model/dataset.py`) — ao contrário do target escalado por ATR (9ª
+    rodada), que teve resultado claramente pior e ficou como código
+    disponível mas não-default, aqui não há resultado claramente pior que
+    justifique reverter, e a motivação mecanística (RSI/Bollinger só em 1
+    minuto ignora confluência de prazo mais longo) continua válida. Fica
+    como questão em aberto, não como vitória — próxima decisão de
+    arquitetura (ex. mudança de target, feature de order book) deve ser
+    avaliada contra este novo baseline (20 features), não contra o antigo.
+  - Ver `changes/2026-08-12-features-multi-timeframe.md`.
 - **Limitação conhecida (2026-07-31):** o baseline placeholder da Fase 1
   (`RsiBollingerPlaceholderStrategy`) tem expectância estruturalmente
   negativa — sua saída por recuperação de RSI fecha a posição antes do

@@ -26,6 +26,35 @@ from tradingbot.ingestion.schema import EventType, MarketEvent
 # entry-timing EMAs (12/26 candles), short enough to react within a trading day.
 TREND_REGIME_EMA_PERIOD = 240
 
+# 2026-08-12: multi-timeframe confluence — a 1-minute RSI/Bollinger reading is easy for
+# the model to overfit to microstructure noise (specs/11, 8ª/9ª/10ª rodadas). Pairing it
+# with the same reading at 5m/15m tests whether "oversold on 1m AND on 15m" carries signal
+# a single timeframe doesn't.
+MULTI_TIMEFRAME_MINUTES = (5, 15)
+
+
+class _TimeframeAggregator:
+    """Tracks which coarser-timeframe bucket the most recent 1-minute candle belongs to,
+    and reports the closing price of a bucket the instant it's known to be complete (the
+    first candle of the *next* bucket arrives) — never a still-forming bucket, so anything
+    built from it only ever reflects fully-closed information (spec 03's anti-leakage
+    invariant). RSI/Bollinger only need the close price, not full OHLC, so that's all this
+    tracks."""
+
+    def __init__(self, bucket_minutes: int):
+        self._bucket_ms = bucket_minutes * 60_000
+        self._current_bucket_id: int | None = None
+        self._current_close: float | None = None
+
+    def update(self, ts: int, close: float) -> float | None:
+        bucket_id = ts // self._bucket_ms
+        completed_close = None
+        if self._current_bucket_id is not None and bucket_id != self._current_bucket_id:
+            completed_close = self._current_close
+        self._current_bucket_id = bucket_id
+        self._current_close = close
+        return completed_close
+
 
 @dataclass(frozen=True)
 class FeatureSnapshot:
@@ -62,8 +91,15 @@ class SymbolFeatureState:
         self.volatility = RealizedVolatility()
         self.atr = ATR(14)
         self.trend_ema = EMA(TREND_REGIME_EMA_PERIOD)
+        # Multi-timeframe confluence (2026-08-12) — same RSI/Bollinger reading, recomputed
+        # over synthetic 5m/15m candles aggregated from the 1m stream.
+        self._mtf_aggregators = {m: _TimeframeAggregator(m) for m in MULTI_TIMEFRAME_MINUTES}
+        self._mtf_rsi = {m: RSI(14) for m in MULTI_TIMEFRAME_MINUTES}
+        self._mtf_bollinger = {m: BollingerBands() for m in MULTI_TIMEFRAME_MINUTES}
+        self._mtf_rsi_value: dict[int, float | None] = {m: None for m in MULTI_TIMEFRAME_MINUTES}
+        self._mtf_bb_pctb_value: dict[int, float | None] = {m: None for m in MULTI_TIMEFRAME_MINUTES}
 
-    def update(self, close: float, high: float, low: float, volume: float) -> dict[str, float]:
+    def update(self, close: float, high: float, low: float, volume: float, knowledge_ts: int) -> dict[str, float]:
         ema_fast = self.ema_fast.update(close)
         ema_slow = self.ema_slow.update(close)
         rsi = self.rsi.update(close)
@@ -74,6 +110,13 @@ class SymbolFeatureState:
         vol = self.volatility.update(close)
         atr = self.atr.update(high, low, close)
         trend_ema = self.trend_ema.update(close)
+
+        for minutes in MULTI_TIMEFRAME_MINUTES:
+            completed_close = self._mtf_aggregators[minutes].update(knowledge_ts, close)
+            if completed_close is not None:
+                self._mtf_rsi_value[minutes] = self._mtf_rsi[minutes].update(completed_close)
+                self._mtf_bollinger[minutes].update(completed_close)
+                self._mtf_bb_pctb_value[minutes] = self._mtf_bollinger[minutes].percent_b(completed_close)
 
         # EMA/MACD/Bollinger/ATR level features are expressed relative to `close` (%
         # terms), not as raw price — a model trained mostly on one price regime (e.g. BTC
@@ -93,6 +136,10 @@ class SymbolFeatureState:
             "volatility": vol,
             "atr_pct": None if atr is None else atr / close,
             "trend_regime_pct": (close - trend_ema) / close,
+            "rsi_5m": self._mtf_rsi_value[5],
+            "rsi_15m": self._mtf_rsi_value[15],
+            "bollinger_percent_b_5m": self._mtf_bb_pctb_value[5],
+            "bollinger_percent_b_15m": self._mtf_bb_pctb_value[15],
         }
         return {k: v for k, v in raw.items() if v is not None}
 
@@ -113,7 +160,7 @@ class FeatureEngine:
         high = float(payload["high"])
         low = float(payload["low"])
         volume = float(payload["volume"])
-        features = state.update(close, high, low, volume)
+        features = state.update(close, high, low, volume, event.exchange_ts)
         features.update(_cyclical_time_features(event.exchange_ts))
 
         return FeatureSnapshot(

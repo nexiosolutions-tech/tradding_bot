@@ -36,6 +36,10 @@ FEATURE_NAMES = (
     "dow_sin",
     "dow_cos",
     "trend_regime_pct",
+    "rsi_5m",
+    "rsi_15m",
+    "bollinger_percent_b_5m",
+    "bollinger_percent_b_15m",
 )
 
 # trend_regime_pct is stored on every DatasetRow (FEATURE_NAMES above) so

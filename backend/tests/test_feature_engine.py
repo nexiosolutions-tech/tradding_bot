@@ -146,3 +146,72 @@ def test_trend_regime_pct_is_negative_in_a_sustained_downtrend():
         price -= 0.5  # steady decline
         snapshot = engine.on_event(_kline_event("BTCUSDT", price, 10.0, True, (i + 1) * 60_000, i))
     assert snapshot.features["trend_regime_pct"] < 0
+
+
+def test_rsi_and_bollinger_5m_absent_during_warmup_then_present():
+    """rsi_5m needs 14 completed 5-minute candles (70 bars), bollinger_percent_b_5m needs
+    20 (100 bars) — RSI warms up faster, so it's checked separately. Uses a non-periodic
+    random walk (not a fixed-period oscillation) because a period that divides evenly into
+    the bucket size makes every bucket close on the same phase, giving Bollinger bands zero
+    width — percent_b would then stay undefined forever, masking the warm-up transition."""
+    import random
+
+    engine = FeatureEngine()
+    rng = random.Random(42)
+    price = 100.0
+    snapshot = None
+    for i in range(110):
+        price += rng.uniform(-0.5, 0.5)
+        snapshot = engine.on_event(_kline_event("BTCUSDT", price, 10.0, True, (i + 1) * 60_000, i))
+        if i < 65:
+            assert "rsi_5m" not in snapshot.features
+        if i < 90:
+            assert "bollinger_percent_b_5m" not in snapshot.features
+    assert "rsi_5m" in snapshot.features
+    assert "bollinger_percent_b_5m" in snapshot.features
+
+
+def test_rsi_and_bollinger_15m_absent_during_warmup_then_present():
+    """rsi_15m needs 14 completed 15-minute candles (210 bars), bollinger_percent_b_15m
+    needs 20 (300 bars) — RSI warms up faster, so it's checked separately. Same non-periodic
+    random walk as the 5m version, for the same reason (avoids bucket-phase aliasing)."""
+    import random
+
+    engine = FeatureEngine()
+    rng = random.Random(42)
+    price = 100.0
+    snapshot = None
+    for i in range(320):
+        price += rng.uniform(-0.5, 0.5)
+        snapshot = engine.on_event(_kline_event("BTCUSDT", price, 10.0, True, (i + 1) * 60_000, i))
+        if i < 195:
+            assert "rsi_15m" not in snapshot.features
+        if i < 280:
+            assert "bollinger_percent_b_15m" not in snapshot.features
+    assert "rsi_15m" in snapshot.features
+    assert "bollinger_percent_b_15m" in snapshot.features
+
+
+def test_multi_timeframe_5m_feature_is_constant_within_a_bucket():
+    """Anti-leakage invariant (spec 03): a still-forming 5-minute bucket must never leak
+    into the features exposed mid-bucket — the value can only reflect the last fully
+    closed bucket, so every one-minute candle inside the same 5-minute bucket must report
+    the same reading, changing only once the bucket rolls over."""
+    import random
+
+    engine = FeatureEngine()
+    rng = random.Random(42)
+    price = 100.0
+    snapshots = []
+    for i in range(150):  # comfortably past bollinger_percent_b_5m's 100-bar warm-up
+        price += rng.uniform(-0.5, 0.5)  # non-periodic, so buckets don't coincidentally repeat
+        snapshots.append(engine.on_event(_kline_event("BTCUSDT", price, 10.0, True, (i + 1) * 60_000, i)))
+
+    # snapshots[i] has ts=(i+1)*60_000; the 5-minute bucket boundaries fall where (i+1) is a
+    # multiple of 5, so indices 119..123 (ts 7,200,000..7,440,000) are the 5 candles of one
+    # clean, fully-contained bucket.
+    bucket_values = [s.features["bollinger_percent_b_5m"] for s in snapshots[119:124]]
+    assert len(set(bucket_values)) == 1, "value must not change within the same 5-minute bucket"
+
+    later_bucket_values = {snapshots[i].features["bollinger_percent_b_5m"] for i in (105, 115, 125, 135, 145)}
+    assert len(later_bucket_values) > 1, "the feature must actually update across buckets, not just once"

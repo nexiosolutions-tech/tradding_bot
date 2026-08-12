@@ -105,6 +105,47 @@ tendência de baixa.
   favorável — gatear *quando* operar por ela funciona; deixar o modelo
   tratá-la como só mais um input, não.
 
+### Confluência multi-timeframe (2026-08-12)
+
+Após 10 rodadas de iteração em `11-roadmap-e-fases.md` sem fechar o gap de
+promoção, e uma análise de poder estatístico (11ª rodada) que aponta para
+um teto real de capacidade preditiva do conjunto de features/arquitetura
+atual (não falta de amostra), a próxima alavanca testada é dar ao modelo
+contexto de prazos mais longos que o candle de entrada (1 minuto) — a
+mesma leitura clássica de "RSI sobrevendido no candle de 1 min **e também**
+no candle de 15 min" que um único candle de 1 minuto não consegue
+expressar sozinho.
+
+- `rsi_5m`, `rsi_15m`, `bollinger_percent_b_5m`, `bollinger_percent_b_15m`
+  — os mesmos indicadores `RSI(14)`/`BollingerBands(20)` já usados na
+  escala de 1 minuto, recalculados sobre candles sintéticos de 5 e 15
+  minutos, construídos agregando os candles de 1 minuto que chegam
+  (`features/engine.py::_TimeframeAggregator`).
+- **Invariante de anti-vazamento, reforçado aqui deliberadamente**: o
+  valor de um candle de 5/15 minutos só é considerado "fechado" (e só
+  então alimenta o RSI/Bollinger daquele timeframe) no instante em que o
+  primeiro candle de 1 minuto do bucket **seguinte** chega — nunca durante
+  a formação do próprio bucket. Na prática, isso significa que o valor de
+  `rsi_5m` exposto num dado candle de 1 minuto é sempre o do último candle
+  de 5 minutos já fechado, podendo estar "atrasado" em até quase 5 (ou 15)
+  minutos em relação ao candle atual — exatamente como um trader real só
+  sabe o fechamento de um candle de 15 minutos quando ele de fato fecha,
+  nunca antes.
+- Escopo deliberadamente contido: só RSI e Bollinger %B (não todo o
+  conjunto de 15 features original) em cada timeframe extra — evita
+  triplicar a dimensionalidade do vetor de features de uma vez, o que
+  arriscaria diluir ainda mais o sinal que o modelo já tem dificuldade de
+  extrair (achado do SHAP, 8ª rodada: mais features nem sempre ajuda,
+  `atr_pct` já dominava a decisão sozinho).
+- Aumenta o warm-up necessário: `rsi_15m` só fica disponível depois de 14
+  candles de 15 minutos fechados (210 minutos), `bollinger_percent_b_15m`
+  depois de 20 (300 minutos) — o maior warm-up entre todas as features
+  hoje (era `trend_regime_pct`, sem warm-up, e `atr_pct`, 14 minutos).
+- Resultado empírico: ver `11-roadmap-e-fases.md` (12ª rodada) — inconclusivo
+  (`folds_won=0/5` com e sem as features novas, mesma janela de 90 dias),
+  mantido no pipeline por motivação mecanística e ausência de piora além do
+  ruído já observado entre janelas.
+
 ## Feature store
 
 - Toda feature calculada em produção é persistida junto com o timestamp e o

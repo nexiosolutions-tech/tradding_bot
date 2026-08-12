@@ -1,7 +1,8 @@
 from tradingbot.ingestion.schema import EventType, MarketEvent
 from tradingbot.model.dataset import FEATURE_NAMES, TargetConfig, build_dataset
 
-WARMUP_BARS = 30  # enough for RSI(14)/Bollinger(20)/MACD to leave warm-up
+WARMUP_BARS = 320  # enough for the slowest feature (bollinger_percent_b_15m: 20 completed
+# 15-minute candles = 300 one-minute bars) to leave warm-up, plus headroom
 BAR_MS = 60_000
 
 
