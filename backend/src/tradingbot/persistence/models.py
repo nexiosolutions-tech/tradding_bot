@@ -70,6 +70,29 @@ class CircuitBreakerEvent(Base):
     acknowledged_by: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
+class OrderBookSnapshot(Base):
+    """1 amostra/minuto do order book (top 20 níveis) — spec 02/03, 2026-08-15.
+    Sem histórico retroativo possível (Binance não expõe order book passado), então esta
+    tabela é o único jeito de acumular dado para uma futura feature de microestrutura —
+    campos derivados (spread/imbalance) já vêm prontos para não precisar reprocessar os
+    níveis brutos quando a feature for desenhada de verdade."""
+
+    __tablename__ = "order_book_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String, index=True)
+    # Capturado localmente, não é um timestamp autoritativo da exchange — ver spec 02.
+    ts: Mapped[int] = mapped_column(BigInteger, index=True)
+    best_bid: Mapped[float] = mapped_column(Float)
+    best_ask: Mapped[float] = mapped_column(Float)
+    spread_pct: Mapped[float] = mapped_column(Float)
+    bid_depth_top20: Mapped[float] = mapped_column(Float)
+    ask_depth_top20: Mapped[float] = mapped_column(Float)
+    imbalance: Mapped[float] = mapped_column(Float)
+    raw_bids: Mapped[list] = mapped_column(JSON)
+    raw_asks: Mapped[list] = mapped_column(JSON)
+
+
 class EngineEvent(Base):
     """State-machine transitions (spec 01) — the audit trail behind the dashboard's Live view."""
 

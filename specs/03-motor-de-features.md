@@ -146,6 +146,39 @@ expressar sozinho.
   mantido no pipeline por motivação mecanística e ausência de piora além do
   ruído já observado entre janelas.
 
+### Order book (captura iniciada em 2026-08-15, sem features ainda)
+
+Resposta à limitação identificada nas 9ª-12ª rodadas (`11-roadmap-e-fases.md`):
+todo o conjunto de features até aqui deriva só do preço/volume da própria
+série OHLCV da BTCUSDT — indicadores técnicos clássicos, públicos e bem
+conhecidos, com pouco sinal direcional líquido de custo demonstrado depois
+de 4 rodadas seguidas de iteração. Order book (spread, profundidade,
+desequilíbrio bid/ask) é a primeira fonte de informação que não é uma
+transformação do mesmo preço de fechamento.
+
+- **Captura, não features**: `02-ingestao-de-dados.md` descreve a captura
+  (`scripts/run_depth_capture.py`, 1 snapshot/minuto, tabela
+  `order_book_snapshots`). Esta seção existe só para registrar a intenção
+  e evitar que a tabela pareça órfã — nenhuma feature nova entra em
+  `FEATURE_NAMES` nesta rodada.
+- **Por que não implementar a feature já**: diferente de toda mudança
+  anterior deste arquivo, aqui não há histórico para validar contra
+  (`02-ingestao-de-dados.md` — Binance não expõe order book retroativo).
+  Escrever a feature agora seria código sem forma de validação empírica
+  até acumular dado suficiente — foge do padrão que este projeto seguiu
+  em todas as rodadas anteriores (nunca adotar sem validação real).
+- **Candidatas prováveis, a confirmar quando houver dado**: `spread_pct`
+  (`(best_ask - best_bid) / best_bid`), `order_book_imbalance`
+  (desequilíbrio de profundidade entre os 20 melhores níveis de bid e
+  ask) — ambas já pré-computadas e persistidas em
+  `order_book_snapshots` junto com os níveis brutos, para não precisar
+  reprocessar o bruto quando chegar a hora de desenhar a feature de
+  verdade.
+- Próximo passo (não desta rodada): quando houver histórico suficiente
+  (a definir — provavelmente algumas semanas), desenhar e validar a
+  feature contra um backtest real, seguindo o mesmo processo das rodadas
+  anteriores (`evaluate_config`, ablação controlada).
+
 ## Feature store
 
 - Toda feature calculada em produção é persistida junto com o timestamp e o

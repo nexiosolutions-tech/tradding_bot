@@ -1,11 +1,20 @@
+from sqlalchemy import select
+
 from tradingbot.persistence.db import get_session_factory
-from tradingbot.persistence.models import CircuitBreakerEvent, EngineEvent, OrderRecord, TradeRecord
+from tradingbot.persistence.models import (
+    CircuitBreakerEvent,
+    EngineEvent,
+    OrderBookSnapshot,
+    OrderRecord,
+    TradeRecord,
+)
 from tradingbot.persistence.repository import (
     acknowledge_circuit_breaker,
     get_order,
     latest_unacknowledged_circuit_breaker,
     record_circuit_breaker_event,
     record_engine_event,
+    record_order_book_snapshot,
     record_trade,
     recent_engine_events,
     trades_in_range,
@@ -100,3 +109,27 @@ def test_engine_events_ordered_most_recent_first(tmp_path):
 
     events = recent_engine_events(session, limit=2)
     assert [e.ts for e in events] == [2, 1]
+
+
+def test_order_book_snapshot_round_trip(tmp_path):
+    session = _session(tmp_path)
+    record_order_book_snapshot(
+        session,
+        OrderBookSnapshot(
+            symbol="BTCUSDT",
+            ts=1_000,
+            best_bid=100.0,
+            best_ask=100.02,
+            spread_pct=0.0002,
+            bid_depth_top20=15.0,
+            ask_depth_top20=12.0,
+            imbalance=0.11,
+            raw_bids=[[100.0, 1.5]],
+            raw_asks=[[100.02, 1.0]],
+        ),
+    )
+
+    stored = session.scalars(select(OrderBookSnapshot)).one()
+    assert stored.symbol == "BTCUSDT"
+    assert stored.ts == 1_000
+    assert stored.raw_bids == [[100.0, 1.5]]

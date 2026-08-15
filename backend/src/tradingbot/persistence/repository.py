@@ -7,7 +7,13 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from tradingbot.persistence.models import CircuitBreakerEvent, EngineEvent, OrderRecord, TradeRecord
+from tradingbot.persistence.models import (
+    CircuitBreakerEvent,
+    EngineEvent,
+    OrderBookSnapshot,
+    OrderRecord,
+    TradeRecord,
+)
 
 
 def upsert_order(session: Session, order: OrderRecord) -> None:
@@ -113,3 +119,8 @@ def record_engine_event(session: Session, event: EngineEvent) -> None:
 def recent_engine_events(session: Session, limit: int = 50) -> list[EngineEvent]:
     stmt = select(EngineEvent).order_by(EngineEvent.ts.desc()).limit(limit)
     return list(session.scalars(stmt))
+
+
+def record_order_book_snapshot(session: Session, snapshot: OrderBookSnapshot) -> None:
+    session.add(snapshot)
+    session.commit()

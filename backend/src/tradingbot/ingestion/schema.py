@@ -48,3 +48,22 @@ class KlinePayload:
             "volume": self.volume,
             "is_closed": self.is_closed,
         }
+
+
+@dataclass(frozen=True)
+class DepthPayload:
+    """Partial book depth snapshot (top N levels) — spec 02, 2026-08-15. Unlike
+    KlinePayload, the exchange gives no timestamp here, only `last_update_id` (a
+    monotonic counter) — see MarketEvent construction in binance_depth_ws.py for how
+    exchange_ts/sequence_id are derived from that."""
+
+    last_update_id: int
+    bids: list[tuple[float, float]]  # (price, qty), best first
+    asks: list[tuple[float, float]]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "last_update_id": self.last_update_id,
+            "bids": [[p, q] for p, q in self.bids],
+            "asks": [[p, q] for p, q in self.asks],
+        }
