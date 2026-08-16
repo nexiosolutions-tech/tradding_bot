@@ -3,12 +3,29 @@
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 
 import httpx
 
 from tradingbot.ingestion.schema import EventType, KlinePayload, MarketEvent
 
 BINANCE_KLINES_LIMIT = 1000
+
+
+@dataclass(frozen=True)
+class SymbolInfo:
+    symbol: str
+    base_asset: str
+    quote_asset: str
+    status: str
+    is_spot_trading_allowed: bool
+
+
+@dataclass(frozen=True)
+class Ticker24h:
+    symbol: str
+    quote_volume: float
+    last_price: float
 
 
 def _base_url(testnet: bool) -> str:
@@ -88,3 +105,32 @@ class BinanceRestClient:
 
         events.sort(key=lambda e: e.sequence_id)
         return events
+
+    def fetch_exchange_info(self) -> list[SymbolInfo]:
+        """Spec 12 — universe of tradable symbols, used by the coin screening tool."""
+        with httpx.Client(timeout=self._timeout) as client:
+            resp = client.get(f"{self._base_url}/api/v3/exchangeInfo")
+            resp.raise_for_status()
+            data = resp.json()
+        return [
+            SymbolInfo(
+                symbol=s["symbol"],
+                base_asset=s["baseAsset"],
+                quote_asset=s["quoteAsset"],
+                status=s["status"],
+                is_spot_trading_allowed=bool(s["isSpotTradingAllowed"]),
+            )
+            for s in data["symbols"]
+        ]
+
+    def fetch_24h_tickers(self) -> list[Ticker24h]:
+        """Spec 12 — 24h volume/price for every symbol in a single call, used by the coin
+        screening tool's liquidity/price floor filter."""
+        with httpx.Client(timeout=self._timeout) as client:
+            resp = client.get(f"{self._base_url}/api/v3/ticker/24hr")
+            resp.raise_for_status()
+            data = resp.json()
+        return [
+            Ticker24h(symbol=t["symbol"], quote_volume=float(t["quoteVolume"]), last_price=float(t["lastPrice"]))
+            for t in data
+        ]
