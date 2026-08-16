@@ -189,6 +189,43 @@ O motor anterior (`daily_report.py`/`change_proposals.py`, via
 `scripts/run_daily_learning.py`) continua funcional e não foi removido —
 `list_recent_learnings` no novo loop lê exatamente o que ele gera.
 
+### Lacuna encontrada em produção (2026-08-15) e correção
+
+Ao ligar `scripts/run_daily_learning.py` como cron do Railway
+(`learning-daily-cron`) pela primeira vez, descoberto que a v1 assumia
+implicitamente uma sessão interativa local: `learnings/AAAA-MM-DD.md` e
+`changes/AAAA-MM-DD-descricao.md` são escritos num caminho relativo ao
+pacote instalado (`Path(__file__).resolve().parents[N]`), que existe de
+verdade no working directory de quem roda o script manualmente — mas um
+container do Railway é efêmero. O arquivo gerado não sobrevive ao próximo
+ciclo do cron, e nem o serviço da API/dashboard o veria de qualquer forma
+(container diferente, filesystem diferente). Na prática, o cron rodava
+sem erro e não entregava nada a ninguém.
+
+- **Correção**: `learning_engine/github_publish.py` (novo) — depois de
+  gerar o(s) arquivo(s) local(is) como já fazia, se `GITHUB_TOKEN`
+  estiver presente no ambiente, publica via API REST do GitHub (sem
+  depender de `git`/`gh` CLI instalados no container, nem de `.git`
+  presente na imagem buildada): cria uma branch nova a partir do HEAD
+  atual de `main`, commita o arquivo nessa branch (Contents API), abre um
+  PR. **Nunca chama o endpoint de atualização de `main`** — o código só
+  conhece o endpoint de criar branch nova (`POST .../git/refs`) e nunca
+  monta uma chamada contra `heads/main`; é a mesma garantia estrutural já
+  descrita acima ("o loop nunca escreve em `main`"), agora também
+  verificada por teste explícito, não só por design.
+  - Sem `GITHUB_TOKEN` configurado, o comportamento é idêntico ao de
+    antes (só grava local) — aditivo, não quebra quem roda localmente
+    numa sessão interativa (o uso mais comum até aqui).
+  - Credencial: um fine-grained personal access token do GitHub, restrito
+    a este repositório, com permissões `Contents: Read and write` e
+    `Pull requests: Read and write` — nada além disso (sem admin, sem
+    workflows). Gerado pelo usuário (dono da conta GitHub), não pelo
+    agente.
+  - Isso também fecha, de forma mínima, a lacuna "abertura de PR continua
+    manual" mencionada na v1 acima — só a abertura fica automática; a
+    decisão de aprovar/mudar `Status:` no `changes/` continua
+    exclusivamente humana.
+
 **Ainda não validado contra dado de produção real** — o motor de execução
 (Fase 4) só começou a gerar dado real em 2026-08-01, no mesmo dia. O primeiro
 ciclo do loop só tem algo substancial para investigar depois de alguns dias

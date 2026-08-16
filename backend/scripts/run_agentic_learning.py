@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import time
+from datetime import date
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -22,6 +23,7 @@ from dotenv import load_dotenv
 from tradingbot.ingestion.binance_rest import BinanceRestClient
 from tradingbot.learning_engine.agentic_loop import AnthropicReasoningClient, run_agentic_cycle
 from tradingbot.learning_engine.experiment_log import OUTCOME_BUDGET_EXHAUSTED, OUTCOME_PROPOSAL_DRAFTED
+from tradingbot.learning_engine.github_publish import maybe_publish
 from tradingbot.learning_engine.tools import build_tools
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
@@ -54,6 +56,21 @@ def main() -> None:
     print(f"Ciclo encerrado após {result.iterations} iteração(ões) — outcome: {result.outcome}")
     if result.outcome == OUTCOME_PROPOSAL_DRAFTED:
         print(f"Proposta gerada: {result.proposal_path} (status: pendente — requer revisão humana)")
+        # 2026-08-15: mesmo problema do run_daily_learning.py — container de cron do
+        # Railway é efêmero, sem publicar num branch a proposta não sobrevive (specs/09).
+        today = date.today().isoformat()
+        publish_result = maybe_publish(
+            files=[result.proposal_path],
+            branch_suffix=f"agentic-{today}",
+            commit_message=f"Proposta do loop agêntico {today}",
+            pr_title=f"Loop agêntico — proposta {today}",
+            pr_body="Gerado automaticamente por run_agentic_learning.py (specs/09). "
+            "Nenhuma mudança é aplicada sozinha — revisão humana decide.",
+        )
+        if publish_result is None:
+            print("GITHUB_TOKEN não configurado — proposta só gravada localmente.")
+        else:
+            print(f"Publicado em {publish_result.branch}: {publish_result.pr_url}")
     elif result.outcome == OUTCOME_BUDGET_EXHAUSTED:
         print("Orçamento de iterações esgotado sem conclusão — revisar learnings/experiments.jsonl.")
     else:
