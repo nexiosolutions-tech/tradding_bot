@@ -93,6 +93,16 @@ imprime tabela comparativa.
   invariante a escala uniforme de posição) — mas o drawdown máximo em %
   do capital, sim.
 
+## Resultado empírico (2026-08-17)
+
+Ver `11-roadmap-e-fases.md` (13ª rodada) — nenhum dos 3 perfis venceu o
+gate de promoção (90 dias de BTCUSDT real). Achado não esperado de
+antemão: o Intermediário (a config já em produção) teve o melhor
+`mean_profit_factor` dos três — nem ser mais seletivo (Segurança) nem
+mais tolerante a risco (Arrojado) melhorou o resultado. Sem justificativa
+empírica, hoje, para trocar a config em produção por nenhum dos outros
+dois perfis.
+
 ## Fora de escopo
 
 - Execução ao vivo simultânea dos 3 perfis (ver seção acima).

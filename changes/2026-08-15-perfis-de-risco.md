@@ -56,9 +56,15 @@
   um mais tolerante, mesmos eventos/estratégia — não é peek em
   internals), e os 3 perfis com os valores relativos corretos entre si
   (`test_risk_profiles.py`).
-- Smoke test real contra a Binance (`--days 3 --n-splits 2
-  --min-trades 3`): os 3 perfis rodam ponta a ponta.
 - Suíte completa: 247 testes passando.
+- **Comparação real (2026-08-17), 90 dias de BTCUSDT** (ver
+  `11-roadmap-e-fases.md`, 13ª rodada, para a tabela completa):
+  `folds_won=0/5` nos três perfis. Achado não esperado de antemão:
+  Intermediário (a config já em produção) teve o melhor `mean_pf` (0.87)
+  dos três — Segurança (0.48) e Arrojado (0.43) ficaram piores, não
+  melhores. `min_pf` similar nos três (0.08-0.10) — reforça que o teto é
+  qualidade de timing, não tamanho de posição. `max_drawdown` escalou
+  como esperado com o risco por trade.
 
 ## Decisão
 - Aprovado por: Brian (usuário, dono do projeto)
@@ -67,4 +73,7 @@
   acredito que é um passo importante". Rodar os 3 perfis ao vivo
   simultaneamente fica registrado em specs/13 como próximo passo
   condicional — depende de algum perfil vencer o gate de promoção em
-  backtest e de uma mudança de arquitetura de execução separada.
+  backtest e de uma mudança de arquitetura de execução separada. Com o
+  resultado real (nenhum perfil venceu, Intermediário foi o melhor dos
+  três), não há hoje justificativa empírica para avançar nessa direção —
+  a config em produção permanece a única validada.

@@ -455,6 +455,46 @@ o que torna o projeto seguro de construir incrementalmente.
     arquitetura (ex. mudança de target, feature de order book) deve ser
     avaliada contra este novo baseline (20 features), não contra o antigo.
   - Ver `changes/2026-08-12-features-multi-timeframe.md`.
+- **Iteração de 2026-08-17 (13ª rodada — perfis de risco, Segurança/
+  Intermediário/Arrojado)**: resposta a um pedido do usuário para dar ao
+  operador diferentes níveis de agressividade. Antes de considerar rodar
+  os 3 perfis ao vivo simultaneamente, comparação em backtest primeiro
+  (`specs/13-perfis-de-risco.md`) — 3 presets variando `entry_percentile`
+  (seletividade de entrada), `stop_loss_pct` e `RiskConfig`
+  (`risk_per_trade_pct`/`max_concurrent_exposure_pct`/
+  `circuit_breaker_loss_pct`), `horizon_minutes=45` fixo (isola o eixo de
+  risco do eixo de timing já validado), 90 dias de BTCUSDT real, mesma
+  config de referência sem filtro de regime.
+
+  | perfil | entry_pct | stop_loss | risco/trade | folds_won | mean_pf | min_pf | max_dd |
+  |---|---|---|---|---|---|---|---|
+  | Segurança | 99.5 | 1.0% | 0.5% | 0/5 | 0.48 | 0.09 | 0.6% |
+  | Intermediário (= hoje) | 99.0 | 1.5% | 1.0% | 0/5 | 0.87 | 0.08 | 1.5% |
+  | Arrojado | 95.0 | 2.5% | 2.0% | 0/5 | 0.43 | 0.10 | 6.3% |
+
+  - **Resultado**: nenhum dos três vence o gate de promoção —
+    consistente com as 12 rodadas anteriores, nenhum muda modelo ou
+    features, só parâmetros de risco/seletividade.
+  - **Achado real, não esperado de antemão**: o perfil Intermediário (a
+    config já em produção) teve o melhor `mean_pf` dos três (0.87) — ser
+    mais seletivo (Segurança, `entry_percentile=99.5`) ou menos seletivo
+    e mais tolerante a risco (Arrojado, `entry_percentile=95`) **piorou**
+    o resultado, não melhorou. `min_pf` (o pior fold) ficou parecido nos
+    três (0.08-0.10) — o fold ruim é ruim independente do perfil de
+    risco, reforçando que o teto é qualidade de timing de entrada/saída
+    (achado do SHAP, 8ª rodada), não tamanho de posição. `max_drawdown`
+    escalou como esperado com o risco por trade (Arrojado ~10x o de
+    Segurança, proporcional à razão de `risk_per_trade_pct`).
+  - **Interpretação**: reforça a mesma conclusão da 11ª rodada por um
+    ângulo diferente — o teto não é sensível a variar risco/seletividade
+    dentro do espaço testado, é o próprio conjunto features/modelo.
+  - **Decisão**: nenhum perfil promovido (nenhum venceu o gate).
+    Intermediário continua sendo a única config validada rodando ao vivo
+    — não há justificativa empírica para trocar por Segurança ou
+    Arrojado. Rodar os 3 perfis ao vivo simultaneamente permanece como
+    direção futura condicional (`specs/13`), agora sem urgência adicional
+    já que nenhum se destacou.
+  - Ver `changes/2026-08-15-perfis-de-risco.md`.
 - **Limitação conhecida (2026-07-31):** o baseline placeholder da Fase 1
   (`RsiBollingerPlaceholderStrategy`) tem expectância estruturalmente
   negativa — sua saída por recuperação de RSI fecha a posição antes do
