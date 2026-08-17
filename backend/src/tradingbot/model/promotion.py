@@ -45,10 +45,11 @@ def run_backtest(
     events: list[MarketEvent],
     initial_capital: float = 10_000.0,
     warmup_events: list[MarketEvent] | None = None,
+    risk_config: RiskConfig | None = None,
 ) -> BacktestMetrics:
     engine = BacktestEngine(
         strategy=strategy,
-        risk_config=RiskConfig(),
+        risk_config=risk_config or RiskConfig(),
         fee_model=FeeModel(),
         slippage_model=SlippageModel(),
         initial_capital=initial_capital,
@@ -66,9 +67,13 @@ def evaluate_fold(
     events: list[MarketEvent],
     criteria: PromotionCriteria,
     warmup_events: list[MarketEvent] | None = None,
+    risk_config: RiskConfig | None = None,
 ) -> FoldResult:
-    candidate_metrics = run_backtest(candidate_strategy, events, warmup_events=warmup_events)
-    baseline_metrics = run_backtest(baseline_strategy, events, warmup_events=warmup_events)
+    # Both candidate and baseline run under the same risk_config, same reasoning as
+    # comparing them under the same fee/slippage model — an apples-to-apples check of
+    # whether the candidate beats the baseline *at this risk profile*, not a different one.
+    candidate_metrics = run_backtest(candidate_strategy, events, warmup_events=warmup_events, risk_config=risk_config)
+    baseline_metrics = run_backtest(baseline_strategy, events, warmup_events=warmup_events, risk_config=risk_config)
 
     if candidate_metrics.num_trades < criteria.min_trades:
         return FoldResult(

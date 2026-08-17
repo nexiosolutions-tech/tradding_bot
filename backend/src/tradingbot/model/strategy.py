@@ -82,17 +82,20 @@ def choose_regime_threshold(
     min_trades: int,
     warmup_events: list[MarketEvent] | None = None,
     candidates: tuple[float, ...] = DEFAULT_REGIME_THRESHOLD_CANDIDATES,
+    risk_config=None,
 ) -> float:
     """Backtests each candidate min_trend_pct against the calibration-side events only and
     keeps whichever profit factor is best. Falls back to the most permissive candidate (the
     lowest — blocks the fewest entries) when none clears min_trades on this slice: an
     unvalidated filter is worse than none, exactly the failure mode this function exists to
-    avoid repeating."""
+    avoid repeating. risk_config should match whatever the candidate is ultimately evaluated
+    under (spec 13) — calibrating against a different risk profile than it's tested with
+    would be a subtle inconsistency."""
     best_threshold = min(candidates)
     best_pf = float("-inf")
     for candidate in candidates:
         strategy = RegimeFilteredStrategy(inner=inner_strategy, min_trend_pct=candidate)
-        metrics = run_backtest(strategy, calib_events, warmup_events=warmup_events)
+        metrics = run_backtest(strategy, calib_events, warmup_events=warmup_events, risk_config=risk_config)
         if metrics.num_trades < min_trades:
             continue
         if metrics.profit_factor > best_pf:
