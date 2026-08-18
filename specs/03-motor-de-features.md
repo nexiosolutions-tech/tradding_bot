@@ -179,6 +179,58 @@ transformação do mesmo preço de fechamento.
   feature contra um backtest real, seguindo o mesmo processo das rodadas
   anteriores (`evaluate_config`, ablação controlada).
 
+### Força relativa cross-asset (2026-08-17, opt-in)
+
+Depois de 13 rodadas (`11-roadmap-e-fases.md`) variando só o próprio
+preço/volume da BTCUSDT (indicadores técnicos, timeframes, perfis de
+risco) sem fechar o gap de promoção, e enquanto a captura de order book
+(`02-ingestao-de-dados.md`) ainda acumula histórico, esta é a primeira
+feature testável imediatamente que olha para *fora* da própria série de
+preço da BTCUSDT: força relativa contra ETHUSDT, o outro major mais
+líquido já testado no projeto (10ª rodada, como par alternativo — aqui
+é diferente, é contexto para prever BTCUSDT, não substituição do ativo
+operado).
+
+- `eth_relative_strength_pct = retorno_btc_15m − retorno_eth_15m` — a
+  diferença entre o retorno percentual dos últimos 15 candles de 1
+  minuto de cada ativo. Positivo quando BTC está performando melhor que
+  ETH na mesma janela (rotação a favor de BTC), negativo no caso
+  contrário. Mesmo horizonte de curto prazo das features de timing de
+  entrada (EMA 12/26), não da escala de `trend_regime_pct` (4h).
+- **Diferença arquitetural real, não só mais uma feature**: todas as
+  features anteriores desta spec derivam só do próprio stream de 1
+  minuto do símbolo operado — esta depende de um segundo stream (o de
+  ETHUSDT) chegando em paralelo. `FeatureEngine` ganha um
+  `reference_symbol` opcional: eventos desse símbolo atualizam um
+  rastreador de retorno interno mas **nunca geram `FeatureSnapshot`
+  próprio** — ETHUSDT não vira um símbolo operável só por entrar no
+  stream, é contexto puro.
+- **Opt-in, não substitui `FEATURE_NAMES`**: diferente da confluência
+  multi-timeframe (12ª rodada), que era computável só a partir do
+  próprio stream e por isso podia entrar incondicionalmente em
+  `FEATURE_NAMES`, esta feature *não existe* sem um segundo stream
+  configurado — torná-la obrigatória quebraria todo fluxo existente
+  (treino, sweep, triagem de moedas, perfis de risco) que só alimenta
+  BTCUSDT. `model/dataset.py::build_dataset` ganha `reference_symbol`
+  e `required_features` como parâmetros opcionais (default preserva o
+  comportamento de sempre); só quem passa os dois explicitamente
+  (`scripts/run_cross_asset_comparison.py`) usa a feature nova.
+- **Anti-vazamento**: o retorno de cada ativo em `knowledge_ts` só
+  reflete candles de 1 minuto já fechados de ambos os símbolos — mesma
+  garantia de sempre, sem risco adicional, já que o candle de ETHUSDT
+  usado é tão "conhecido no momento" quanto o próprio candle de BTCUSDT.
+  Requer, sim, que o chamador entregue os eventos dos dois símbolos
+  estritamente intercalados por timestamp — um merge fora de ordem
+  quebraria essa garantia (responsabilidade do script que busca e
+  mescla os dois streams, não do motor de features).
+- Resultado empírico: ver `11-roadmap-e-fases.md` (14ª rodada) —
+  inconclusivo (`folds_won=0/5` com e sem a feature, mesma janela de 90
+  dias), mesmo padrão da confluência multi-timeframe. Mantida disponível
+  (opt-in) por motivação mecanística, não entra em `FEATURE_NAMES` por
+  padrão. Achado à parte relevante: a validação encontrou e corrigiu um
+  bug real onde `BacktestEngine` não propagava `reference_symbol`,
+  fazendo o modelo nunca disparar sinal durante a avaliação do fold.
+
 ## Feature store
 
 - Toda feature calculada em produção é persistida junto com o timestamp e o

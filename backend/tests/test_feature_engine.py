@@ -215,3 +215,63 @@ def test_multi_timeframe_5m_feature_is_constant_within_a_bucket():
 
     later_bucket_values = {snapshots[i].features["bollinger_percent_b_5m"] for i in (105, 115, 125, 135, 145)}
     assert len(later_bucket_values) > 1, "the feature must actually update across buckets, not just once"
+
+
+def test_reference_symbol_events_never_produce_their_own_snapshot():
+    engine = FeatureEngine(reference_symbol="ETHUSDT")
+    snapshot = engine.on_event(_kline_event("ETHUSDT", 3000.0, 10.0, True, 60_000, 0))
+    assert snapshot is None
+
+
+def test_cross_asset_feature_absent_without_reference_symbol_configured():
+    """Default behavior (no reference_symbol) must stay exactly as before — the vast
+    majority of callers (train_model.py, sweep_thresholds.py, coin discovery, risk
+    profiles) never configure one."""
+    engine = FeatureEngine()
+    snapshot = None
+    for i in range(20):
+        snapshot = engine.on_event(_kline_event("BTCUSDT", 100.0 + i, 10.0, True, (i + 1) * 60_000, i))
+    assert "eth_relative_strength_pct" not in snapshot.features
+
+
+def test_cross_asset_feature_absent_until_both_symbols_warmed_up():
+    engine = FeatureEngine(reference_symbol="ETHUSDT")
+    snapshot = None
+    # 15 candles of BTC alone -- own_return warms up, but reference_return_value is still
+    # None (no ETHUSDT event has arrived yet), so the feature must not appear.
+    for i in range(16):
+        snapshot = engine.on_event(_kline_event("BTCUSDT", 100.0 + i, 10.0, True, (i + 1) * 60_000, i))
+    assert "eth_relative_strength_pct" not in snapshot.features
+
+
+def test_cross_asset_feature_appears_once_both_returns_are_warmed_up():
+    engine = FeatureEngine(reference_symbol="ETHUSDT")
+    ts = 0
+    snapshot = None
+    for i in range(16):
+        ts += 60_000
+        engine.on_event(_kline_event("ETHUSDT", 3000.0 + i, 10.0, True, ts, i))
+        ts += 60_000
+        snapshot = engine.on_event(_kline_event("BTCUSDT", 100.0 + i, 10.0, True, ts, i))
+    assert "eth_relative_strength_pct" in snapshot.features
+
+
+def test_cross_asset_feature_value_is_btc_return_minus_eth_return():
+    engine = FeatureEngine(reference_symbol="ETHUSDT")
+    ts = 0
+    # 15 flat candles for both -- warms up both windows at zero return each.
+    for i in range(15):
+        ts += 60_000
+        engine.on_event(_kline_event("ETHUSDT", 3000.0, 10.0, True, ts, i))
+        ts += 60_000
+        engine.on_event(_kline_event("BTCUSDT", 100.0, 10.0, True, ts, i))
+
+    # 16th round: BTC +10% from 100, ETH +2% from 3000.
+    ts += 60_000
+    engine.on_event(_kline_event("ETHUSDT", 3060.0, 10.0, True, ts, 15))
+    ts += 60_000
+    snapshot = engine.on_event(_kline_event("BTCUSDT", 110.0, 10.0, True, ts, 15))
+
+    btc_return = (110.0 - 100.0) / 100.0
+    eth_return = (3060.0 - 3000.0) / 3000.0
+    assert snapshot.features["eth_relative_strength_pct"] == pytest.approx(btc_return - eth_return)

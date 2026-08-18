@@ -188,6 +188,25 @@ class RelativeVolume:
         return volume / avg
 
 
+class ReturnOverWindow:
+    """Percentage return between the price `period` candles ago and the current price —
+    the building block for cross-asset relative-strength features (spec 03): comparing two
+    assets' returns over the identical window says which one is leading/lagging, independent
+    of either asset's absolute price level."""
+
+    def __init__(self, period: int):
+        self._window: deque[float] = deque(maxlen=period + 1)
+
+    def update(self, price: float) -> float | None:
+        self._window.append(price)
+        if len(self._window) < self._window.maxlen:
+            return None
+        oldest = self._window[0]
+        if oldest == 0:
+            return None
+        return (price - oldest) / oldest
+
+
 class RealizedVolatility:
     """Rolling stdev of log returns."""
 

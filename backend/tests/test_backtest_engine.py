@@ -47,13 +47,14 @@ class ScriptedStrategy:
         return self.exit_at_ts is not None and snapshot.knowledge_ts == self.exit_at_ts
 
 
-def _no_cost_engine(strategy, initial_capital=1_000.0, risk_config=None):
+def _no_cost_engine(strategy, initial_capital=1_000.0, risk_config=None, reference_symbol=None):
     return BacktestEngine(
         strategy=strategy,
         risk_config=risk_config or RiskConfig(risk_per_trade_pct=0.10, circuit_breaker_loss_pct=0.99),
         fee_model=FeeModel(taker_fee_pct=0.0),
         slippage_model=SlippageModel(slippage_bps=0.0),
         initial_capital=initial_capital,
+        reference_symbol=reference_symbol,
     )
 
 
@@ -216,3 +217,65 @@ def test_circuit_breaker_blocks_new_entries_after_drawdown():
     engine.strategy = strategy2
     engine.run([_closed_kline("BTCUSDT", 90.0, 180_000)])
     assert all(t.entry_ts != 180_000 for t in engine.trades)
+
+
+@dataclass
+class RequiresCrossAssetFeatureStrategy:
+    """Mirrors ModelStrategy's own gate (spec 04): only trades once a specific feature key
+    is present in the snapshot. Used to prove reference_symbol actually reaches the engine
+    used for fold evaluation, not just the one used for dataset building — the real bug
+    found empirically in the 14ª rodada (specs/11): BacktestEngine used to always construct
+    its own FeatureEngine() with no reference_symbol, so a model trained with
+    eth_relative_strength_pct could never actually fire a signal during backtest."""
+
+    def on_features(self, snapshot):
+        if "eth_relative_strength_pct" not in snapshot.features:
+            return None
+        return TradeSignal(symbol=snapshot.symbol, confidence=0.9, stop_loss_pct=0.5)
+
+    def should_exit(self, snapshot):
+        return True
+
+
+def _merged_btc_eth_events(n_round_trips=20):
+    events = []
+    ts = 0
+    for i in range(n_round_trips):
+        eth_price = 3000.0 + (2.0 if i % 2 == 0 else -2.0)
+        btc_price = 100.0 + (0.5 if i % 2 == 0 else -0.5)
+        ts += 60_000
+        events.append(_closed_kline("ETHUSDT", eth_price, ts))
+        ts += 60_000
+        events.append(_closed_kline("BTCUSDT", btc_price, ts))
+    return events
+
+
+def test_reference_symbol_reaches_the_engine_used_for_fold_evaluation():
+    events = _merged_btc_eth_events()
+
+    with_reference = _no_cost_engine(RequiresCrossAssetFeatureStrategy(), reference_symbol="ETHUSDT")
+    with_reference.run(events)
+    assert len(with_reference.trades) > 0
+
+    without_reference = _no_cost_engine(RequiresCrossAssetFeatureStrategy())
+    without_reference.run(events)
+    assert len(without_reference.trades) == 0
+
+
+def test_without_reference_symbol_configured_the_reference_events_are_not_silently_tradeable():
+    """Regression guard for the other half of the same bug: if reference_symbol isn't
+    threaded through, ETHUSDT events mixed into a nominally-BTCUSDT backtest would be
+    treated as their own tradeable symbol instead of being ignored/diverted."""
+    events = _merged_btc_eth_events()
+
+    @dataclass
+    class AlwaysTradeAnySymbol:
+        def on_features(self, snapshot):
+            return TradeSignal(symbol=snapshot.symbol, confidence=0.9, stop_loss_pct=0.5)
+
+        def should_exit(self, snapshot):
+            return True
+
+    engine = _no_cost_engine(AlwaysTradeAnySymbol(), reference_symbol="ETHUSDT")
+    engine.run(events)
+    assert all(t.symbol == "BTCUSDT" for t in engine.trades)

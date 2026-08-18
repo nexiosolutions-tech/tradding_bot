@@ -51,8 +51,14 @@ class BacktestEngine:
         fee_model: FeeModel,
         slippage_model: SlippageModel,
         initial_capital: float,
+        reference_symbol: str | None = None,
     ):
-        self.feature_engine = FeatureEngine()
+        # reference_symbol (spec 03, cross-asset features) must match whatever
+        # build_dataset used to train/label the strategy being tested — otherwise a
+        # model trained with eth_relative_strength_pct never sees that key here (this
+        # engine's FeatureEngine would treat the reference symbol as its own tradeable
+        # one instead), and on_features silently returns None for every snapshot.
+        self.feature_engine = FeatureEngine(reference_symbol=reference_symbol)
         self.strategy = strategy
         self.risk = RiskManager(risk_config)
         self.fee_model = fee_model

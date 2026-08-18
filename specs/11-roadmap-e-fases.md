@@ -495,6 +495,53 @@ o que torna o projeto seguro de construir incrementalmente.
     direção futura condicional (`specs/13`), agora sem urgência adicional
     já que nenhum se destacou.
   - Ver `changes/2026-08-15-perfis-de-risco.md`.
+- **Iteração de 2026-08-17 (14ª rodada — força relativa cross-asset,
+  BTC vs. ETH)**: primeira feature testada que olha para fora da própria
+  série de preço da BTCUSDT — resposta direta à sugestão do usuário e ao
+  teto já confirmado em 13 rodadas variando só preço/volume/risco do
+  próprio ativo. `eth_relative_strength_pct = retorno_btc_15m −
+  retorno_eth_15m` (`03-motor-de-features.md`). `FeatureEngine` ganhou
+  `reference_symbol` opcional — ETHUSDT entra no stream só como contexto,
+  nunca como símbolo operável.
+  - **Bug real encontrado durante a própria validação, não a validar
+    depois**: a primeira rodada de teste deu `0 trades em todos os
+    folds` no lado "com a feature". Causa: `BacktestEngine` (usado para
+    rodar candidato/baseline dentro de cada fold) sempre construía seu
+    próprio `FeatureEngine()` sem `reference_symbol` — diferente de
+    `build_dataset` (usado só para montar o dataset de treino), que já
+    recebia o parâmetro corretamente. Um modelo treinado com
+    `eth_relative_strength_pct` nunca via essa chave durante a avaliação
+    do fold, então `ModelStrategy.on_features` sempre retornava `None`.
+    Corrigido threading `reference_symbol` por toda a cadeia
+    (`BacktestEngine` → `run_backtest` → `evaluate_fold`/
+    `choose_regime_threshold` → `evaluate_config`), com teste de
+    regressão explícito
+    (`test_reference_symbol_reaches_the_engine_used_for_fold_evaluation`).
+    Achado à parte, mas relevante: reforça por que `evaluate_config` (o
+    mesmo caminho usado pelo gate de promoção real) é a ferramenta certa
+    para validar essas features — um script ad-hoc mais simples
+    provavelmente não teria pego esse bug.
+  - Comparação real (ablação controlada, mesma janela de 90 dias de
+    BTCUSDT+ETHUSDT, mesmo método da 12ª rodada):
+
+  | | fold 0 | fold 1 | fold 2 | fold 3 | fold 4 | mean_pf | min_pf | folds_won |
+  |---|---|---|---|---|---|---|---|---|
+  | sem força relativa | 0.50 | 0.85 | 1.33 | 0.56 | 0.11 | 0.67 | 0.11 | 0/5 |
+  | com força relativa | 0.78 | 0.69 | 1.11 | 0.44 | 0.14 | 0.63 | 0.14 | 0/5 |
+
+  - **Resultado**: `folds_won=0/5` nos dois casos. Delta de `mean_pf`
+    (0.67 → 0.63) pequeno e misto — melhora em 2 folds, piora em 2,
+    quase igual no 5º — dentro da faixa de ruído entre janelas já
+    observada na 12ª rodada (~0.1-0.15). Inconclusivo, mesmo padrão da
+    confluência multi-timeframe.
+  - **Decisão**: mesma lógica da 12ª rodada (regime de risco: mantido —
+    motivação mecanística válida, sem piora além do ruído, sem vitória
+    clara). A feature fica disponível (`CROSS_ASSET_FEATURE_NAMES`,
+    opt-in) mas **não** entra em `FEATURE_NAMES`/`MODEL_FEATURE_NAMES`
+    por padrão — diferente de multi-timeframe, esta depende de um
+    segundo stream de dado que a maioria dos fluxos não tem, então não
+    poderia entrar incondicionalmente de qualquer forma (`03-motor-de-features.md`).
+  - Ver `changes/2026-08-17-feature-cross-asset-btc-eth.md`.
 - **Limitação conhecida (2026-07-31):** o baseline placeholder da Fase 1
   (`RsiBollingerPlaceholderStrategy`) tem expectância estruturalmente
   negativa — sua saída por recuperação de RSI fecha a posição antes do

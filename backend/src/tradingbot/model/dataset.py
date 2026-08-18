@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from tradingbot.features.engine import FeatureEngine
+from tradingbot.features.engine import CROSS_ASSET_FEATURE_NAME, FeatureEngine
 from tradingbot.ingestion.schema import EventType, MarketEvent
 
 FEATURE_NAMES = (
@@ -51,6 +51,16 @@ FEATURE_NAMES = (
 # trade on it beats letting the model treat it as just another input. See
 # changes/2026-07-31-filtro-regime-tendencia.md.
 MODEL_FEATURE_NAMES = tuple(name for name in FEATURE_NAMES if name != "trend_regime_pct")
+
+# 2026-08-17: cross-asset relative strength (specs/03, 14ª rodada) — opt-in, not part of
+# FEATURE_NAMES/MODEL_FEATURE_NAMES above. Unlike every other feature, this one cannot be
+# computed without a second symbol's stream (reference_symbol on build_dataset/
+# FeatureEngine); baking it into the unconditional tuple would break every existing
+# single-symbol flow (train_model.py, sweep_thresholds.py, coin discovery, risk profiles —
+# none of them feed a second symbol in). Only scripts/run_cross_asset_comparison.py passes
+# these explicitly.
+CROSS_ASSET_FEATURE_NAMES = FEATURE_NAMES + (CROSS_ASSET_FEATURE_NAME,)
+MODEL_CROSS_ASSET_FEATURE_NAMES = tuple(name for name in CROSS_ASSET_FEATURE_NAMES if name != "trend_regime_pct")
 
 
 @dataclass(frozen=True)
@@ -115,8 +125,18 @@ def _triple_barrier_label(
     return 0  # neither barrier touched before the horizon ended
 
 
-def build_dataset(events: list[MarketEvent], target: TargetConfig) -> list[DatasetRow]:
-    engine = FeatureEngine()
+def build_dataset(
+    events: list[MarketEvent],
+    target: TargetConfig,
+    required_features: tuple[str, ...] = FEATURE_NAMES,
+    reference_symbol: str | None = None,
+) -> list[DatasetRow]:
+    """reference_symbol/required_features are additive (specs/03) — default preserves the
+    single-symbol behavior every existing caller relies on. Pass reference_symbol="ETHUSDT"
+    (with events for both symbols, strictly interleaved by timestamp) and
+    required_features=CROSS_ASSET_FEATURE_NAMES to build a dataset that includes
+    eth_relative_strength_pct."""
+    engine = FeatureEngine(reference_symbol=reference_symbol)
     snapshots = []
     future_highs = []
     future_lows = []
@@ -127,7 +147,7 @@ def build_dataset(events: list[MarketEvent], target: TargetConfig) -> list[Datas
         snapshot = engine.on_event(event)
         if snapshot is None:
             continue
-        if not all(name in snapshot.features for name in FEATURE_NAMES):
+        if not all(name in snapshot.features for name in required_features):
             continue  # indicators still warming up
         snapshots.append(snapshot)
         future_highs.append(float(event.payload["high"]))
@@ -145,7 +165,7 @@ def build_dataset(events: list[MarketEvent], target: TargetConfig) -> list[Datas
                 symbol=snapshot.symbol,
                 knowledge_ts=snapshot.knowledge_ts,
                 close=snapshot.close,
-                features={name: snapshot.features[name] for name in FEATURE_NAMES},
+                features={name: snapshot.features[name] for name in required_features},
                 label=label,
             )
         )

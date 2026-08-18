@@ -81,6 +81,8 @@ def evaluate_config(
     regime_calib_min_trades: int = 5,
     stop_loss_pct: float = STOP_LOSS_PCT,
     risk_config: RiskConfig | None = None,
+    feature_names: tuple[str, ...] | None = None,
+    reference_symbol: str | None = None,
 ) -> ConfigEvaluation:
     """Walk-forward-evaluates one (horizon, entry_percentile, ...) configuration end to end
     — dataset build, per-fold train/calibrate/evaluate, exactly like train_model.py's exit
@@ -90,7 +92,11 @@ def evaluate_config(
     left at the wrong value, horizon_minutes silently means the wrong amount of real time.
     stop_loss_pct/risk_config default to the values validated in every prior round (specs/11)
     — pass different ones to compare risk profiles (spec 13); candidate and baseline always
-    run under the identical risk_config, for an apples-to-apples comparison."""
+    run under the identical risk_config, for an apples-to-apples comparison.
+    feature_names/reference_symbol default to None, preserving build_dataset's/train_model's
+    own single-symbol defaults — pass feature_names=CROSS_ASSET_FEATURE_NAMES and
+    reference_symbol="ETHUSDT" (with events merged from both symbols) for the cross-asset
+    comparison (spec 03, 14ª rodada)."""
     target_config = TargetConfig(
         horizon_minutes=horizon_minutes,
         candle_minutes=candle_minutes,
@@ -98,18 +104,23 @@ def evaluate_config(
         move_threshold_atr_multiple=move_threshold_atr_multiple,
         stop_loss_pct=stop_loss_pct,
     )
-    rows = build_dataset(events, target_config)
+    dataset_kwargs = {} if feature_names is None else {"required_features": feature_names}
+    rows = build_dataset(events, target_config, reference_symbol=reference_symbol, **dataset_kwargs)
     label_rate = sum(r.label for r in rows) / len(rows) if rows else 0.0
 
     model_config = ModelConfig()
     criteria = PromotionCriteria(min_trades=min_trades)
     folds: list[FoldSummary] = []
+    model_feature_names = (
+        None if feature_names is None else tuple(n for n in feature_names if n != "trend_regime_pct")
+    )
+    train_kwargs = {} if model_feature_names is None else {"feature_names": model_feature_names}
 
     for fold_index, (train_rows, test_rows) in enumerate(walk_forward_splits(rows, n_splits=n_splits)):
         if not train_rows or not test_rows:
             continue
         fit_rows, calib_rows = split_fit_calibration(train_rows, calibration_fraction=0.2)
-        model = train_model(fit_rows, model_config, calibration_fraction=0.2)
+        model = train_model(fit_rows, model_config, calibration_fraction=0.2, **train_kwargs)
         entry_threshold, exit_threshold = choose_thresholds(
             model, calib_rows, entry_percentile=entry_percentile, exit_percentile=50.0
         )
@@ -128,6 +139,7 @@ def evaluate_config(
                 min_trades=regime_calib_min_trades,
                 warmup_events=calib_warmup,
                 risk_config=risk_config,
+                reference_symbol=reference_symbol,
             )
             candidate = RegimeFilteredStrategy(inner=model_strategy, min_trend_pct=min_trend_pct)
         else:
@@ -140,7 +152,14 @@ def evaluate_config(
         warmup_events = _warmup_prefix(events, test_start_ts)
 
         result = evaluate_fold(
-            fold_index, candidate, baseline, fold_events, criteria, warmup_events=warmup_events, risk_config=risk_config
+            fold_index,
+            candidate,
+            baseline,
+            fold_events,
+            criteria,
+            warmup_events=warmup_events,
+            risk_config=risk_config,
+            reference_symbol=reference_symbol,
         )
         folds.append(
             FoldSummary(

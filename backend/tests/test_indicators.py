@@ -7,6 +7,7 @@ from tradingbot.features.indicators import (
     BollingerBands,
     RealizedVolatility,
     RelativeVolume,
+    ReturnOverWindow,
     SMA,
 )
 
@@ -114,3 +115,28 @@ def test_atr_true_range_includes_gap_from_previous_close():
     # Wilder smoothing: (avg_tr_prev * (period-1) + true_range) / period = (2*1 + 21) / 2
     expected_avg_tr = (2 * 1 + 21) / 2
     assert value == pytest.approx(expected_avg_tr)
+
+
+def test_return_over_window_none_until_period_plus_one_updates():
+    r = ReturnOverWindow(period=3)
+    assert r.update(100.0) is None
+    assert r.update(101.0) is None
+    assert r.update(102.0) is None
+    assert r.update(103.0) is not None  # 4th update: window (period+1) finally full
+
+
+def test_return_over_window_computes_correct_percentage():
+    r = ReturnOverWindow(period=3)
+    for price in (100.0, 105.0, 110.0):
+        r.update(price)
+    value = r.update(110.0)  # price 3 candles ago was 100.0, now 110.0
+    assert value == pytest.approx((110.0 - 100.0) / 100.0)
+
+
+def test_return_over_window_negative_for_a_decline():
+    r = ReturnOverWindow(period=2)
+    r.update(100.0)
+    r.update(90.0)
+    value = r.update(80.0)  # price 2 candles ago was 100.0, now 80.0
+    assert value == pytest.approx((80.0 - 100.0) / 100.0)
+    assert value < 0

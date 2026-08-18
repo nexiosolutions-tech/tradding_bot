@@ -1,5 +1,5 @@
 from tradingbot.ingestion.schema import EventType, MarketEvent
-from tradingbot.model.dataset import FEATURE_NAMES, TargetConfig, build_dataset
+from tradingbot.model.dataset import CROSS_ASSET_FEATURE_NAMES, FEATURE_NAMES, TargetConfig, build_dataset
 
 WARMUP_BARS = 320  # enough for the slowest feature (bollinger_percent_b_15m: 20 completed
 # 15-minute candles = 300 one-minute bars) to leave warm-up, plus headroom
@@ -36,6 +36,55 @@ def _warmup_events(symbol="BTCUSDT", base=100.0, amplitude=0.5, n=WARMUP_BARS):
         ts = BAR_MS * (i + 1)
         events.append(_kline(symbol, price, price, ts))
     return events
+
+
+def _merged_btc_eth_warmup_events(n=WARMUP_BARS):
+    """ETHUSDT interleaved before each BTCUSDT candle at the same tick — matches how a
+    live merged stream from two symbols would arrive, and is what reference_symbol
+    requires (specs/03): the reference symbol's candle for a given minute must already
+    have been seen before the primary symbol's candle for that same minute is processed."""
+    events = []
+    for i in range(n):
+        ts = BAR_MS * (i + 1)
+        eth_price = 3000.0 + (2.0 if i % 2 == 0 else -2.0)
+        btc_price = 100.0 + (0.5 if i % 2 == 0 else -0.5)
+        events.append(_kline("ETHUSDT", eth_price, eth_price, ts))
+        events.append(_kline("BTCUSDT", btc_price, btc_price, ts))
+    return events
+
+
+def test_build_dataset_with_reference_symbol_only_produces_rows_for_the_primary_symbol():
+    events = _merged_btc_eth_warmup_events()
+    rows = build_dataset(
+        events,
+        TargetConfig(horizon_minutes=1, candle_minutes=1),
+        required_features=CROSS_ASSET_FEATURE_NAMES,
+        reference_symbol="ETHUSDT",
+    )
+    assert rows  # sanity: the fixture must produce usable rows
+    assert all(r.symbol == "BTCUSDT" for r in rows)
+
+
+def test_build_dataset_with_reference_symbol_includes_cross_asset_feature():
+    events = _merged_btc_eth_warmup_events()
+    rows = build_dataset(
+        events,
+        TargetConfig(horizon_minutes=1, candle_minutes=1),
+        required_features=CROSS_ASSET_FEATURE_NAMES,
+        reference_symbol="ETHUSDT",
+    )
+    assert all("eth_relative_strength_pct" in r.features for r in rows)
+
+
+def test_build_dataset_without_reference_symbol_never_has_cross_asset_feature():
+    """Default behavior must stay exactly as before for every caller that doesn't pass
+    reference_symbol — even if ETHUSDT events happen to be present in the stream, without
+    reference_symbol configured they'd be treated as their own tradeable symbol (not this
+    test's concern) and the cross-asset feature simply never gets computed."""
+    events = _warmup_events()
+    rows = build_dataset(events, TargetConfig(horizon_minutes=1, candle_minutes=1))
+    assert rows
+    assert all("eth_relative_strength_pct" not in r.features for r in rows)
 
 
 def test_dataset_skips_indicator_warmup_period():

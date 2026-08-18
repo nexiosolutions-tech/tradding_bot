@@ -46,6 +46,7 @@ def run_backtest(
     initial_capital: float = 10_000.0,
     warmup_events: list[MarketEvent] | None = None,
     risk_config: RiskConfig | None = None,
+    reference_symbol: str | None = None,
 ) -> BacktestMetrics:
     engine = BacktestEngine(
         strategy=strategy,
@@ -53,6 +54,7 @@ def run_backtest(
         fee_model=FeeModel(),
         slippage_model=SlippageModel(),
         initial_capital=initial_capital,
+        reference_symbol=reference_symbol,
     )
     if warmup_events:
         engine.warm_up(warmup_events)
@@ -68,12 +70,20 @@ def evaluate_fold(
     criteria: PromotionCriteria,
     warmup_events: list[MarketEvent] | None = None,
     risk_config: RiskConfig | None = None,
+    reference_symbol: str | None = None,
 ) -> FoldResult:
-    # Both candidate and baseline run under the same risk_config, same reasoning as
-    # comparing them under the same fee/slippage model — an apples-to-apples check of
-    # whether the candidate beats the baseline *at this risk profile*, not a different one.
-    candidate_metrics = run_backtest(candidate_strategy, events, warmup_events=warmup_events, risk_config=risk_config)
-    baseline_metrics = run_backtest(baseline_strategy, events, warmup_events=warmup_events, risk_config=risk_config)
+    # Both candidate and baseline run under the same risk_config/reference_symbol, same
+    # reasoning as comparing them under the same fee/slippage model — an apples-to-apples
+    # check of whether the candidate beats the baseline *at this configuration*. Without
+    # reference_symbol threaded to the baseline too, a reference symbol's events mixed into
+    # `events` would be mistaken for a second tradeable symbol under the baseline's own
+    # engine (spec 03) — not just missing a feature, a real correctness bug.
+    candidate_metrics = run_backtest(
+        candidate_strategy, events, warmup_events=warmup_events, risk_config=risk_config, reference_symbol=reference_symbol
+    )
+    baseline_metrics = run_backtest(
+        baseline_strategy, events, warmup_events=warmup_events, risk_config=risk_config, reference_symbol=reference_symbol
+    )
 
     if candidate_metrics.num_trades < criteria.min_trades:
         return FoldResult(

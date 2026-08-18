@@ -19,6 +19,7 @@ from tradingbot.features.indicators import (
     BollingerBands,
     RealizedVolatility,
     RelativeVolume,
+    ReturnOverWindow,
 )
 from tradingbot.ingestion.schema import EventType, MarketEvent
 
@@ -31,6 +32,12 @@ TREND_REGIME_EMA_PERIOD = 240
 # with the same reading at 5m/15m tests whether "oversold on 1m AND on 15m" carries signal
 # a single timeframe doesn't.
 MULTI_TIMEFRAME_MINUTES = (5, 15)
+
+# 2026-08-17: cross-asset relative strength (specs/03/11, 14ª rodada) — same short-term
+# scale as the entry-timing EMAs, not trend_regime_pct's 4h. Same window used for both
+# assets so the two returns are directly comparable.
+RELATIVE_STRENGTH_WINDOW_MINUTES = 15
+CROSS_ASSET_FEATURE_NAME = "eth_relative_strength_pct"
 
 
 class _TimeframeAggregator:
@@ -98,8 +105,20 @@ class SymbolFeatureState:
         self._mtf_bollinger = {m: BollingerBands() for m in MULTI_TIMEFRAME_MINUTES}
         self._mtf_rsi_value: dict[int, float | None] = {m: None for m in MULTI_TIMEFRAME_MINUTES}
         self._mtf_bb_pctb_value: dict[int, float | None] = {m: None for m in MULTI_TIMEFRAME_MINUTES}
+        # Cross-asset relative strength (2026-08-17) — this symbol's own short-term return,
+        # diffed against a reference symbol's return over the identical window (passed into
+        # update() by FeatureEngine, which owns the reference symbol's stream).
+        self._own_return = ReturnOverWindow(RELATIVE_STRENGTH_WINDOW_MINUTES)
 
-    def update(self, close: float, high: float, low: float, volume: float, knowledge_ts: int) -> dict[str, float]:
+    def update(
+        self,
+        close: float,
+        high: float,
+        low: float,
+        volume: float,
+        knowledge_ts: int,
+        reference_return: float | None = None,
+    ) -> dict[str, float]:
         ema_fast = self.ema_fast.update(close)
         ema_slow = self.ema_slow.update(close)
         rsi = self.rsi.update(close)
@@ -110,6 +129,7 @@ class SymbolFeatureState:
         vol = self.volatility.update(close)
         atr = self.atr.update(high, low, close)
         trend_ema = self.trend_ema.update(close)
+        own_return = self._own_return.update(close)
 
         for minutes in MULTI_TIMEFRAME_MINUTES:
             completed_close = self._mtf_aggregators[minutes].update(knowledge_ts, close)
@@ -140,13 +160,25 @@ class SymbolFeatureState:
             "rsi_15m": self._mtf_rsi_value[15],
             "bollinger_percent_b_5m": self._mtf_bb_pctb_value[5],
             "bollinger_percent_b_15m": self._mtf_bb_pctb_value[15],
+            CROSS_ASSET_FEATURE_NAME: (
+                None if own_return is None or reference_return is None else own_return - reference_return
+            ),
         }
         return {k: v for k, v in raw.items() if v is not None}
 
 
 class FeatureEngine:
-    def __init__(self):
+    def __init__(self, reference_symbol: str | None = None):
         self._states: dict[str, SymbolFeatureState] = {}
+        # Cross-asset relative strength (2026-08-17, opt-in — specs/03) — when set, events
+        # for this symbol update a return tracker but never produce their own
+        # FeatureSnapshot: it's context for whatever symbol IS being traded, not a second
+        # tradeable symbol.
+        self._reference_symbol = reference_symbol
+        self._reference_return_tracker = (
+            ReturnOverWindow(RELATIVE_STRENGTH_WINDOW_MINUTES) if reference_symbol is not None else None
+        )
+        self._reference_return_value: float | None = None
 
     def on_event(self, event: MarketEvent) -> FeatureSnapshot | None:
         if event.event_type is not EventType.KLINE:
@@ -155,12 +187,16 @@ class FeatureEngine:
         if not payload.get("is_closed", False):
             return None
 
+        if self._reference_symbol is not None and event.symbol == self._reference_symbol:
+            self._reference_return_value = self._reference_return_tracker.update(float(payload["close"]))
+            return None
+
         state = self._states.setdefault(event.symbol, SymbolFeatureState())
         close = float(payload["close"])
         high = float(payload["high"])
         low = float(payload["low"])
         volume = float(payload["volume"])
-        features = state.update(close, high, low, volume, event.exchange_ts)
+        features = state.update(close, high, low, volume, event.exchange_ts, self._reference_return_value)
         features.update(_cyclical_time_features(event.exchange_ts))
 
         return FeatureSnapshot(
