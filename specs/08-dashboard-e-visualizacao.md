@@ -116,6 +116,21 @@ skills de UI definidas em [`CLAUDE.md`](../CLAUDE.md#skills-de-ui-a-utilizar-no-
   secundário de RSI + marcadores de entrada/saída dos trades reais).
   de escopo acima — é uma chave única compartilhada, só para não deixar
   comandos que afetam execução real completamente abertos numa URL pública.
+- **Gerar backtest a partir do dashboard (2026-08-18):** `POST
+  /api/backtests/run` (protegido pela mesma `DASHBOARD_API_KEY` dos comandos
+  de controle) busca klines reais da Binance e roda um backtest síncrono,
+  escrevendo o relatório em `results/` do próprio processo em execução — a
+  mesma pasta que `GET /api/backtests` já lê. Existia antes um script CLI
+  (`scripts/run_backtest.py`) para isso, mas `results/` é local ao processo
+  (`.gitignore`, sem volume persistente no Railway), então rodar o script na
+  máquina do operador nunca alimentava a view Performance em produção —
+  alguém precisava gerar o relatório *dentro* do container do serviço. A
+  lógica de busca+execução+persistência foi extraída para
+  `backtesting/runner.py::run_and_save_backtest`, reusada pelo script e pelo
+  endpoint, para os dois caminhos não divergirem. View Performance ganhou um
+  botão "Rodar backtest" (estado vazio e toolbar da lista) que chama esse
+  endpoint e seleciona o run recém-criado. Ver
+  [`changes/2026-08-18-endpoint-rodar-backtest.md`](../changes/2026-08-18-endpoint-rodar-backtest.md).
 
 ### Feed de atividade em tempo real (adicionado após feedback de uso)
 

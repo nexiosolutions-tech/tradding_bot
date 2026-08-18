@@ -49,6 +49,8 @@ export const api = {
 
   backtests: () => getJSON<BacktestSummary[]>("/api/backtests"),
   backtestDetail: (runName: string) => getJSON<BacktestDetail>(`/api/backtests/${runName}`),
+  runBacktest: (params: { symbol: string; interval: string; days: number }) =>
+    postJSON<BacktestSummary>("/api/backtests/run", params),
 
   models: () => getJSON<ModelMetadata[]>("/api/models"),
   modelDetail: (version: string) => getJSON<ModelMetadata>(`/api/models/${version}`),

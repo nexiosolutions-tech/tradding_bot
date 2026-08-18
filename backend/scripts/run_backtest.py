@@ -8,15 +8,9 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import time
 from pathlib import Path
 
-from tradingbot.backtesting.costs import FeeModel, SlippageModel
-from tradingbot.backtesting.engine import BacktestEngine
-from tradingbot.backtesting.report import save_report
-from tradingbot.backtesting.strategy import RsiBollingerPlaceholderStrategy
-from tradingbot.ingestion.binance_rest import BinanceRestClient
-from tradingbot.risk.manager import RiskConfig
+from tradingbot.backtesting.runner import NoKlinesFetchedError, run_and_save_backtest
 
 RESULTS_DIR = Path(__file__).resolve().parents[2] / "results"
 
@@ -30,29 +24,21 @@ def main() -> None:
     parser.add_argument("--testnet", action="store_true")
     args = parser.parse_args()
 
-    end_ms = int(time.time() * 1000)
-    start_ms = end_ms - args.days * 24 * 60 * 60 * 1000
-
     print(f"Fetching {args.symbol} {args.interval} klines for the last {args.days} day(s)...")
-    client = BinanceRestClient(testnet=args.testnet)
-    events = client.fetch_klines(args.symbol, args.interval, start_ms, end_ms)
-    print(f"Fetched {len(events)} closed klines.")
-
-    if not events:
+    try:
+        run_dir, num_klines = run_and_save_backtest(
+            RESULTS_DIR,
+            symbol=args.symbol,
+            interval=args.interval,
+            days=args.days,
+            initial_capital=args.initial_capital,
+            testnet=args.testnet,
+        )
+    except NoKlinesFetchedError:
         print("No data returned — aborting.")
         return
 
-    engine = BacktestEngine(
-        strategy=RsiBollingerPlaceholderStrategy(),
-        risk_config=RiskConfig(),
-        fee_model=FeeModel(),
-        slippage_model=SlippageModel(),
-        initial_capital=args.initial_capital,
-    )
-    engine.run(events)
-
-    run_name = f"{args.symbol}_{args.interval}_{args.days}d_{end_ms}"
-    run_dir = save_report(engine, RESULTS_DIR, run_name)
+    print(f"Fetched {num_klines} closed klines.")
     print(f"Report written to {run_dir}")
     print((run_dir / "report.md").read_text())
 

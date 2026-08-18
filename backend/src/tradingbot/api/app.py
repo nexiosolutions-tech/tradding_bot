@@ -17,6 +17,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, WebSocket, W
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from tradingbot.backtesting.runner import NoKlinesFetchedError, run_and_save_backtest
 from tradingbot.execution.bootstrap import MissingCredentialsError, build_orchestrator
 from tradingbot.ingestion.binance_ws import BinanceKlineStream
 from tradingbot.persistence.db import get_session_factory
@@ -30,6 +31,12 @@ CHANGES_DIR = Path(__file__).resolve().parents[4] / "changes"
 
 class CommandBody(BaseModel):
     by: str
+
+
+class RunBacktestBody(BaseModel):
+    symbol: str = "BTCUSDT"
+    interval: str = "1m"
+    days: int = 7
 
 
 @asynccontextmanager
@@ -119,6 +126,24 @@ def get_backtest(run_name: str):
     if not report_path.is_relative_to(RESULTS_DIR.resolve()) or not report_path.exists():
         raise HTTPException(status_code=404, detail="backtest não encontrado")
     return json.loads(report_path.read_text())
+
+
+@app.post("/api/backtests/run", dependencies=[Depends(_verify_api_key)])
+def run_backtest(body: RunBacktestBody):
+    # Bounds a manual trigger from the dashboard to a sane window — this endpoint fetches
+    # real klines from Binance synchronously (FastAPI runs sync `def` handlers in a worker
+    # thread, so it doesn't block the live orchestrator's event loop), and an unbounded
+    # `days` could turn one click into a very large, slow fetch.
+    if not 1 <= body.days <= 90:
+        raise HTTPException(status_code=400, detail="days deve estar entre 1 e 90")
+    try:
+        run_dir, _num_klines = run_and_save_backtest(
+            RESULTS_DIR, symbol=body.symbol, interval=body.interval, days=body.days
+        )
+    except NoKlinesFetchedError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    report = json.loads((run_dir / "report.json").read_text())
+    return {"run_name": run_dir.name, "metrics": report["metrics"], "final_equity": report["final_equity"]}
 
 
 @app.get("/api/models")

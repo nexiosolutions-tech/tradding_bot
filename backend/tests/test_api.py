@@ -185,6 +185,69 @@ def test_ws_engine_rejects_missing_or_wrong_key_once_configured(client, monkeypa
         ws.receive_json()  # connects and streams state once the key matches
 
 
+def test_run_backtest_writes_report_and_returns_summary(client, monkeypatch):
+    from tradingbot.ingestion.schema import EventType, MarketEvent
+
+    def _fake_klines(self, symbol, interval, start_ms, end_ms):
+        return [
+            MarketEvent(
+                symbol=symbol,
+                event_type=EventType.KLINE,
+                exchange_ts=i * 60_000,
+                local_ts=i * 60_000,
+                sequence_id=i * 60_000,
+                payload={
+                    "open_time": i * 60_000 - 60_000,
+                    "close_time": i * 60_000,
+                    "interval": interval,
+                    "open": 100.0,
+                    "high": 100.0,
+                    "low": 100.0,
+                    "close": 100.0,
+                    "volume": 100.0,
+                    "is_closed": True,
+                },
+            )
+            for i in range(50)
+        ]
+
+    from tradingbot.ingestion.binance_rest import BinanceRestClient
+
+    monkeypatch.setattr(BinanceRestClient, "fetch_klines", _fake_klines)
+
+    response = client.post("/api/backtests/run", json={"symbol": "BTCUSDT", "interval": "1m", "days": 7})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["run_name"].startswith("BTCUSDT_1m_7d_")
+    assert "num_trades" in body["metrics"]
+
+    listed = client.get("/api/backtests").json()
+    assert len(listed) == 1
+    assert listed[0]["run_name"] == body["run_name"]
+
+
+def test_run_backtest_returns_502_when_binance_returns_no_klines(client, monkeypatch):
+    from tradingbot.ingestion.binance_rest import BinanceRestClient
+
+    monkeypatch.setattr(BinanceRestClient, "fetch_klines", lambda self, *a, **k: [])
+
+    response = client.post("/api/backtests/run", json={"symbol": "BTCUSDT", "interval": "1m", "days": 7})
+    assert response.status_code == 502
+
+
+def test_run_backtest_rejects_out_of_range_days(client):
+    response = client.post("/api/backtests/run", json={"symbol": "BTCUSDT", "interval": "1m", "days": 200})
+    assert response.status_code == 400
+
+
+def test_run_backtest_requires_api_key_once_configured(client, monkeypatch):
+    monkeypatch.setenv("DASHBOARD_API_KEY", "s3cr3t")
+
+    no_header = client.post("/api/backtests/run", json={"symbol": "BTCUSDT", "interval": "1m", "days": 7})
+    assert no_header.status_code == 401
+
+
 def test_list_changes_extracts_status_field(client, tmp_path):
     changes_dir = tmp_path / "changes"
     changes_dir.mkdir(parents=True)

@@ -3,21 +3,30 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxi
 import { api } from "../api/client";
 import { EquityCurveChart } from "../components/EquityCurveChart";
 import { TradesTable } from "../components/TradesTable";
-import { IconBars } from "../components/Icons";
+import { IconBars, IconPlay } from "../components/Icons";
 import { theme } from "../theme";
 import type { BacktestDetail, BacktestSummary } from "../api/types";
 
 // pnl_by_weekday keys follow Python's datetime.weekday() convention: Monday = 0.
 const WEEKDAY_LABEL = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
 
+const DEFAULT_RUN_PARAMS = { symbol: "BTCUSDT", interval: "1m", days: 7 };
+
 export function PerformanceView() {
   const [runs, setRuns] = useState<BacktestSummary[] | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [detail, setDetail] = useState<BacktestDetail | null>(null);
+  const [runPending, setRunPending] = useState(false);
+  const [runError, setRunError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const refreshRuns = () =>
     api.backtests().then((data) => {
       setRuns(data);
+      return data;
+    });
+
+  useEffect(() => {
+    refreshRuns().then((data) => {
       if (data.length > 0) setSelected(data[0].run_name);
     });
   }, []);
@@ -26,6 +35,20 @@ export function PerformanceView() {
     if (!selected) return;
     api.backtestDetail(selected).then(setDetail);
   }, [selected]);
+
+  const handleRunBacktest = async () => {
+    setRunPending(true);
+    setRunError(null);
+    try {
+      const result = await api.runBacktest(DEFAULT_RUN_PARAMS);
+      await refreshRuns();
+      setSelected(result.run_name);
+    } catch (err) {
+      setRunError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRunPending(false);
+    }
+  };
 
   const hourlyData = useMemo(() => {
     if (!detail) return [];
@@ -58,8 +81,14 @@ export function PerformanceView() {
           </div>
           <div className="empty-state__title">Nenhum backtest ainda</div>
           <p className="muted">
-            Rode <code>python scripts/run_backtest.py</code> no backend para gerar o primeiro relatório.
+            Rode <code>python scripts/run_backtest.py</code> no backend, ou gere o primeiro relatório direto
+            por aqui ({DEFAULT_RUN_PARAMS.symbol}, {DEFAULT_RUN_PARAMS.interval}, últimos{" "}
+            {DEFAULT_RUN_PARAMS.days} dias).
           </p>
+          <button className="icon-btn icon-btn--primary" disabled={runPending} onClick={handleRunBacktest}>
+            <IconPlay width={13} height={13} /> {runPending ? "Rodando..." : "Rodar backtest"}
+          </button>
+          {runError && <p className="form-error">{runError}</p>}
         </div>
       </div>
     );
@@ -68,7 +97,13 @@ export function PerformanceView() {
   return (
     <div className="split-view">
       <div className="panel list-panel">
-        <h3>Backtests</h3>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+          <h3>Backtests</h3>
+          <button className="icon-btn" disabled={runPending} onClick={handleRunBacktest} title="Rodar novo backtest">
+            <IconPlay width={13} height={13} /> {runPending ? "Rodando..." : "Novo"}
+          </button>
+        </div>
+        {runError && <p className="form-error">{runError}</p>}
         <ul className="item-list">
           {runs.map((run) => (
             <li key={run.run_name}>
