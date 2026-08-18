@@ -97,6 +97,54 @@ order book é a primeira fonte de informação genuinamente nova.
   habilita (ainda sem features derivadas — é dado sendo acumulado, não
   uso imediato).
 
+## Trades agregados / fluxo de ordens (2026-08-18)
+
+`EventType.TRADE` já existia no schema desde o desenho inicial (nunca implementado, como
+o `DEPTH` de 2026-08-15 antes de sua implementação) — resposta direta à discussão de
+priorização de 2026-08-18 sobre estatística de overfitting e coleta de dado (captura tem
+prazo de validade, cálculo sobre dado já persistido não tem — ver
+`changes/2026-08-18-captura-aggtrade-fluxo-ordens.md` para o raciocínio completo).
+
+- **Stream**: `<symbol>@aggTrade` (trades agregados pelo motor de casamento da Binance —
+  múltiplos trades individuais no mesmo preço/ordem tomadora colapsados em 1 mensagem).
+  Não o stream de trade bruto (`@trade`, 1 mensagem por trade individual) — aggTrade já é
+  a granularidade certa para volume por lado, sem custo de banda desnecessário.
+- **`AggTradePayload`** (`ingestion/schema.py`, análogo a `KlinePayload`/`DepthPayload`):
+  ```
+  {
+    "agg_trade_id": 5304993,       # sequence_id — id monotônico da Binance p/ este stream
+    "price": 65000.5,
+    "quantity": 0.02,
+    "first_trade_id": 1000,
+    "last_trade_id": 1002,
+    "trade_time": 1755500000000,   # exchange_ts — timestamp autoritativo da exchange
+    "is_buyer_maker": true         # ver decisão de lado do agressor abaixo
+  }
+  ```
+- **Diferente do depth: aggTrade tem timestamp e id autoritativos da exchange**
+  (`T`/trade_time e `a`/agg_trade_id) — não precisa da aproximação por horário de
+  recebimento local que `DepthPayload` precisou.
+- **Lado do agressor**: `is_buyer_maker=true` significa que o comprador era a ordem que já
+  estava no book (maker) e o vendedor cruzou o spread — ou seja, um trade **iniciado pelo
+  vendedor** (aggressor sell). `is_buyer_maker=false` é o inverso (aggressor buy). É este
+  campo, não o preço, que decide o lado em `AggTradeAggregator`.
+- **Agregação em bucket de 1 minuto, não trade a trade**: `ingestion/aggtrade_aggregator.py`
+  consome o stream continuamente e acumula `buy_volume`/`sell_volume`/`buy_count`/
+  `sell_count`/`vwap` por minuto, só emitindo o bucket quando o próximo já começou (mesmo
+  padrão anti-vazamento do `_TimeframeAggregator` de `03-motor-de-features.md` — nunca
+  emite um bucket ainda em formação). Persistir trade a trade explodiria armazenamento sem
+  necessidade (BTCUSDT costuma ter centenas de trades/minuto) e o uso pretendido (order
+  flow imbalance) é uma métrica de janela, não de evento individual — mesma decisão de
+  design que `depth_sampler.py` tomou para order book, adaptada de "amostrar" (o book é um
+  estado instantâneo completo) para "acumular" (um trade é um incremento do período).
+- **Limitação estrutural, não escolha de implementação**: assim como order book, a Binance
+  não expõe histórico de aggTrade além de uma janela recente via REST — a captura só
+  existe a partir de quando começa a rodar, sem como preencher o passado retroativamente.
+- **`scripts/run_aggtrade_capture.py`** roda continuamente, persiste 1 bucket/minuto na
+  tabela `agg_trade_buckets`. Ver `03-motor-de-features.md` para o que essa captura
+  habilita (ainda sem feature derivada — é dado sendo acumulado, mesmo estágio em que
+  order book está desde 2026-08-15).
+
 ## Ambientes
 
 - **Testnet:** `wss://testnet.binance.vision` — usado em todo desenvolvimento e

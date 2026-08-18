@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from tradingbot.persistence.models import (
+    AggTradeBucket,
     CircuitBreakerEvent,
     EngineEvent,
     OrderBookSnapshot,
@@ -123,4 +124,9 @@ def recent_engine_events(session: Session, limit: int = 50) -> list[EngineEvent]
 
 def record_order_book_snapshot(session: Session, snapshot: OrderBookSnapshot) -> None:
     session.add(snapshot)
+    session.commit()
+
+
+def record_agg_trade_bucket(session: Session, bucket: AggTradeBucket) -> None:
+    session.add(bucket)
     session.commit()

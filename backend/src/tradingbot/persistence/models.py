@@ -93,6 +93,25 @@ class OrderBookSnapshot(Base):
     raw_asks: Mapped[list] = mapped_column(JSON)
 
 
+class AggTradeBucket(Base):
+    """1 bucket/minuto de volume comprador/vendedor (aggressor side) — spec 02/03,
+    2026-08-18. Sem histórico retroativo possível (Binance não expõe aggTrade passado além
+    da janela recente da REST API), então esta tabela é o único jeito de acumular dado de
+    fluxo de ordens para uma futura feature de order flow imbalance — mesma lógica de
+    order_book_snapshots acima, aplicada a trades em vez de book depth."""
+
+    __tablename__ = "agg_trade_buckets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String, index=True)
+    ts: Mapped[int] = mapped_column(BigInteger, index=True)
+    buy_volume: Mapped[float] = mapped_column(Float)
+    sell_volume: Mapped[float] = mapped_column(Float)
+    buy_count: Mapped[int] = mapped_column(Integer)
+    sell_count: Mapped[int] = mapped_column(Integer)
+    vwap: Mapped[float] = mapped_column(Float)
+
+
 class EngineEvent(Base):
     """State-machine transitions (spec 01) — the audit trail behind the dashboard's Live view."""
 

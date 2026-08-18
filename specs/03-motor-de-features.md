@@ -179,6 +179,25 @@ transformação do mesmo preço de fechamento.
   feature contra um backtest real, seguindo o mesmo processo das rodadas
   anteriores (`evaluate_config`, ablação controlada).
 
+### Fluxo de ordens / volume por lado (captura iniciada em 2026-08-18, sem features ainda)
+
+Mesmo estágio em que order book está desde 2026-08-15 (seção anterior) — a captura existe,
+a feature ainda não, pelo mesmo motivo: sem histórico acumulado para validar, escrever a
+feature agora seria código sem forma de checar empiricamente se ajuda ou atrapalha.
+
+- **Captura, não features**: `02-ingestao-de-dados.md` descreve a captura
+  (`scripts/run_aggtrade_capture.py`, 1 bucket/minuto de volume comprador/vendedor, tabela
+  `agg_trade_buckets`). Esta seção só registra a intenção e evita que a tabela pareça
+  órfã — nenhuma feature nova entra em `FEATURE_NAMES` nesta rodada.
+- **Candidata provável, a confirmar quando houver dado**: `order_flow_imbalance_pct` —
+  desequilíbrio entre `buy_volume` e `sell_volume` num bucket ou janela de buckets,
+  proxy de pressão agressora de compra/venda que nem preço nem volume total capturam
+  isoladamente (dois candles com volume total idêntico podem ter fluxo líquido oposto).
+  Complementa, não substitui, order book: order book mostra intenção parada no book;
+  fluxo de ordens mostra o que de fato cruzou o spread.
+- Próximo passo (não desta rodada): quando houver histórico suficiente, desenhar e validar
+  a feature contra um backtest real, seguindo o mesmo processo das rodadas anteriores.
+
 ### Força relativa cross-asset (2026-08-17, opt-in)
 
 Depois de 13 rodadas (`11-roadmap-e-fases.md`) variando só o próprio
