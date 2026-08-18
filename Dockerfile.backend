@@ -34,4 +34,7 @@ RUN pip install --no-cache-dir -e backend/
 
 WORKDIR /app/backend
 
-CMD ["uvicorn", "tradingbot.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
+# Shell form (not exec-form array) so $PORT is expanded by /bin/sh -- Railway's Start
+# Command override for each service replaces this at runtime, but this default matters for
+# anyone running the image directly (docker run) without one.
+CMD uvicorn tradingbot.api.app:app --host 0.0.0.0 --port ${PORT:-8000}
