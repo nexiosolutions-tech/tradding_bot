@@ -49,6 +49,15 @@ região escolhida é compatível com os termos de uso da Binance é decisão do 
 checar uma vez. Investigação completa em
 `changes/2026-08-18-captura-aggtrade-fluxo-ordens.md`.
 
+**Decisão registrada, não executada — prazo é "antes de existir modelo promovível", não
+"quando existir"**: entre as duas regiões viáveis, Singapura tende a ter latência bem
+menor que Holanda para a infraestrutura da Binance (proximidade geográfica com onde a
+exchange efetivamente roda) — insumo relevante para execução (onde latência importa),
+irrelevante para captura (onde não importa). As duas passam no teste de acesso; não são
+equivalentes para o que a execução vai precisar depois. Escolher e migrar a região é
+trabalho a fazer com antecedência ao gate de promoção, não no dia em que ele passar —
+decisão do usuário, ainda não tomada.
+
 ## Estados do sistema (refletidos no dashboard)
 
 Ver máquina de estados completa em

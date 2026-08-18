@@ -198,6 +198,7 @@ def test_count_order_book_snapshots_in_range(tmp_path):
             OrderBookSnapshot(
                 symbol="BTCUSDT",
                 ts=ts,
+                environment="mainnet",
                 best_bid=100.0,
                 best_ask=100.02,
                 spread_pct=0.0002,
@@ -209,7 +210,8 @@ def test_count_order_book_snapshots_in_range(tmp_path):
             ),
         )
 
-    assert count_order_book_snapshots_in_range(session, 1_000, 2_000) == 2
+    assert count_order_book_snapshots_in_range(session, 1_000, 2_000, environment="mainnet") == 2
+    assert count_order_book_snapshots_in_range(session, 1_000, 2_000, environment="testnet") == 0
 
 
 def test_count_agg_trade_buckets_in_range(tmp_path):
@@ -217,7 +219,8 @@ def test_count_agg_trade_buckets_in_range(tmp_path):
     for ts in (900, 1_000, 1_500, 2_100):
         upsert_agg_trade_bucket(session, _agg_bucket(ts=ts))
 
-    assert count_agg_trade_buckets_in_range(session, 1_000, 2_000) == 2
+    assert count_agg_trade_buckets_in_range(session, 1_000, 2_000, environment="testnet") == 2
+    assert count_agg_trade_buckets_in_range(session, 1_000, 2_000, environment="mainnet") == 0
 
 
 def test_upsert_agg_trade_bucket_recovers_from_concurrent_insert_race(tmp_path, monkeypatch):

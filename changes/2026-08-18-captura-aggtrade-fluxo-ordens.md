@@ -1,10 +1,15 @@
-# Change Proposal — 2026-08-18 — Captura de aggTrade (fluxo de ordens / volume por lado)
+# Change Proposal — 2026-08-18 — Captura de aggTrade e order book (fluxo de ordens)
 
-**Status:** aplicada e em produção, rodando em **testnet** (não mainnet — ver incidente
-abaixo). Quatro rodadas: (1) implementação inicial, (2) 4 checagens pré-provisionamento
+**Status:** aplicada e em produção. `depth-capture` roda em **mainnet real** (REST via
+`data-api.binance.vision`, desde a sexta rodada). `aggtrade-capture` continua em
+**testnet** por ora (conversão planejada, não urgente — arquivo histórico cobre o atraso).
+Seis rodadas: (1) implementação inicial, (2) 4 checagens pré-provisionamento
 (granularidade, gap/backfill, timestamp, liveness), (3) tentativa de correção de ambiente
 para mainnet + frescor real no relatório diário, (4) mainnet bloqueado geograficamente pelo
-Railway (`HTTP 451`) — revertido para testnet no mesmo dia. Ver seções cronológicas abaixo.
+Railway (`HTTP 451`) — revertido para testnet no mesmo dia, (5) sondagem completa (rotas
+concretas, handshake WS real, 3 regiões) — achado: `data-api.binance.vision` (API viva, não
+arquivo) não está bloqueado nem na região atual, (6) `depth-capture` convertido para REST
+mainnet no mesmo dia do achado. Ver seções cronológicas abaixo.
 
 ## Evidência (origem)
 
@@ -389,16 +394,70 @@ para market data pública (não é um bloqueio restrito a endpoints de trading).
   válida: `order_book_snapshots`/`agg_trade_buckets` seguem não-usáveis para calibração de
   microestrutura real enquanto isso não for resolvido.
 
+## Sexta rodada: depth-capture convertido para REST mainnet — hoje, sem trocar região
+
+O usuário reclassificou a sondagem de rotas concretas: `data-api.binance.vision` não é
+arquivo, é a **API viva** — o mesmo espelho de `api.binance.com`, sem restrição. Já que
+respondeu `200` real mesmo em `us-east4` (a região bloqueada), a captura ao vivo de mainnet
+não dependia de resolver o bloqueio de região — dependia só de trocar WS por polling REST.
+Isso reordenou a fila de novo: converter `depth-capture` virou o item mais urgente da
+sessão, à frente até do backfill/benchmark, pela mesma lógica de reversibilidade que já
+guiava tudo — depth não tem arquivo histórico (confirmado na rodada anterior), então cada
+hora a mais em testnet era perda permanente, e a correção passou a custar "trocar um WS por
+um GET a cada 60s", a menor razão esforço/irreversibilidade da sessão inteira.
+
+- **`binance_rest.py`**: base mainnet trocada de `api.binance.com` para
+  `data-api.binance.vision`. Confirmado antes por leitura de código que
+  `BinanceRestClient` é 100% market data pública (`fetch_klines`, `fetch_agg_trades`,
+  `fetch_exchange_info`, `fetch_24h_tickers` — nenhum toca ordem/conta) e só é usado por
+  `backtesting/runner.py`; a execução real vive em `execution/client.py::BinanceTestnetClient`,
+  classe estruturalmente separada, sem relação com esta. A troca de base é segura para
+  os 4 métodos ao mesmo tempo — confirmado que `exchangeInfo`/`ticker/24hr` também
+  respondem no host novo, não só `depth`/`aggTrades`/`klines`. Novo método `fetch_depth`.
+- **`run_depth_capture.py`**: WS trocado por polling em `fetch_depth` a cada 60s,
+  `limit=20` — escolhido deliberadamente para casar com o `@depth20@1000ms` que o WS
+  capturava antes (profundidade diferente teria criado uma quebra silenciosa entre as
+  duas eras, a mesma armadilha da bucketização discutida para o backfill de aggTrade, só
+  que na dimensão errada). `environment="mainnet"` real a partir de agora. Reaproveita
+  `compute_snapshot_fields` (já testado) construindo um `MarketEvent` a partir da
+  resposta REST — mesmo formato de saída de sempre, só a fonte mudou.
+- **`binance_depth_ws.py`/`BinanceDepthStream` não foram apagados** — ficam como caminho
+  de fallback, testado e funcional, caso a região migre (Singapura/Holanda já validadas)
+  ou caso `data-api.binance.vision` seja um dia descontinuado/limitado. Documentado no
+  próprio docstring do módulo por que não está mais em uso.
+- **Frescor por `(tabela, environment)`, não por tabela agregada**: com `depth-capture`
+  agora mainnet e `aggtrade-capture` ainda testnet, contar "qualquer ambiente" deixaria a
+  captura testnet saudável mascarar uma captura mainnet morta na mesma tabela —
+  exatamente o tipo de falso-negativo que a asserção de frescor existe para evitar.
+  `daily_report.py::CAPTURE_FRESHNESS_TARGETS` fixa o par esperado por tabela agora;
+  atualizar essa constante é o único passo quando um serviço muda de ambiente-alvo.
+- **`aggtrade-capture` fica para a próxima rodada, por conveniência, não urgência** — o
+  arquivo histórico (`data.binance.vision`, confirmado na rodada anterior) cobre o
+  atraso, diferente de depth. Antes de converter, medir a taxa real de chegada de trades
+  em mainnet: `/api/v3/aggTrades` devolve no máximo 1000 registros/chamada, e o BTCUSDT
+  de mainnet pode gerar isso em poucos segundos em horário movimentado — testnet nunca
+  exercitou esse volume. Se o polling por `fromId` não acompanhar, atrasa cumulativamente
+  e nunca recupera; plano B se não der conta: paralelizar por faixa de id, ou aceitar o
+  arquivo como fonte primária e o polling só como cauda recente.
+- **Região**: decisão registrada em `06-camada-de-execucao.md`, não executada — Singapura
+  tende a ter latência bem menor que Holanda pela proximidade com a infraestrutura da
+  Binance (relevante para execução, irrelevante para captura). Prazo da decisão é "antes
+  de existir modelo promovível", não "quando existir".
+
 ## Pendente
 
-- **Resolver o bloqueio geográfico da Binance mainnet no Railway** (outra região, ou
-  proxy/relay) — até lá, `depth-capture`/`aggtrade-capture` continuam em testnet, e
-  qualquer trabalho futuro que dependa de microestrutura real (item 7 da fila) fica
-  bloqueado por essa mesma causa raiz.
+- **`aggtrade-capture` → REST mainnet**, com medição de ritmo antes de assumir que o
+  polling acompanha a taxa real de chegada de trades (ver rodada acima).
+- **Backfill histórico de aggTrade** (`data.binance.vision`) com bucketização
+  compartilhada entre o caminho ao vivo e o de backfill, e teste que passa o mesmo lote
+  bruto pelos dois exigindo saída idêntica — evita a quebra silenciosa de regime na
+  fronteira entre a era arquivada e a era ao vivo.
+- **Região**: escolher e migrar (Singapura ou Holanda) antes de existir modelo
+  promovível — decisão do usuário, não urgente hoje.
 - Decisão em aberto, não bloqueante: o que fazer com a janela `order_book_snapshots` de
-  2026-08-15 em diante, toda ela testnet enquanto o bloqueio não for resolvido — manter
-  como referência histórica filtrável por `ts` ou apagar. Fica para quando alguém for de
-  fato consumir esse dado.
+  2026-08-15 a 2026-08-18, toda ela testnet — manter como referência histórica filtrável
+  por `ts`/`environment` ou apagar. Fica para quando alguém for de fato consumir esse
+  dado.
 
 ## Decisão
 
@@ -408,7 +467,9 @@ para market data pública (não é um bloqueio restrito a endpoints de trading).
   fila" — mainnet para as duas capturas + frescor real no relatório diário (terceira
   rodada). O revert para testnet (quarta rodada, achado técnico de bloqueio geográfico) foi
   ação corretiva imediata, não uma decisão de produto — não alterou a direção aprovada,
-  só constatou que a infraestrutura atual não a permite ainda. Todas em 2026-08-18.
+  só constatou que a infraestrutura atual não a permite ainda. "O próximo é converter o
+  depth-capture para REST mainnet, hoje" (sexta rodada, depois da sondagem completa mostrar
+  que `data-api.binance.vision` não estava bloqueado). Todas em 2026-08-18.
 - Justificativa: reversibilidade de captura de dado como eixo de priorização; as 4
   checagens da segunda rodada são caras de corrigir depois de o serviço já estar
   acumulando dado com o desenho errado (bucket grosso demais, gap silencioso, coletor

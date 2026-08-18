@@ -128,16 +128,20 @@ def record_order_book_snapshot(session: Session, snapshot: OrderBookSnapshot) ->
     session.commit()
 
 
-def count_order_book_snapshots_in_range(session: Session, start_ts: int, end_ts: int) -> int:
+def count_order_book_snapshots_in_range(session: Session, start_ts: int, end_ts: int, environment: str) -> int:
+    """`environment` is required, not optional — depth-capture and aggtrade-capture each
+    target one environment at a time (2026-08-18: depth is mainnet, aggtrade is testnet),
+    and mixing them into one count would let one capture's healthy volume mask the other's
+    silent failure (exactly the bug the freshness check exists to catch)."""
     stmt = select(func.count()).select_from(OrderBookSnapshot).where(
-        OrderBookSnapshot.ts >= start_ts, OrderBookSnapshot.ts <= end_ts
+        OrderBookSnapshot.ts >= start_ts, OrderBookSnapshot.ts <= end_ts, OrderBookSnapshot.environment == environment
     )
     return session.scalar(stmt) or 0
 
 
-def count_agg_trade_buckets_in_range(session: Session, start_ts: int, end_ts: int) -> int:
+def count_agg_trade_buckets_in_range(session: Session, start_ts: int, end_ts: int, environment: str) -> int:
     stmt = select(func.count()).select_from(AggTradeBucket).where(
-        AggTradeBucket.ts >= start_ts, AggTradeBucket.ts <= end_ts
+        AggTradeBucket.ts >= start_ts, AggTradeBucket.ts <= end_ts, AggTradeBucket.environment == environment
     )
     return session.scalar(stmt) or 0
 

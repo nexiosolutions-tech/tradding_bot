@@ -181,9 +181,13 @@ transformação do mesmo preço de fechamento.
 - **Correção de ambiente (2026-08-18)**: a captura rodou em testnet de 2026-08-15 a
   2026-08-18 — livro raso, movido por poucos bots em teste, sem o sinal de
   microestrutura real que a feature (e a calibração de custo/slippage de
-  `backtesting/costs.py`, item futuro) dependem. Trocada para mainnet nesta mesma
-  data (`02-ingestao-de-dados.md`) — qualquer uso desse histórico precisa filtrar
-  `ts` a partir do deploy da correção, a janela testnet não serve.
+  `backtesting/costs.py`, item futuro) dependem. Uma tentativa de trocar para WS
+  mainnet bateu no bloqueio geográfico e foi revertida no mesmo dia; a correção que
+  de fato colou foi trocar o WS por polling REST contra `data-api.binance.vision`
+  (não bloqueado, mesma rota pública) — `environment="mainnet"` real a partir de
+  então (`02-ingestao-de-dados.md`). Qualquer uso desse histórico precisa filtrar
+  por `ts` **e** `environment="mainnet"` — a coluna nova existe exatamente pra essa
+  separação, a janela testnet (2026-08-15 a 2026-08-18) não serve pra calibração.
 
 ### Fluxo de ordens / volume por lado (captura iniciada em 2026-08-18, sem features ainda)
 

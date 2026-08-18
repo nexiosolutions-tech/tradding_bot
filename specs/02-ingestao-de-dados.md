@@ -188,60 +188,65 @@ prazo de validade, cálculo sobre dado já persistido não tem — ver
   (orquestrador/ordens) hoje.
 - **Produção:** `wss://stream.binance.com` — só após aprovação explícita para a
   camada de execução, conforme `06-camada-de-execucao.md`.
-- **Captura de order book/fluxo de ordens: mainnet é o alvo certo, mas bloqueado na
-  infra atual (2026-08-18)**: `depth-capture`/`aggtrade-capture` são serviços
-  somente-leitura de market data pública — sem `BINANCE_API_KEY`/`SECRET`, nunca
-  importam `tradingbot.execution` — logo a regra 1 do `CLAUDE.md` (testnet primeiro)
-  não se aplica a eles; ela existe para a camada de execução, que continua em
-  testnet. O motivo de mainnet ser o alvo certo: o livro de ofertas e o fluxo de
+- **Captura de order book/fluxo de ordens: mainnet é o alvo certo, mas o WS estava
+  bloqueado na infra atual (2026-08-18)**: `depth-capture`/`aggtrade-capture` são
+  serviços somente-leitura de market data pública — sem `BINANCE_API_KEY`/`SECRET`,
+  nunca importam `tradingbot.execution` — logo a regra 1 do `CLAUDE.md` (testnet
+  primeiro) não se aplica a eles; ela existe para a camada de execução, que continua
+  em testnet. O motivo de mainnet ser o alvo certo: o livro de ofertas e o fluxo de
   trades do testnet são rasos, movidos por poucos outros bots em teste, não por
   participantes reais — não carregam o sinal de microestrutura que essa captura
   existe para acumular.
-  - **Tentativa de migração revertida no mesmo dia**: apontar os dois serviços para
-    mainnet resultou em `HTTP 451` (bloqueio geográfico) em toda tentativa de
-    conexão a partir da região do projeto no Railway — mesma família de bloqueio já
-    conhecida para execução de ordens (ver task histórica "bloqueio geográfico da
-    Binance nas ordens"), agora confirmada também para WebSocket de market data.
-    Os dois serviços entraram em loop de reconexão infinito, sem capturar nada (nem
-    testnet nem mainnet) por ~15-20 minutos até o revert. Voltado para testnet como
-    paliativo — captura de baixo sinal é melhor que nenhuma. Resolver o bloqueio de
-    verdade (outra região do Railway, ou proxy) é trabalho futuro, não desta rodada.
-  - **Consequência**: `order_book_snapshots` capturado entre 2026-08-15 (início da
-    captura) e hoje é testnet, não usável para calibração de slippage/microestrutura
-    (ver `03-motor-de-features.md`, seção de order book, e
-    `changes/2026-08-18-captura-aggtrade-fluxo-ordens.md`) — as linhas não foram
-    apagadas (decisão de manter vs. descartar fica para quando alguém for de fato
-    consumir esse dado), mas continuará crescendo em testnet até o bloqueio
-    geográfico ser resolvido.
+  - **Tentativa de migração para WS mainnet revertida no mesmo dia**: apontar os
+    dois serviços para `stream.binance.com` resultou em `HTTP 451` (bloqueio
+    geográfico) em toda tentativa de conexão a partir da região do projeto no
+    Railway — mesma família de bloqueio já conhecida para execução de ordens, agora
+    confirmada também para WebSocket de market data. Os dois serviços entraram em
+    loop de reconexão infinito, sem capturar nada (nem testnet nem mainnet) por
+    ~15-20 minutos até o revert.
   - **Coluna `environment` ("testnet"/"mainnet")**: adicionada a `order_book_snapshots`
     e `agg_trade_buckets` antes que dado de mainnet pudesse começar a fluir para as
-    mesmas tabelas — sem isso, no dia em que o bloqueio geográfico for resolvido, não
-    haveria como separar dado sintético de dado real na mesma tabela (o alçapão de
+    mesmas tabelas — sem isso, no dia em que mainnet voltasse a fluir, não haveria
+    como separar dado sintético de dado real na mesma tabela (o alçapão de
     irreversibilidade real aqui: retroativamente não dá pra reconstruir a origem de
     uma linha já gravada sem essa marca). `db.py::_ensure_capture_environment_column`
     faz a migração aditiva (este projeto não tem framework de migração — Alembic ou
     equivalente — só `Base.metadata.create_all`, que nunca altera tabela existente) e
-    já backfilla toda linha antiga como `"testnet"`, o que é exatamente correto (era
-    tudo testnet até aqui).
-  - **O bloqueio de captura tem solução sem trocar região (2026-08-18)**: sondagem
-    detalhada (rotas concretas, não só a raiz; handshake WS real, não só GET) em
-    `changes/2026-08-18-captura-aggtrade-fluxo-ordens.md` encontrou que
-    `data-api.binance.vision` — espelho público das mesmas rotas REST de
-    `api.binance.com` (`/api/v3/depth`, `/api/v3/aggTrades`, `/api/v3/klines`), sem
-    chave — responde normalmente **mesmo na região hoje bloqueada**. Captura ao vivo
-    de mainnet real é possível hoje via polling REST contra esse host, sem trocar
-    região, sem proxy — `depth-capture` mapeia direto (já é 1 requisição/minuto,
-    trocar WS por `GET /api/v3/depth` é natural); `aggtrade-capture` reaproveitaria o
-    `fetch_agg_trades` paginado por `fromId` já escrito para o backfill, rodando
-    continuamente em vez de sob demanda. Nenhuma conversão implementada ainda —
-    decisão do usuário quando/se priorizar. Confirmado também: Singapura e Holanda
-    (as duas únicas regiões do Railway fora de jurisdição bloqueada) passam no teste
-    de WS real completo, então quando a **execução** (não só a captura) precisar de
-    mainnet, essas são as opções reais — ver `06-camada-de-execucao.md`.
+    já backfillou toda linha antiga como `"testnet"`, o que era exatamente correto
+    (era tudo testnet até então).
+  - **`depth-capture` convertido para REST mainnet via `data-api.binance.vision`
+    (2026-08-18)**: sondagem detalhada (rotas concretas, não só a raiz; handshake WS
+    real, não só GET) encontrou que `data-api.binance.vision` — espelho público das
+    mesmas rotas REST de `api.binance.com` (`/api/v3/depth`, `/api/v3/aggTrades`,
+    `/api/v3/klines`, `/api/v3/exchangeInfo`, `/api/v3/ticker/24hr`), sem chave —
+    responde normalmente **mesmo na região bloqueada**. `BinanceRestClient` (usado
+    só para market data pública — nunca execução, confirmado por leitura de código)
+    trocou sua base mainnet de `api.binance.com` para esse host; `run_depth_capture.py`
+    trocou o stream WS por polling em `fetch_depth` a cada 60s, `limit=20` (mesma
+    profundidade que o `@depth20@1000ms` antigo, escolhido deliberadamente pra não
+    trocar de fonte de dado e mudar o que "o book" significa sem perceber).
+    `environment="mainnet"` real a partir de agora — sem trocar região, sem proxy,
+    sem custo novo. `binance_depth_ws.py`/`BinanceDepthStream` não foram apagados —
+    ficam como caminho de fallback caso a região migre (Singapura/Holanda validadas
+    abaixo) ou caso `data-api.binance.vision` seja um dia descontinuado/limitado.
+  - **`aggtrade-capture` continua em testnet por ora**: mesma conversão é possível
+    (reaproveitando `fetch_agg_trades` já escrito para o backfill, rodando
+    continuamente em vez de sob demanda), mas adiada — antes de assumir que o
+    polling acompanha, é preciso medir a taxa real de chegada de trades em mainnet
+    (`/api/v3/aggTrades` devolve no máximo 1000 registros/chamada; o testnet nunca
+    exercitou volume real). Fica para a próxima rodada.
   - **Depth não tem arquivo histórico para spot**: confirmado via listagem direta do
-    bucket S3 por trás de `data.binance.vision` — `data/spot/daily/` só tem
-    `aggTrades/`, `klines/`, `trades/`, sem `depth`. O prazo de validade real da
-    captura de order book ao vivo permanece — não há como recuperar retroativamente.
+    bucket S3 por trás de `data.binance.vision` (host diferente de
+    `data-api.binance.vision` — um é arquivo, o outro é API viva) — `data/spot/daily/`
+    só tem `aggTrades/`, `klines/`, `trades/`, sem `depth`. Era exatamente por isso
+    que a conversão de `depth-capture` teve prioridade sobre `aggtrade-capture`: sem
+    arquivo pra backfillar depois, cada hora apontado para testnet era perda
+    permanente; aggTrade tem essa rede de segurança, depth nunca teve.
+  - **Região**: Singapura (`asia-southeast1`) e Holanda (`europe-west4`) — as duas
+    únicas regiões do Railway fora de jurisdição bloqueada — passam no teste de WS
+    real completo (handshake + mensagem de mercado recebida). Quando a **execução**
+    (não só a captura) precisar de mainnet, essas são as opções reais — decisão e
+    critérios em `06-camada-de-execucao.md`, ainda não executada.
 
 ## Fora de escopo no MVP
 

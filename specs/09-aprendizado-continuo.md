@@ -249,4 +249,13 @@ respectivamente) para não disparar falso positivo num redeploy/restart breve, m
 suficiente para pegar um coletor parado a maior parte do dia. Sempre renderizado no
 relatório (`## Frescor da captura de dados`), não só quando há alerta, e também impresso no
 console/log do próprio cron quando abaixo do piso — visível sem precisar abrir o PR do dia.
+
+**Contagem por `environment`, não por tabela agregada (2026-08-18)**: `depth-capture` e
+`aggtrade-capture` hoje visam ambientes diferentes um do outro (mainnet e testnet — ver
+`02-ingestao-de-dados.md`), e essa combinação muda ao longo do tempo conforme cada captura
+é convertida. `daily_report.py::CAPTURE_FRESHNESS_TARGETS` fixa qual `(tabela, ambiente)`
+é o alvo esperado agora — contar "qualquer ambiente" deixaria uma captura testnet saudável
+mascarar uma captura mainnet morta na mesma tabela, exatamente o tipo de falso-negativo que
+essa asserção existe para evitar. Atualizar essa constante é o único passo necessário
+quando um serviço de captura muda de ambiente-alvo.
 Ver `changes/2026-08-18-captura-aggtrade-fluxo-ordens.md`.

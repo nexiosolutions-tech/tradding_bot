@@ -179,6 +179,7 @@ def test_capture_freshness_ok_when_counts_above_floor(tmp_path):
             OrderBookSnapshot(
                 symbol="BTCUSDT",
                 ts=_ts_at_hour(1) + i,
+                environment="mainnet",  # matches CAPTURE_FRESHNESS_TARGETS for this table
                 best_bid=100.0,
                 best_ask=100.02,
                 spread_pct=0.0002,
@@ -195,6 +196,7 @@ def test_capture_freshness_ok_when_counts_above_floor(tmp_path):
             AggTradeBucket(
                 symbol="BTCUSDT",
                 ts=_ts_at_hour(1) + i,
+                environment="testnet",  # matches CAPTURE_FRESHNESS_TARGETS for this table
                 buy_volume=1.0,
                 sell_volume=1.0,
                 buy_count=1,
@@ -234,6 +236,7 @@ def test_capture_freshness_only_counts_rows_within_the_report_day(tmp_path):
         OrderBookSnapshot(
             symbol="BTCUSDT",
             ts=_ts_at_hour(0) - 24 * 60 * 60 * 1000,
+            environment="mainnet",  # matches CAPTURE_FRESHNESS_TARGETS -- isolate the window check
             best_bid=100.0,
             best_ask=100.02,
             spread_pct=0.0002,

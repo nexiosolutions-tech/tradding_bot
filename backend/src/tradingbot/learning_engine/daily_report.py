@@ -35,6 +35,16 @@ HOUR_UNDERPERFORMANCE_WIN_RATE_THRESHOLD = 0.35
 ORDER_BOOK_SNAPSHOT_DAILY_FLOOR = 500
 AGG_TRADE_BUCKET_DAILY_FLOOR = 5_000
 
+# (table label, environment each capture service currently targets, floor) — count is
+# scoped to this one environment per table, not "any environment", so a healthy testnet
+# capture can never mask a dead mainnet one or vice versa (2026-08-18 incident: depth is
+# mainnet now via REST polling, aggtrade is still testnet pending its own conversion).
+# Update the environment here when a capture service's target changes.
+CAPTURE_FRESHNESS_TARGETS = [
+    ("order_book_snapshots", "mainnet", ORDER_BOOK_SNAPSHOT_DAILY_FLOOR),
+    ("agg_trade_buckets", "testnet", AGG_TRADE_BUCKET_DAILY_FLOOR),
+]
+
 # 2026-08-17: TradeRecord.pnl/fees_paid never reflect a real trading fee — fees_paid is
 # hardcoded 0.0 at trade-close time (execution/orchestrator.py) because testnet genuinely
 # charges none, but that means raw pnl systematically overstates what the same trade would
@@ -63,6 +73,7 @@ class Finding:
 @dataclass(frozen=True)
 class CaptureFreshness:
     label: str
+    environment: str
     count_last_24h: int
     expected_floor: int
 
@@ -115,18 +126,21 @@ def _find_underperforming_hours(trades: list) -> list[Finding]:
     return findings
 
 
+_CAPTURE_COUNT_FNS = {
+    "order_book_snapshots": count_order_book_snapshots_in_range,
+    "agg_trade_buckets": count_agg_trade_buckets_in_range,
+}
+
+
 def _capture_freshness(session, start_ms: int, end_ms: int) -> list[CaptureFreshness]:
     return [
         CaptureFreshness(
-            label="order_book_snapshots",
-            count_last_24h=count_order_book_snapshots_in_range(session, start_ms, end_ms),
-            expected_floor=ORDER_BOOK_SNAPSHOT_DAILY_FLOOR,
-        ),
-        CaptureFreshness(
-            label="agg_trade_buckets",
-            count_last_24h=count_agg_trade_buckets_in_range(session, start_ms, end_ms),
-            expected_floor=AGG_TRADE_BUCKET_DAILY_FLOOR,
-        ),
+            label=label,
+            environment=environment,
+            count_last_24h=_CAPTURE_COUNT_FNS[label](session, start_ms, end_ms, environment),
+            expected_floor=floor,
+        )
+        for label, environment, floor in CAPTURE_FRESHNESS_TARGETS
     ]
 
 
@@ -194,8 +208,8 @@ def render_markdown(report: DailyReport) -> str:
     for freshness in report.capture_freshness:
         status = "OK" if freshness.ok else "**ALERTA — abaixo do piso esperado**"
         lines.append(
-            f"- `{freshness.label}`: {freshness.count_last_24h} linha(s) nas últimas 24h "
-            f"(piso esperado: {freshness.expected_floor}) — {status}"
+            f"- `{freshness.label}` ({freshness.environment}): {freshness.count_last_24h} "
+            f"linha(s) nas últimas 24h (piso esperado: {freshness.expected_floor}) — {status}"
         )
 
     lines += [

@@ -1,4 +1,7 @@
-"""REST backfill client — spec 02. Used for historical data and as a fallback when the WS stream is down."""
+"""REST backfill client — spec 02. Used for historical data and as a fallback when the WS
+stream is down. Every method here is unauthenticated public market data (no order/account
+endpoint, no API key) — confirmed 2026-08-18 (`backend/src/tradingbot/execution/client.py`
+is the separate, structurally unrelated class that does real order execution)."""
 
 from __future__ import annotations
 
@@ -7,10 +10,11 @@ from dataclasses import dataclass
 
 import httpx
 
-from tradingbot.ingestion.schema import AggTradePayload, EventType, KlinePayload, MarketEvent
+from tradingbot.ingestion.schema import AggTradePayload, DepthPayload, EventType, KlinePayload, MarketEvent
 
 BINANCE_KLINES_LIMIT = 1000
 BINANCE_AGG_TRADES_LIMIT = 1000
+BINANCE_DEPTH_LIMIT = 100
 
 
 @dataclass(frozen=True)
@@ -30,7 +34,13 @@ class Ticker24h:
 
 
 def _base_url(testnet: bool) -> str:
-    return "https://testnet.binance.vision" if testnet else "https://api.binance.com"
+    # data-api.binance.vision, not api.binance.com (2026-08-18): confirmed via direct probe
+    # (changes/2026-08-18-captura-aggtrade-fluxo-ordens.md) that api.binance.com/
+    # stream.binance.com are geoblocked (HTTP 451) from this project's Railway region,
+    # while data-api.binance.vision — the same public market-data routes, no auth — is
+    # not. Every route this client calls is public market data, so this swap is safe for
+    # 100% of its methods (confirmed: exchangeInfo/ticker/24hr respond identically there).
+    return "https://testnet.binance.vision" if testnet else "https://data-api.binance.vision"
 
 
 def _aggtrade_row_to_payload(row: dict) -> AggTradePayload:
@@ -175,6 +185,22 @@ class BinanceRestClient:
 
         events.sort(key=lambda e: e.sequence_id)
         return events
+
+    def fetch_depth(self, symbol: str, limit: int = BINANCE_DEPTH_LIMIT) -> DepthPayload:
+        """Order book snapshot — spec 02, 2026-08-18. `limit` chosen at the call site should
+        match whatever depth was previously captured, so a switch of data source doesn't
+        silently shift the feature's meaning (run_depth_capture.py uses 20, matching the
+        `@depth20@1000ms` WS stream it replaced). Synchronous/blocking like fetch_klines;
+        callers on an asyncio event loop must run this via asyncio.to_thread."""
+        with httpx.Client(timeout=self._timeout) as client:
+            resp = client.get(f"{self._base_url}/api/v3/depth", params={"symbol": symbol, "limit": limit})
+            resp.raise_for_status()
+            data = resp.json()
+        return DepthPayload(
+            last_update_id=int(data["lastUpdateId"]),
+            bids=[(float(p), float(q)) for p, q in data["bids"]],
+            asks=[(float(p), float(q)) for p, q in data["asks"]],
+        )
 
     def fetch_exchange_info(self) -> list[SymbolInfo]:
         """Spec 12 — universe of tradable symbols, used by the coin screening tool."""

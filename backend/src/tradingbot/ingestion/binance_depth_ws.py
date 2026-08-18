@@ -12,6 +12,13 @@ not a diff applied on top of a running book — missing some intermediate snapsh
 one 1-second update and the next loses nothing beyond that intermediate state, which this
 capture (1 sample/minute, see depth_sampler.py) already discards by design. Only the
 time-based liveness signal (2026-08-18, mirrored from BinanceKlineStream) applies here.
+
+Not currently used by any running script (2026-08-18): `run_depth_capture.py` switched to
+REST polling against data-api.binance.vision, since stream.binance.com is geoblocked from
+this project's Railway region (changes/2026-08-18-captura-aggtrade-fluxo-ordens.md). Kept,
+tested, and not deleted on purpose — it's the fallback path if the region is ever migrated
+(Singapore/Netherlands both confirmed reachable) or if the data-api.vision mirror is ever
+throttled/deprecated, both explicitly anticipated in that same document.
 """
 
 from __future__ import annotations

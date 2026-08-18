@@ -42,9 +42,10 @@ def main() -> None:
     for freshness in report.capture_freshness:
         if not freshness.ok:
             print(
-                f"ALERTA: captura '{freshness.label}' gravou só {freshness.count_last_24h} "
-                f"linha(s) nas últimas 24h (piso esperado: {freshness.expected_floor}) — "
-                "coletor possivelmente parado ou capturando o símbolo errado."
+                f"ALERTA: captura '{freshness.label}' ({freshness.environment}) gravou só "
+                f"{freshness.count_last_24h} linha(s) nas últimas 24h (piso esperado: "
+                f"{freshness.expected_floor}) — coletor possivelmente parado ou "
+                "capturando o símbolo errado."
             )
 
     proposals = draft_change_proposals(report_date, report)

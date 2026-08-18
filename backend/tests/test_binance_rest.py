@@ -91,3 +91,44 @@ def test_fetch_agg_trades_decodes_aggressor_side_and_exchange_ts(monkeypatch):
 
     assert events[0].exchange_ts == 1_755_000_000_000
     assert events[0].payload["is_buyer_maker"] is True
+
+
+def test_fetch_depth_parses_bids_and_asks(monkeypatch):
+    payload = {
+        "lastUpdateId": 12345,
+        "bids": [["100.00", "1.5"], ["99.99", "2.0"]],
+        "asks": [["100.01", "1.0"], ["100.02", "3.0"]],
+    }
+
+    class _FakeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False
+
+        def get(self, url, **kwargs):
+            assert kwargs["params"] == {"symbol": "BTCUSDT", "limit": 20}
+            return httpx.Response(200, json=payload, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(binance_rest.httpx, "Client", lambda **kwargs: _FakeClient())
+
+    client = binance_rest.BinanceRestClient()
+    depth = client.fetch_depth("BTCUSDT", limit=20)
+
+    assert depth.last_update_id == 12345
+    assert depth.bids == [(100.0, 1.5), (99.99, 2.0)]
+    assert depth.asks == [(100.01, 1.0), (100.02, 3.0)]
+
+
+def test_mainnet_base_url_is_data_api_vision_not_api_binance_com():
+    """api.binance.com is geoblocked from this project's Railway region (2026-08-18,
+    changes/2026-08-18-captura-aggtrade-fluxo-ordens.md); data-api.binance.vision mirrors
+    the same public routes and is not."""
+    client = binance_rest.BinanceRestClient(testnet=False)
+    assert client._base_url == "https://data-api.binance.vision"
+
+
+def test_testnet_base_url_is_unchanged():
+    client = binance_rest.BinanceRestClient(testnet=True)
+    assert client._base_url == "https://testnet.binance.vision"
