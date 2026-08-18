@@ -137,6 +137,13 @@ não afetam deployments já existentes, só os próximos a serem criados. Um
 inalterado — incidente real em 2026-08-18 (ver
 `changes/2026-08-18-monorepo-root-learnings-changes.md`).
 
+**Refinamento confirmado num segundo incidente (2026-08-18, mesma data):** a regra acima
+vale especificamente quando o deployment mais recente teve **sucesso**. Quando o mais
+recente **falhou** (`FAILED`), `redeploy` builda do zero e pega a config atual — reproduzido
+duas vezes no mesmo dia (`changes/2026-08-18-captura-aggtrade-fluxo-ordens.md`). Na prática:
+`redeploy` só é confiável pra aplicar config nova logo depois de um deployment que falhou;
+em cima de um deployment saudável, só um push novo força o rebuild.
+
 Build command do `dashboard`: **`npm run build`**, não `npm ci && npm run
 build` — o Railpack já roda sua própria etapa de install antes do
 `buildCommand`; rodar `npm ci` de novo colide com o cache dessa etapa

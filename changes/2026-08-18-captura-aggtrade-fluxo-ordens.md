@@ -256,6 +256,85 @@ Duas ações baratas antes de investigar região/proxy (ambas aplicadas nesta ro
   boa parte do argumento de irreversibilidade que colocou a captura ao vivo na posição
   zero. Resultado documentado abaixo, junto com o incidente que motivou a investigação.
 
+## Resultado da investigação: sondagem de conectividade + opções de região
+
+**Sondagem** (rodada via serviço Railway descartável, `probe-temp` — deploy único,
+deletado logo depois; ver `scripts/probe_connectivity.py`), a partir da região real
+(`us-east4`, EUA) onde os serviços já rodam:
+
+| Hostname | Resultado | Uso |
+|---|---|---|
+| `stream.binance.com` | `HTTP 451` (bloqueado) | WebSocket de market data mainnet |
+| `api.binance.com` | `HTTP 451` (bloqueado) | REST mainnet (trading + market data) |
+| `data-api.binance.vision` | `HTTP 200` (aberto) | REST de market data mainnet, espelho sem restrição |
+| `data.binance.vision` | `HTTP 200` (aberto) | Arquivos históricos (klines, aggTrades, etc.) para download |
+
+Confirma o formato exato do bloqueio: é por **domínio**, não por tipo de operação — os
+domínios principais (`.com`) estão bloqueados inteiros (WS e REST, dado e execução), os
+subdomínios `.vision` de market data seguem abertos.
+
+**Consequência imediata, ainda não executada**: `data.binance.vision` aberto significa que
+dá pra baixar meses de aggTrades reais de mainnet via arquivo histórico, sem depender da
+captura ao vivo nem do bloqueio de WS — isso desarma boa parte do argumento de
+irreversibilidade que colocou a captura ao vivo na posição zero (o dado History não decai
+do mesmo jeito que o WS ao vivo). `data-api.binance.vision` também abre a porta pra
+recalibrar o backfill REST do aggTrade (`fetch_agg_trades`) contra mainnet de verdade, sem
+esperar resolver o bloqueio de WS. Nenhuma das duas coisas foi implementada nesta rodada —
+fica registrado como próximo passo natural, mais barato que qualquer mudança de
+região/proxy.
+
+**Opções de região do Railway** (`railway api 'query { regions { name country location } }'`):
+todas as 13 regiões disponíveis são EUA (`us-east4-eqdc4a`/`us-east-1`/`us-east4`/
+`us-east4-eqdc16a`/`us-west1`/`us-west2`/`us-west2-aws`/`us-west2-cssv9a`), Singapura
+(`asia-southeast1-eqsg3a`/`asia-southeast1`) ou Holanda
+(`europe-west4-drams3a`/`europe-west4`/`europe-west4-drams11a`) — **nenhuma opção fora
+dessas três jurisdições**. Trocar para outra região dos EUA não muda nada (o bloqueio é
+por país/jurisdição do datacenter, não por região específica dentro dos EUA). Singapura e
+Holanda são as únicas alternativas dentro do próprio Railway, e nenhuma das duas foi
+testada ainda contra o bloqueio.
+
+**Síntese que reordenou a fila** (razão do usuário, registrada aqui por completude): `HTTP
+451` num endpoint de market data pública — sem chave, sem ordem, sem risco — indica bloqueio
+de região, não de credencial ou rota específica. Combinado com o bloqueio já conhecido para
+execução de ordens (mesma causa raiz, mesma família de domínio `.com`), a infraestrutura
+atual não tem caminho para operar com capital real — nenhuma das duas linhas de mainnet de
+`06-camada-de-execucao.md` é alcançável. Resolver isso é pré-requisito de o projeto existir
+em produção, não um item que compete por prioridade com o trabalho estatístico dos itens
+seguintes da fila.
+
+**Nada disso foi executado** — troca de região, proxy, ou VPS dedicado são decisões do
+usuário (custo, superfície de credencial nova, ponto de falha novo). Esta seção é só o
+levantamento pedido.
+
+## Incidente durante a sondagem: corrida real em `upsert_agg_trade_bucket` derrubou o serviço
+
+Efeito colateral do processo de investigação, não do achado em si: pra rodar
+`probe_connectivity.py`, o `startCommand` do `aggtrade-capture` foi trocado via
+`update-service` + `redeploy`. Descoberta nova (reforça a lição já registrada no incidente
+abaixo): `redeploy` **não** builda/aplica config nova quando o deployment anterior já
+tinha tido sucesso — ele reexecuta com o `startCommand` antigo. Na prática, isso significa
+que cada `redeploy` desse tipo é uma reinicialização do serviço real, e o Railway roda a
+instância antiga e a nova lado a lado por um instante — as duas colidiram tentando inserir
+o mesmo bucket `(symbol, ts)` corrente, e `upsert_agg_trade_bucket` não tinha proteção
+contra esse SELECT-then-INSERT não ser atômico entre processos: uma das duas estourou
+`IntegrityError` não tratado e derrubou o processo (ficou parado ~4 minutos, já que
+`restartPolicyType` estava temporariamente `NEVER` por causa do teste).
+
+- **Fix**: `upsert_agg_trade_bucket` (`repository.py`) agora captura o `IntegrityError` no
+  caminho de insert, re-busca a linha (que a instância concorrente acabou de gravar) e cai
+  no caminho de merge — mesmo padrão já usado em
+  `db.py::_ensure_capture_environment_column` pra essa mesma classe de corrida. Teste novo
+  reproduz o incidente exato (uma segunda sessão insere no meio do commit da primeira).
+- **Caminho final que funcionou pra rodar a sondagem de verdade**: em vez de reaproveitar
+  um serviço já com deployment bem-sucedido (sujeito a essa mesma limitação do `redeploy`),
+  criado um serviço Railway descartável (`probe-temp`) — todo serviço novo tem seu primeiro
+  deployment genuinamente fresco, então build+config corretos na primeira tentativa útil
+  (a primeiríssima, antes de configurar `rootDirectory`, falhou do mesmo jeito que
+  `aggtrade-capture` original — o segundo `redeploy`, agora sobre um deployment que tinha
+  **falhado**, pegou a config nova, confirmando de novo que `redeploy` só builda fresco
+  quando o anterior não teve sucesso). Serviço deletado (`railway service delete`) depois
+  de capturar o resultado.
+
 ## Incidente: mainnet bloqueado geograficamente — revertido para testnet no mesmo dia
 
 O raciocínio da terceira rodada (mainnet é o ambiente certo pra captura de dado) estava
@@ -285,7 +364,7 @@ para market data pública (não é um bloqueio restrito a endpoints de trading).
   válida: `order_book_snapshots`/`agg_trade_buckets` seguem não-usáveis para calibração de
   microestrutura real enquanto isso não for resolvido.
 
-## Frescor da captura como sinal de liveness real
+## Pendente
 
 - **Resolver o bloqueio geográfico da Binance mainnet no Railway** (outra região, ou
   proxy/relay) — até lá, `depth-capture`/`aggtrade-capture` continuam em testnet, e

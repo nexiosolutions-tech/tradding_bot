@@ -29,6 +29,17 @@ com a realidade da exchange.
 
 Nenhuma mudança na lógica de execução pula etapas dessa tabela.
 
+**Bloqueador de infraestrutura para as duas linhas de mainnet (2026-08-18):** confirmado
+via sondagem direta que `stream.binance.com` e `api.binance.com` devolvem `HTTP 451`
+(bloqueio geográfico) a partir da região atual do projeto no Railway (`us-east4`, EUA) —
+mesma causa raiz já suspeitada para execução de ordens, agora confirmada também para
+market data pública. Isso significa que, na infraestrutura atual, nenhuma das duas linhas
+de mainnet desta tabela é alcançável — o sistema não tem caminho para operar com capital
+real, simbólico ou não, independente de qualquer modelo passar pelo gate de promoção
+(`07-backtesting-e-validacao.md`). Investigação completa (hostnames testados, opções de
+região do Railway) em `changes/2026-08-18-captura-aggtrade-fluxo-ordens.md`. Resolver isso
+é pré-requisito para a linha "capital simbólico" desta tabela, não um item independente.
+
 ## Estados do sistema (refletidos no dashboard)
 
 Ver máquina de estados completa em
