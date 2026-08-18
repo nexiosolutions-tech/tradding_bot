@@ -218,3 +218,42 @@ def test_count_agg_trade_buckets_in_range(tmp_path):
         upsert_agg_trade_bucket(session, _agg_bucket(ts=ts))
 
     assert count_agg_trade_buckets_in_range(session, 1_000, 2_000) == 2
+
+
+def test_upsert_agg_trade_bucket_recovers_from_concurrent_insert_race(tmp_path, monkeypatch):
+    """Reproduces the production incident of 2026-08-18: a Railway redeploy briefly runs
+    the old and new instance of the same capture service side by side, and both raced to
+    insert the same (symbol, ts) bucket -- the loser's plain INSERT crashed on an
+    uncaught IntegrityError. Simulates the race by landing a conflicting row, from a
+    second session, in the middle of the first upsert's own commit."""
+    from tradingbot.persistence.repository import upsert_agg_trade_bucket as _upsert
+
+    session = _session(tmp_path)
+    db_url = session.get_bind().url
+
+    from sqlalchemy.orm import Session as _Session
+
+    original_commit = _Session.commit
+    call_count = {"n": 0}
+
+    def _racy_commit(self, *args, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            # A concurrent instance's upsert lands first, from an entirely separate session.
+            from tradingbot.persistence.db import get_session_factory
+
+            other_session = get_session_factory(str(db_url))()
+            other_session.add(_agg_bucket(buy_volume=10.0, sell_volume=0.0, notional=1000.0))
+            original_commit(other_session)
+            other_session.close()
+        return original_commit(self, *args, **kwargs)
+
+    monkeypatch.setattr(_Session, "commit", _racy_commit)
+
+    _upsert(session, _agg_bucket(buy_volume=1.0, sell_volume=2.0, notional=300.0))  # must not raise
+
+    rows = session.scalars(select(AggTradeBucket)).all()
+    assert len(rows) == 1
+    assert rows[0].buy_volume == 11.0  # 10.0 (raced-in winner) + 1.0 (merged after recovery)
+    assert rows[0].sell_volume == 2.0
+    assert rows[0].notional == 1300.0

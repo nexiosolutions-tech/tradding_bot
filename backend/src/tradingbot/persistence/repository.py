@@ -5,6 +5,7 @@ dataclass-like records defined in models.py.
 from __future__ import annotations
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from tradingbot.persistence.models import (
@@ -145,14 +146,29 @@ def upsert_agg_trade_bucket(session: Session, bucket: AggTradeBucket) -> None:
     """Merges into an existing (symbol, ts) row instead of inserting a duplicate — the same
     bucket can be touched twice: once by the live capture path, once by a REST gap backfill
     that lands trades belonging to a bucket already persisted (or about to be). Recomputes
-    vwap from the summed notional, not from an average-of-vwaps, so the merge is exact."""
+    vwap from the summed notional, not from an average-of-vwaps, so the merge is exact.
+
+    The initial SELECT-then-INSERT isn't atomic across processes: a Railway redeploy
+    briefly runs the old and new instance of the same capture service side by side, and
+    both can race to insert the same (symbol, ts) bucket — confirmed in production
+    2026-08-18, crashed the service on an uncaught IntegrityError. On that specific
+    conflict, fall back to the merge path against whichever row actually landed; any
+    other error still propagates."""
     existing = session.scalars(
         select(AggTradeBucket).where(AggTradeBucket.symbol == bucket.symbol, AggTradeBucket.ts == bucket.ts)
     ).first()
     if existing is None:
         session.add(bucket)
-        session.commit()
-        return
+        try:
+            session.commit()
+            return
+        except IntegrityError:
+            session.rollback()
+            existing = session.scalars(
+                select(AggTradeBucket).where(AggTradeBucket.symbol == bucket.symbol, AggTradeBucket.ts == bucket.ts)
+            ).first()
+            if existing is None:
+                raise
 
     existing.buy_volume += bucket.buy_volume
     existing.sell_volume += bucket.sell_volume
