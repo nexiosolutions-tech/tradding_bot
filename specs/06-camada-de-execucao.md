@@ -30,15 +30,24 @@ com a realidade da exchange.
 Nenhuma mudança na lógica de execução pula etapas dessa tabela.
 
 **Bloqueador de infraestrutura para as duas linhas de mainnet (2026-08-18):** confirmado
-via sondagem direta que `stream.binance.com` e `api.binance.com` devolvem `HTTP 451`
-(bloqueio geográfico) a partir da região atual do projeto no Railway (`us-east4`, EUA) —
-mesma causa raiz já suspeitada para execução de ordens, agora confirmada também para
-market data pública. Isso significa que, na infraestrutura atual, nenhuma das duas linhas
-de mainnet desta tabela é alcançável — o sistema não tem caminho para operar com capital
-real, simbólico ou não, independente de qualquer modelo passar pelo gate de promoção
-(`07-backtesting-e-validacao.md`). Investigação completa (hostnames testados, opções de
-região do Railway) em `changes/2026-08-18-captura-aggtrade-fluxo-ordens.md`. Resolver isso
-é pré-requisito para a linha "capital simbólico" desta tabela, não um item independente.
+via sondagem direta — incluindo handshake WebSocket real, não só HTTP na raiz — que
+`stream.binance.com` e `api.binance.com` rejeitam toda conexão a partir da região atual do
+projeto no Railway (`us-east4`, EUA), mesma causa raiz já suspeitada para execução de
+ordens. Na infraestrutura atual, nenhuma das duas linhas de mainnet desta tabela é
+alcançável — o sistema não tem caminho para operar com capital real, simbólico ou não,
+independente de qualquer modelo passar pelo gate de promoção
+(`07-backtesting-e-validacao.md`).
+
+**Caminho de saída já confirmado, não aplicado**: sondagem nas 13 regiões disponíveis do
+Railway (só EUA/Singapura/Holanda — nenhuma outra jurisdição) mostrou que Singapura
+(`asia-southeast1`) e Holanda (`europe-west4`) passam no teste completo (REST e handshake
+WS real, mensagem de mercado real recebida) — só `us-east4` (e presumivelmente as demais
+regiões dos EUA) está bloqueado. Migrar a execução para uma dessas duas regiões é, em
+princípio, o caminho — mas não é urgente hoje, porque não há modelo que tenha passado pelo
+gate de promoção ainda (nada para executar). Antes de mover execução real, confirmar que a
+região escolhida é compatível com os termos de uso da Binance é decisão do usuário, a
+checar uma vez. Investigação completa em
+`changes/2026-08-18-captura-aggtrade-fluxo-ordens.md`.
 
 ## Estados do sistema (refletidos no dashboard)
 

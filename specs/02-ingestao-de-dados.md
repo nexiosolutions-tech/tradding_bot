@@ -223,6 +223,25 @@ prazo de validade, cálculo sobre dado já persistido não tem — ver
     equivalente — só `Base.metadata.create_all`, que nunca altera tabela existente) e
     já backfilla toda linha antiga como `"testnet"`, o que é exatamente correto (era
     tudo testnet até aqui).
+  - **O bloqueio de captura tem solução sem trocar região (2026-08-18)**: sondagem
+    detalhada (rotas concretas, não só a raiz; handshake WS real, não só GET) em
+    `changes/2026-08-18-captura-aggtrade-fluxo-ordens.md` encontrou que
+    `data-api.binance.vision` — espelho público das mesmas rotas REST de
+    `api.binance.com` (`/api/v3/depth`, `/api/v3/aggTrades`, `/api/v3/klines`), sem
+    chave — responde normalmente **mesmo na região hoje bloqueada**. Captura ao vivo
+    de mainnet real é possível hoje via polling REST contra esse host, sem trocar
+    região, sem proxy — `depth-capture` mapeia direto (já é 1 requisição/minuto,
+    trocar WS por `GET /api/v3/depth` é natural); `aggtrade-capture` reaproveitaria o
+    `fetch_agg_trades` paginado por `fromId` já escrito para o backfill, rodando
+    continuamente em vez de sob demanda. Nenhuma conversão implementada ainda —
+    decisão do usuário quando/se priorizar. Confirmado também: Singapura e Holanda
+    (as duas únicas regiões do Railway fora de jurisdição bloqueada) passam no teste
+    de WS real completo, então quando a **execução** (não só a captura) precisar de
+    mainnet, essas são as opções reais — ver `06-camada-de-execucao.md`.
+  - **Depth não tem arquivo histórico para spot**: confirmado via listagem direta do
+    bucket S3 por trás de `data.binance.vision` — `data/spot/daily/` só tem
+    `aggTrades/`, `klines/`, `trades/`, sem `depth`. O prazo de validade real da
+    captura de order book ao vivo permanece — não há como recuperar retroativamente.
 
 ## Fora de escopo no MVP
 

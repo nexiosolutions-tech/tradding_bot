@@ -258,53 +258,78 @@ Duas ações baratas antes de investigar região/proxy (ambas aplicadas nesta ro
 
 ## Resultado da investigação: sondagem de conectividade + opções de região
 
-**Sondagem** (rodada via serviço Railway descartável, `probe-temp` — deploy único,
-deletado logo depois; ver `scripts/probe_connectivity.py`), a partir da região real
-(`us-east4`, EUA) onde os serviços já rodam:
+**Correção sobre o que cada host `.vision` é** (achado do usuário, não meu — a sondagem
+original tratou os dois iguais e isso estava errado): `data-api.binance.vision` é a **API
+viva** — espelho público das mesmas rotas REST de `api.binance.com` (`/api/v3/depth`,
+`/api/v3/aggTrades`, `/api/v3/klines`), sem chave, sem execução. `data.binance.vision` é o
+**arquivo histórico** (download de klines/trades/aggTrades já fechados). São coisas
+diferentes com implicações diferentes — a sondagem v2/v3 (`scripts/probe_connectivity.py`)
+testou as duas de forma distinta: rotas concretas (não só a raiz) na API viva, e o
+bucket S3 por trás do arquivo (a página humana é renderizada em JS, não tem listing no
+HTML puro).
 
-| Hostname | Resultado | Uso |
-|---|---|---|
-| `stream.binance.com` | `HTTP 451` (bloqueado) | WebSocket de market data mainnet |
-| `api.binance.com` | `HTTP 451` (bloqueado) | REST mainnet (trading + market data) |
-| `data-api.binance.vision` | `HTTP 200` (aberto) | REST de market data mainnet, espelho sem restrição |
-| `data.binance.vision` | `HTTP 200` (aberto) | Arquivos históricos (klines, aggTrades, etc.) para download |
+**Sondagem nas 3 regiões** (3 serviços Railway descartáveis, um por região — `probe-useast`
+em `us-east4` (a região atual), `probe-singapore` em `asia-southeast1`, `probe-netherlands`
+em `europe-west4`, todos deletados logo depois de capturar o resultado):
 
-Confirma o formato exato do bloqueio: é por **domínio**, não por tipo de operação — os
-domínios principais (`.com`) estão bloqueados inteiros (WS e REST, dado e execução), os
-subdomínios `.vision` de market data seguem abertos.
+| Teste | us-east4 (atual) | Singapura | Holanda |
+|---|---|---|---|
+| `stream.binance.com` (GET raiz) | `451` | conecta (404 na rota) | conecta (404 na rota) |
+| `api.binance.com` (GET raiz) | `451` | `200` | `200` |
+| **Handshake WS real** (`wss://stream.binance.com/ws/btcusdt@aggTrade`, lê 1 mensagem) | **FALHOU (451)** | **OK — mensagem real recebida** | **OK — mensagem real recebida** |
+| `data-api.binance.vision` — `/api/v3/depth`, `/api/v3/aggTrades`, `/api/v3/klines` | `200` nas 3, dado real | `200` nas 3, dado real | `200` nas 3, dado real |
+| `data.binance.vision`, bucket `data/spot/daily/` | `aggTrades/`, `klines/`, `trades/` — **sem `depth`** | idêntico (dado global, não geo-restrito) | idêntico |
 
-**Consequência imediata, ainda não executada**: `data.binance.vision` aberto significa que
-dá pra baixar meses de aggTrades reais de mainnet via arquivo histórico, sem depender da
-captura ao vivo nem do bloqueio de WS — isso desarma boa parte do argumento de
-irreversibilidade que colocou a captura ao vivo na posição zero (o dado History não decai
-do mesmo jeito que o WS ao vivo). `data-api.binance.vision` também abre a porta pra
-recalibrar o backfill REST do aggTrade (`fetch_agg_trades`) contra mainnet de verdade, sem
-esperar resolver o bloqueio de WS. Nenhuma das duas coisas foi implementada nesta rodada —
-fica registrado como próximo passo natural, mais barato que qualquer mudança de
-região/proxy.
+O teste de handshake real (não só GET na raiz, que dá 404 num host só-WS mesmo sem
+bloqueio — correção de um probe anterior próprio, viciado) é a evidência mais forte:
+confirma que Singapura e Holanda têm acesso **completo** — REST e WS, os mesmos domínios
+`.com` que hoje bloqueiam `us-east4` — e que `us-east4` é a única das três realmente
+bloqueada.
+
+**O achado maior, que muda a urgência**: `data-api.binance.vision` responde `200` com dado
+real nas rotas concretas **mesmo em `us-east4`, a região bloqueada de hoje**. Isso significa
+que a captura ao vivo de mainnet não depende de resolver o bloqueio geográfico — dá pra
+fazer `depth-capture` via polling em `GET /api/v3/depth` (é literalmente 1 requisição/minuto,
+a mesma cadência que já existe) e `aggtrade-capture` via polling em `/api/v3/aggTrades`
+(reaproveitando o `fetch_agg_trades` paginado por `fromId` já escrito para o backfill, só
+que contínuo em vez de sob demanda) **sem trocar região, sem proxy, sem custo novo, na
+infraestrutura de hoje**. Nenhuma das duas conversões foi implementada nesta rodada — fica
+como decisão do usuário, não execução automática.
+
+**Depth não tem arquivo histórico para spot** (pergunta do usuário, respondida): o bucket
+`data/spot/daily/` só tem `aggTrades`, `klines`, `trades` — **sem `depth`/`bookDepth`**. O
+argumento de irreversibilidade sobre order book continua de pé mesmo se o backfill de
+aggTrade for implementado — não há "arquivo" pra recuperar depth perdido, só captura ao
+vivo daqui pra frente.
 
 **Opções de região do Railway** (`railway api 'query { regions { name country location } }'`):
 todas as 13 regiões disponíveis são EUA (`us-east4-eqdc4a`/`us-east-1`/`us-east4`/
 `us-east4-eqdc16a`/`us-west1`/`us-west2`/`us-west2-aws`/`us-west2-cssv9a`), Singapura
 (`asia-southeast1-eqsg3a`/`asia-southeast1`) ou Holanda
-(`europe-west4-drams3a`/`europe-west4`/`europe-west4-drams11a`) — **nenhuma opção fora
-dessas três jurisdições**. Trocar para outra região dos EUA não muda nada (o bloqueio é
-por país/jurisdição do datacenter, não por região específica dentro dos EUA). Singapura e
-Holanda são as únicas alternativas dentro do próprio Railway, e nenhuma das duas foi
-testada ainda contra o bloqueio.
+(`europe-west4-drams3a`/`europe-west4`/`europe-west4-drams11a`) — nenhuma opção fora dessas
+três jurisdições. Trocar para outra região dos EUA não muda nada (bloqueio é por
+país/jurisdição, não por datacenter específico). Confirmado (tabela acima): Singapura e
+Holanda passam nos dois testes, `us-east4` falha nos dois.
 
-**Síntese que reordenou a fila** (razão do usuário, registrada aqui por completude): `HTTP
-451` num endpoint de market data pública — sem chave, sem ordem, sem risco — indica bloqueio
-de região, não de credencial ou rota específica. Combinado com o bloqueio já conhecido para
-execução de ordens (mesma causa raiz, mesma família de domínio `.com`), a infraestrutura
-atual não tem caminho para operar com capital real — nenhuma das duas linhas de mainnet de
-`06-camada-de-execucao.md` é alcançável. Resolver isso é pré-requisito de o projeto existir
-em produção, não um item que compete por prioridade com o trabalho estatístico dos itens
-seguintes da fila.
+**Ressalva do usuário, registrada por completude**: não presumir qual região passa a
+situação regulatória da Binance por jurisdição muda e é diferente em cada uma — testar em
+vez de deduzir (foi o que a sondagem fez). E hospedar fora dos EUA é escolha normal de
+infraestrutura (o usuário está no Brasil, jurisdição não bloqueada; o `451` é da região do
+Railway, não do usuário) — mas antes de mover **execução real** pra lá, confirmar que a
+hospedagem escolhida é compatível com os termos de uso da Binance é decisão do usuário,
+a checar uma vez, não a cada deploy.
 
-**Nada disso foi executado** — troca de região, proxy, ou VPS dedicado são decisões do
-usuário (custo, superfície de credencial nova, ponto de falha novo). Esta seção é só o
-levantamento pedido.
+**Síntese que reordenou a fila originalmente** (razão do usuário): `HTTP 451` num endpoint
+de market data pública indica bloqueio de região, não de credencial — combinado com o
+bloqueio já conhecido para execução, a infraestrutura atual não tinha caminho pra capital
+real. O achado desta rodada (`data-api.binance.vision` aberto até em `us-east4`) refina
+essa conclusão: o bloqueio de **captura** tem solução hoje, sem mexer em região; o bloqueio
+de **execução** continua de pé e só se resolve com região/proxy — mas isso deixa de ser
+urgente, porque não há modelo promovível ainda (`07-backtesting-e-validacao.md`).
+
+**Nada disso foi executado** — troca de região, proxy, VPS dedicado, ou conversão de
+WS para polling REST são decisões do usuário (custo, superfície nova, esforço de
+implementação). Esta seção é só o levantamento pedido.
 
 ## Incidente durante a sondagem: corrida real em `upsert_agg_trade_bucket` derrubou o serviço
 
