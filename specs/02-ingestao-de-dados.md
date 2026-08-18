@@ -128,22 +128,57 @@ prazo de validade, cálculo sobre dado já persistido não tem — ver
   estava no book (maker) e o vendedor cruzou o spread — ou seja, um trade **iniciado pelo
   vendedor** (aggressor sell). `is_buyer_maker=false` é o inverso (aggressor buy). É este
   campo, não o preço, que decide o lado em `AggTradeAggregator`.
-- **Agregação em bucket de 1 minuto, não trade a trade**: `ingestion/aggtrade_aggregator.py`
+- **Agregação em bucket de 1 segundo, não trade a trade**: `ingestion/aggtrade_aggregator.py`
   consome o stream continuamente e acumula `buy_volume`/`sell_volume`/`buy_count`/
-  `sell_count`/`vwap` por minuto, só emitindo o bucket quando o próximo já começou (mesmo
-  padrão anti-vazamento do `_TimeframeAggregator` de `03-motor-de-features.md` — nunca
-  emite um bucket ainda em formação). Persistir trade a trade explodiria armazenamento sem
-  necessidade (BTCUSDT costuma ter centenas de trades/minuto) e o uso pretendido (order
-  flow imbalance) é uma métrica de janela, não de evento individual — mesma decisão de
-  design que `depth_sampler.py` tomou para order book, adaptada de "amostrar" (o book é um
-  estado instantâneo completo) para "acumular" (um trade é um incremento do período).
+  `sell_count`/`vwap`/`notional` por segundo, só emitindo o bucket quando o próximo já
+  começou (mesmo padrão anti-vazamento do `_TimeframeAggregator` de
+  `03-motor-de-features.md` — nunca emite um bucket ainda em formação). Persistir trade a
+  trade explodiria armazenamento sem necessidade, e o uso pretendido (order flow
+  imbalance) é uma métrica de janela, não de evento individual — mesma decisão de design
+  que `depth_sampler.py` tomou para order book, adaptada de "amostrar" (o book é um estado
+  instantâneo completo) para "acumular" (um trade é um incremento do período).
+  - **Por que 1 segundo e não 1 minuto (como order book)**: bucket size é uma decisão
+    irreversível — dá pra agregar mais grosso depois somando buckets finos (order flow
+    imbalance de 1min/5min vira só um `SUM` sobre estas linhas), nunca mais fino a partir
+    de um bucket já gravado. Custo estimado: BTCUSDT gera a ordem de dezenas de milhares
+    de aggTrades/dia; mesmo a 1 bucket/segundo (~86 400 linhas/dia no pior caso) é
+    volume trivial pro Postgres do Railway. `notional` (não só `vwap` já dividido) é
+    persistido para que um merge de backfill (abaixo) recalcule o vwap exato, não uma
+    média de médias.
 - **Limitação estrutural, não escolha de implementação**: assim como order book, a Binance
   não expõe histórico de aggTrade além de uma janela recente via REST — a captura só
-  existe a partir de quando começa a rodar, sem como preencher o passado retroativamente.
-- **`scripts/run_aggtrade_capture.py`** roda continuamente, persiste 1 bucket/minuto na
-  tabela `agg_trade_buckets`. Ver `03-motor-de-features.md` para o que essa captura
-  habilita (ainda sem feature derivada — é dado sendo acumulado, mesmo estágio em que
-  order book está desde 2026-08-15).
+  existe a partir de quando começa a rodar, sem como preencher o passado retroativamente
+  (com uma exceção parcial: gaps recentes/estreitos são recuperáveis via backfill, ver
+  abaixo).
+- **Detecção de gap por id + backfill via REST (2026-08-18)**: diferente do depth,
+  `agg_trade_id` é um contador monotônico sem furos esperados — `BinanceAggTradeStream`
+  compara cada novo id contra o último visto e emite um `MarketEvent(EventType.GAP,
+  payload={"expected_from_id", "found_id", "missing_count"})` sempre que há um salto.
+  `run_aggtrade_capture.py` reage a esse evento chamando
+  `BinanceRestClient.fetch_agg_trades(symbol, from_id, to_id)` (paginado por `fromId`,
+  rodado via `asyncio.to_thread` — é uma chamada síncrona e não pode bloquear o event
+  loop que mantém o ping/pong do WebSocket vivo) para recuperar os trades perdidos e
+  faz merge nos buckets já persistidos via `upsert_agg_trade_bucket` (soma os campos
+  brutos — `buy_volume`/`sell_volume`/`notional`/contagens — e recalcula o vwap a
+  partir do notional total, não a partir de uma média de vwaps já perdidos). Gaps maiores
+  que `MAX_BACKFILL_TRADES` (50 000, a REST da Binance só serve uma janela recente) são
+  logados e aceitos como buraco conhecido, não perseguidos indefinidamente.
+- **Heartbeat de liveness por tempo (2026-08-18)**: tanto `BinanceAggTradeStream` quanto
+  `BinanceDepthStream` agora espelham o `_maybe_gap_event` que `BinanceKlineStream` já
+  tinha — se nenhuma mensagem chega por mais de `GAP_ALERT_THRESHOLD_SECONDS` (10s) antes
+  de uma (re)conexão, emite `MarketEvent(GAP, payload={"gap_seconds"})` e loga via
+  `logger.error` (bem visível no viewer de logs do Railway). É só sinal, não backfill —
+  para aggTrade, a checagem de id acima já cobre o caso concreto de trade perdido; isto
+  cobre o modo de falha "processo/stream ficou mudo" que um crash puro (coberto pelo
+  `restartPolicyType=ALWAYS` do Railway) não cobre. **Limitação documentada, não
+  resolvida**: sem canal de alerta externo configurado neste projeto (sem Slack/e-mail/
+  pager), o sinal só é visível a quem olhar os logs do Railway ativamente — não há push
+  notification automática hoje.
+- **`scripts/run_aggtrade_capture.py`** roda continuamente, persiste 1 bucket/segundo na
+  tabela `agg_trade_buckets`, faz flush do bucket parcial em formação num `finally` ao
+  encerrar (evita perder até 1s de dado a cada restart/deploy). Ver
+  `03-motor-de-features.md` para o que essa captura habilita (ainda sem feature derivada —
+  é dado sendo acumulado, mesmo estágio em que order book está desde 2026-08-15).
 
 ## Ambientes
 

@@ -186,7 +186,7 @@ a feature ainda não, pelo mesmo motivo: sem histórico acumulado para validar, 
 feature agora seria código sem forma de checar empiricamente se ajuda ou atrapalha.
 
 - **Captura, não features**: `02-ingestao-de-dados.md` descreve a captura
-  (`scripts/run_aggtrade_capture.py`, 1 bucket/minuto de volume comprador/vendedor, tabela
+  (`scripts/run_aggtrade_capture.py`, 1 bucket/segundo de volume comprador/vendedor, tabela
   `agg_trade_buckets`). Esta seção só registra a intenção e evita que a tabela pareça
   órfã — nenhuma feature nova entra em `FEATURE_NAMES` nesta rodada.
 - **Candidata provável, a confirmar quando houver dado**: `order_flow_imbalance_pct` —

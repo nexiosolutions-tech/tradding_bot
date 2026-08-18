@@ -131,3 +131,95 @@ def test_parse_aggtrade_message_decodes_aggressor_side():
 
     assert buy_payload.is_buyer_maker is False
     assert sell_payload.is_buyer_maker is True
+
+
+@pytest.mark.asyncio
+async def test_id_gap_between_consecutive_trades_emits_gap_before_trade_event(monkeypatch):
+    fake_ws = _FakeWebsocket(
+        [
+            _valid_aggtrade_raw(agg_trade_id=10),
+            _valid_aggtrade_raw(agg_trade_id=15),
+        ]
+    )
+
+    def fake_connect(url, **kwargs):
+        return fake_ws
+
+    monkeypatch.setattr(binance_aggtrade_ws.websockets, "connect", fake_connect)
+
+    stream = binance_aggtrade_ws.BinanceAggTradeStream(symbols=["BTCUSDT"], testnet=True)
+    agen = stream.__aiter__()
+
+    first = await asyncio.wait_for(agen.__anext__(), timeout=5)
+    gap = await asyncio.wait_for(agen.__anext__(), timeout=5)
+    second_trade = await asyncio.wait_for(agen.__anext__(), timeout=5)
+    await agen.aclose()
+
+    assert first.event_type == EventType.TRADE
+    assert gap.event_type == EventType.GAP
+    assert gap.payload == {"expected_from_id": 11, "found_id": 15, "missing_count": 4}
+    assert second_trade.event_type == EventType.TRADE
+    assert second_trade.sequence_id == 15
+
+
+@pytest.mark.asyncio
+async def test_no_gap_event_between_consecutive_ids(monkeypatch):
+    fake_ws = _FakeWebsocket(
+        [
+            _valid_aggtrade_raw(agg_trade_id=10),
+            _valid_aggtrade_raw(agg_trade_id=11),
+        ]
+    )
+
+    def fake_connect(url, **kwargs):
+        return fake_ws
+
+    monkeypatch.setattr(binance_aggtrade_ws.websockets, "connect", fake_connect)
+
+    stream = binance_aggtrade_ws.BinanceAggTradeStream(symbols=["BTCUSDT"], testnet=True)
+    agen = stream.__aiter__()
+
+    first = await asyncio.wait_for(agen.__anext__(), timeout=5)
+    second = await asyncio.wait_for(agen.__anext__(), timeout=5)
+    await agen.aclose()
+
+    assert first.event_type == EventType.TRADE
+    assert second.event_type == EventType.TRADE
+
+
+@pytest.mark.asyncio
+async def test_no_gap_event_on_the_very_first_trade(monkeypatch):
+    fake_ws = _FakeWebsocket([_valid_aggtrade_raw(agg_trade_id=1000)])
+
+    def fake_connect(url, **kwargs):
+        return fake_ws
+
+    monkeypatch.setattr(binance_aggtrade_ws.websockets, "connect", fake_connect)
+
+    stream = binance_aggtrade_ws.BinanceAggTradeStream(symbols=["BTCUSDT"], testnet=True)
+    agen = stream.__aiter__()
+    event = await asyncio.wait_for(agen.__anext__(), timeout=5)
+    await agen.aclose()
+
+    assert event.event_type == EventType.TRADE
+
+
+def test_liveness_gap_event_after_reconnect(monkeypatch):
+    stream = binance_aggtrade_ws.BinanceAggTradeStream(symbols=["BTCUSDT"], testnet=True)
+    stream._last_event_local_ts = 1_000.0
+    monkeypatch.setattr(binance_aggtrade_ws.time, "time", lambda: 1_020.0)
+
+    event = stream._maybe_liveness_gap_event()
+
+    assert event is not None
+    assert event.event_type == EventType.GAP
+    assert event.symbol == "*"
+    assert event.payload["gap_seconds"] == 20.0
+
+
+def test_no_liveness_gap_event_below_threshold(monkeypatch):
+    stream = binance_aggtrade_ws.BinanceAggTradeStream(symbols=["BTCUSDT"], testnet=True)
+    stream._last_event_local_ts = 1_000.0
+    monkeypatch.setattr(binance_aggtrade_ws.time, "time", lambda: 1_005.0)
+
+    assert stream._maybe_liveness_gap_event() is None

@@ -81,3 +81,38 @@ def test_symbols_are_tracked_independently():
     assert btc_bucket.buy_volume == 1.0
     assert eth_bucket.symbol == "ETHUSDT"
     assert eth_bucket.buy_volume == 5.0
+
+
+def test_flush_returns_the_in_progress_bucket_without_a_rollover_trade():
+    aggregator = AggTradeAggregator(bucket_interval_ms=60_000)
+    aggregator.add(_trade_event(ts=1_000, quantity=1.0, is_buyer_maker=False))
+    aggregator.add(_trade_event(ts=2_000, quantity=2.0, is_buyer_maker=True))
+
+    bucket = aggregator.flush("BTCUSDT")
+
+    assert bucket is not None
+    assert bucket.buy_volume == 1.0
+    assert bucket.sell_volume == 2.0
+
+
+def test_flush_returns_none_when_nothing_was_accumulated():
+    aggregator = AggTradeAggregator(bucket_interval_ms=60_000)
+    assert aggregator.flush("BTCUSDT") is None
+
+
+def test_flush_clears_state_so_a_later_add_starts_a_fresh_bucket():
+    aggregator = AggTradeAggregator(bucket_interval_ms=60_000)
+    aggregator.add(_trade_event(ts=1_000, quantity=1.0, is_buyer_maker=False))
+    aggregator.flush("BTCUSDT")
+
+    assert aggregator.add(_trade_event(ts=1_500, quantity=5.0, is_buyer_maker=False)) is None
+    bucket = aggregator.flush("BTCUSDT")
+    assert bucket.buy_volume == 5.0
+
+
+def test_bucket_fields_carry_raw_notional_for_exact_merges():
+    aggregator = AggTradeAggregator(bucket_interval_ms=60_000)
+    aggregator.add(_trade_event(ts=1_000, price=100.0, quantity=2.0, is_buyer_maker=False))
+    bucket = aggregator.flush("BTCUSDT")
+
+    assert bucket.notional == 200.0

@@ -7,9 +7,10 @@ from dataclasses import dataclass
 
 import httpx
 
-from tradingbot.ingestion.schema import EventType, KlinePayload, MarketEvent
+from tradingbot.ingestion.schema import AggTradePayload, EventType, KlinePayload, MarketEvent
 
 BINANCE_KLINES_LIMIT = 1000
+BINANCE_AGG_TRADES_LIMIT = 1000
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,18 @@ class Ticker24h:
 
 def _base_url(testnet: bool) -> str:
     return "https://testnet.binance.vision" if testnet else "https://api.binance.com"
+
+
+def _aggtrade_row_to_payload(row: dict) -> AggTradePayload:
+    return AggTradePayload(
+        agg_trade_id=int(row["a"]),
+        price=float(row["p"]),
+        quantity=float(row["q"]),
+        first_trade_id=int(row["f"]),
+        last_trade_id=int(row["l"]),
+        trade_time=int(row["T"]),
+        is_buyer_maker=bool(row["m"]),
+    )
 
 
 def _kline_row_to_payload(row: list, interval: str) -> KlinePayload:
@@ -101,6 +114,63 @@ class BinanceRestClient:
                 cursor = last_open_time + 1
 
                 if len(rows) < BINANCE_KLINES_LIMIT:
+                    break
+
+        events.sort(key=lambda e: e.sequence_id)
+        return events
+
+    def fetch_agg_trades(
+        self,
+        symbol: str,
+        from_id: int,
+        to_id: int | None = None,
+        limit: int = BINANCE_AGG_TRADES_LIMIT,
+    ) -> list[MarketEvent]:
+        """Backfills aggTrades starting at `from_id` (inclusive), paginated at the exchange
+        limit, stopping once ids pass `to_id` (inclusive) if given. Used by
+        run_aggtrade_capture.py to fill a gap detected by BinanceAggTradeStream's id
+        sequence check — `to_id` is normally `found_id - 1`, the last id missing before the
+        stream's next live message. Synchronous/blocking like fetch_klines; callers on an
+        asyncio event loop must run this via asyncio.to_thread."""
+        events: list[MarketEvent] = []
+        cursor = from_id
+        with httpx.Client(timeout=self._timeout) as client:
+            while True:
+                resp = client.get(
+                    f"{self._base_url}/api/v3/aggTrades",
+                    params={"symbol": symbol, "fromId": cursor, "limit": limit},
+                )
+                resp.raise_for_status()
+                rows = resp.json()
+                if not rows:
+                    break
+
+                reached_to_id = False
+                for row in rows:
+                    agg_trade_id = int(row["a"])
+                    if to_id is not None and agg_trade_id > to_id:
+                        reached_to_id = True
+                        break
+                    payload = _aggtrade_row_to_payload(row)
+                    events.append(
+                        MarketEvent(
+                            symbol=symbol,
+                            event_type=EventType.TRADE,
+                            exchange_ts=payload.trade_time,
+                            local_ts=int(time.time() * 1000),
+                            sequence_id=payload.agg_trade_id,
+                            payload=payload.as_dict(),
+                        )
+                    )
+                if reached_to_id:
+                    break
+
+                last_id = int(rows[-1]["a"])
+                if last_id < cursor:
+                    break
+                cursor = last_id + 1
+
+                if (to_id is not None and cursor > to_id) or len(rows) < limit:
                     break
 
         events.sort(key=lambda e: e.sequence_id)

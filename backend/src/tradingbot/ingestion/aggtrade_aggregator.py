@@ -19,7 +19,13 @@ from dataclasses import dataclass
 
 from tradingbot.ingestion.schema import MarketEvent
 
-BUCKET_INTERVAL_MS = 60_000
+# 1 segundo, não 1 minuto — bucket size é uma decisão irreversível (dá pra agregar mais
+# grosso depois somando buckets finos, nunca mais fino a partir de um bucket já gravado).
+# BTCUSDT aggTrade gera a ordem de dezenas de milhares de mensagens/dia; mesmo a 1
+# bucket/segundo isso é ~86 400 linhas/dia (~35 bytes de payload numérico cada) — trivial
+# pro Postgres do Railway, e preserva resolução suficiente pra qualquer reagregação futura
+# (order flow imbalance em janela de 1min, 5min, etc. vira só um SUM sobre estas linhas).
+BUCKET_INTERVAL_MS = 1_000
 
 
 @dataclass(frozen=True)
@@ -31,6 +37,7 @@ class AggTradeBucketFields:
     buy_count: int
     sell_count: int
     vwap: float
+    notional: float
 
 
 class _BucketAccumulator:
@@ -64,6 +71,7 @@ class _BucketAccumulator:
             buy_count=self.buy_count,
             sell_count=self.sell_count,
             vwap=vwap,
+            notional=self._notional,
         )
 
 
@@ -91,3 +99,11 @@ class AggTradeAggregator:
 
         acc.add(event.payload["price"], event.payload["quantity"], event.payload["is_buyer_maker"])
         return completed
+
+    def flush(self, symbol: str) -> AggTradeBucketFields | None:
+        """Force-closes the in-progress bucket for `symbol` regardless of whether the next
+        bucket has started — the live stream never calls this on its own (there's always a
+        "next" trade eventually), but graceful shutdown and REST backfill batches both have
+        a definite last event with nothing after it to trigger the normal rollover."""
+        acc = self._current.pop(symbol, None)
+        return acc.finalize() if acc is not None else None

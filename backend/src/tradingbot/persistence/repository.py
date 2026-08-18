@@ -127,6 +127,24 @@ def record_order_book_snapshot(session: Session, snapshot: OrderBookSnapshot) ->
     session.commit()
 
 
-def record_agg_trade_bucket(session: Session, bucket: AggTradeBucket) -> None:
-    session.add(bucket)
+def upsert_agg_trade_bucket(session: Session, bucket: AggTradeBucket) -> None:
+    """Merges into an existing (symbol, ts) row instead of inserting a duplicate — the same
+    bucket can be touched twice: once by the live capture path, once by a REST gap backfill
+    that lands trades belonging to a bucket already persisted (or about to be). Recomputes
+    vwap from the summed notional, not from an average-of-vwaps, so the merge is exact."""
+    existing = session.scalars(
+        select(AggTradeBucket).where(AggTradeBucket.symbol == bucket.symbol, AggTradeBucket.ts == bucket.ts)
+    ).first()
+    if existing is None:
+        session.add(bucket)
+        session.commit()
+        return
+
+    existing.buy_volume += bucket.buy_volume
+    existing.sell_volume += bucket.sell_volume
+    existing.buy_count += bucket.buy_count
+    existing.sell_count += bucket.sell_count
+    existing.notional += bucket.notional
+    total_volume = existing.buy_volume + existing.sell_volume
+    existing.vwap = existing.notional / total_volume if total_volume else 0.0
     session.commit()

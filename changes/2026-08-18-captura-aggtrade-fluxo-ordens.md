@@ -1,7 +1,8 @@
 # Change Proposal — 2026-08-18 — Captura de aggTrade (fluxo de ordens / volume por lado)
 
-**Status:** aplicada (código); provisionamento do serviço contínuo no Railway pendente de
-confirmação do usuário (infra nova, ver seção própria abaixo).
+**Status:** aplicada (código, revisado numa segunda rodada com 4 checagens pedidas pelo
+usuário antes de provisionar). Push e provisionamento do serviço contínuo no Railway
+aprovados pelo usuário ("push: sim, sem ressalva" / "provisionar: sim") — ver seção final.
 
 ## Evidência (origem)
 
@@ -34,13 +35,14 @@ disponíveis (perpetual futures teria funding/OI/liquidação; não é o caso aq
   malformada é descartada, não derruba o stream), normalização em `MarketEvent` antes de
   qualquer coisa downstream ver o payload bruto da Binance (spec 02, requisito 3).
 - **`AggTradeAggregator`** (`ingestion/aggtrade_aggregator.py`) — acumula trades num bucket
-  de 1 minuto (`buy_volume`, `sell_volume`, `buy_count`, `sell_count`, `vwap`), decidindo o
-  lado agressor pelo campo `is_buyer_maker` da Binance (`true` = comprador era maker =
-  trade iniciado pelo vendedor). Só emite o bucket quando o próximo já começou — mesmo
-  padrão anti-vazamento do `_TimeframeAggregator` de `03-motor-de-features.md`. Diferente
-  de `DepthSampler` (que amostra, descartando o resto): aqui cada trade é um incremento do
-  período, não um estado instantâneo completo, então acumula em vez de descartar.
-- **`agg_trade_buckets`** (`persistence/models.py` + `repository.py`) — 1 linha/minuto,
+  de 1 segundo (`buy_volume`, `sell_volume`, `buy_count`, `sell_count`, `vwap`, `notional`),
+  decidindo o lado agressor pelo campo `is_buyer_maker` da Binance (`true` = comprador era
+  maker = trade iniciado pelo vendedor). Só emite o bucket quando o próximo já começou —
+  mesmo padrão anti-vazamento do `_TimeframeAggregator` de `03-motor-de-features.md`.
+  Diferente de `DepthSampler` (que amostra, descartando o resto): aqui cada trade é um
+  incremento do período, não um estado instantâneo completo, então acumula em vez de
+  descartar.
+- **`agg_trade_buckets`** (`persistence/models.py` + `repository.py`) — 1 linha/segundo,
   mesmo padrão de `order_book_snapshots`.
 - **`scripts/run_aggtrade_capture.py`** — mirror de `run_depth_capture.py`: roda
   continuamente contra testnet, sem `BINANCE_API_KEY`/`SECRET` (dado de mercado é
@@ -74,6 +76,57 @@ ordem DSR-vs-PBO). Investigação direta do código encontrou:
   prioridades (ver mensagem do usuário em 2026-08-18 para a ordem completa) — não é ação
   desta rodada, só o achado que a fundamenta.
 
+## Segunda rodada: 4 checagens pedidas antes de provisionar
+
+Antes de aprovar o provisionamento do serviço contínuo, o usuário pediu 4 checagens
+explícitas — não por suspeita de que faltassem (é mirror do `depth-capture`), mas porque
+são caras de corrigir retroativamente, o mesmo critério de reversibilidade que guiou a
+decisão de priorizar esta captura. As 4:
+
+1. **Granularidade do bucket** — mudada de 1 minuto para **1 segundo**
+   (`BUCKET_INTERVAL_MS`). Bucket size é irreversível (dá pra agregar mais grosso depois
+   somando linhas, nunca mais fino a partir de uma linha já gravada) — errar para o lado
+   granular. `AggTradeBucketFields` ganhou `notional` (preço×quantidade somado, não só o
+   vwap já dividido) precisamente para permitir merges exatos depois (ver item 2). Custo:
+   ~86 400 linhas/dia no pior caso para BTCUSDT — trivial para o Postgres do Railway,
+   ordem de grandeza consistente com o que `order_book_snapshots` já roda sem problema
+   (essa já opera há 3 dias em produção sem qualquer sinal de custo/degradação).
+2. **Detecção de gap + backfill via REST** — `agg_trade_id` é monotônico, então
+   `BinanceAggTradeStream` compara cada novo id contra o último visto e emite
+   `MarketEvent(GAP, {"expected_from_id", "found_id", "missing_count"})` a cada salto.
+   `fetch_agg_trades` (novo em `binance_rest.py`) pagina via `fromId` até um `to_id`
+   (é o único dos 3 métodos REST do arquivo com um teto de correção pelo lado de cima,
+   diferente de `fetch_klines`/`fetch_exchange_info`/`fetch_24h_tickers`, mas necessário
+   aqui porque sabemos exatamente onde o buraco termina). `run_aggtrade_capture.py` roda
+   esse backfill via `asyncio.to_thread` (a REST é síncrona/bloqueante; chamá-la direto no
+   event loop travaria o ping/pong do WebSocket ao vivo, arriscando um novo disconnect
+   *causado pelo próprio backfill*) e faz merge nos buckets já persistidos via
+   `upsert_agg_trade_bucket` (soma os campos brutos, recalcula vwap a partir do notional
+   total — não a partir de uma média de vwaps já perdidos, que não reproduziria o valor
+   exato). Gaps maiores que `MAX_BACKFILL_TRADES` (50 000 — a REST da Binance só serve uma
+   janela recente) são logados e aceitos como buraco conhecido, não perseguidos
+   indefinidamente — dado nunca capturável de volta não é o mesmo problema que dado
+   temporariamente furado.
+3. **Timestamp da exchange** — já herdado desde a primeira rodada
+   (`exchange_ts=payload.trade_time`, o campo `T` da Binance), confirmado por leitura
+   direta do código, não por suposição.
+4. **Liveness** — nem `depth-capture` nem `aggtrade-capture` tinham nenhum sinal de "o
+   coletor morreu calado" (só o kline stream tinha `_maybe_gap_event`, tempo desde a
+   última mensagem, checado a cada reconexão). Espelhado agora nos dois
+   (`BinanceDepthStream`/`BinanceAggTradeStream`), logado via `logger.error` quando
+   nenhuma mensagem chega por mais de 10s antes de uma reconexão. **Limitação honesta,
+   não resolvida**: este projeto não tem canal de alerta externo configurado (sem Slack/
+   e-mail/pager) — o sinal fica visível em log, não como notificação ativa. Cobre um modo
+   de falha diferente do que o `restartPolicyType=ALWAYS` do Railway já cobre (esse
+   recupera de crash; o heartbeat cobre "processo vivo mas silencioso").
+
+Efeito colateral do item 2 que também vale registrar: `AggTradeAggregator` ganhou
+`flush(symbol)`, que fecha o bucket em formação sem esperar o próximo trade — usado tanto
+pelo backfill (que processa um lote finito, sem "próximo trade" natural para disparar o
+rollover) quanto por `run_aggtrade_capture.py` num `finally` ao encerrar o processo, o que
+incidentalmente também corrige uma perda pré-existente (até 1s de dado perdido a cada
+restart/deploy, que antes desta mudança era descartado silenciosamente).
+
 ## Classificação de risco da mudança
 
 - [ ] Não é mudança de parâmetro de risco/execução — é ingestão de dado de mercado
@@ -82,30 +135,32 @@ ordem DSR-vs-PBO). Investigação direta do código encontrou:
 
 ## Validação
 
-- Suíte completa do backend: 285 testes, todos passando (12 novos: 6 de
-  `test_binance_aggtrade_ws.py`, 6 de `test_aggtrade_aggregator.py`).
-- Testes cobrem: parse de mensagem válida/malformada/campo faltante, extração de símbolo,
-  decodificação do lado agressor (`is_buyer_maker`), acumulação dentro do bucket sem
-  emissão prematura, emissão só no rollover com totais corretos, VWAP ponderado por
-  notional, `ts` do bucket é o início do intervalo (não o timestamp do último trade),
-  símbolos rastreados independentemente.
+- Suíte completa do backend: 302 testes, todos passando (29 novos no total das duas
+  rodadas: parsing/aggressor-side/malformado, acumulação e rollover do bucket, VWAP e
+  notional exatos, `flush()`, gap por id (com e sem buraco, e no primeiro trade da
+  conexão), heartbeat de liveness (com e sem gap), paginação de `fetch_agg_trades`
+  (página cheia, página curta, corte em `to_id`, resposta vazia), `upsert_agg_trade_bucket`
+  (insert novo, merge em bucket existente com soma exata dos campos brutos, isolamento por
+  symbol/ts diferentes).
 - Sem validação empírica contra dado real ainda — mesma situação em que order book estava
   em 2026-08-15: é captura sem histórico prévio possível, nada para validar contra até
   acumular.
 
-## Pendente de confirmação explícita do usuário
+## Pendente
 
-- **Push para o repositório remoto** — código local, não commitado ainda no momento em que
-  este arquivo foi escrito.
 - **Provisionamento do serviço contínuo no Railway** (`aggtrade-capture`, mirror de
   `depth-capture`: builder Railpack, `rootDirectory=backend`,
   `startCommand=python scripts/run_aggtrade_capture.py`, variáveis `SYMBOL`/
-  `DATABASE_URL`) — criação de infraestrutura nova com custo/consumo contínuo, fora do
-  escopo de "implementar e commitar localmente" sem confirmação explícita.
+  `DATABASE_URL`) — próximo passo desta mesma sessão, já aprovado pelo usuário.
 
 ## Decisão
 
 - Aprovado por: Brian (usuário, dono do projeto) — "Confirmado — pode começar pelo
-  aggTrade" / "Toca o aggTrade" (2026-08-18).
-- Justificativa: reversibilidade de captura de dado como eixo de priorização, item
-  confirmado como independente e sem dependência das demais mudanças da ordem revisada.
+  aggTrade" / "Toca o aggTrade" (primeira rodada); "push: sim, sem ressalva" / "provisionar
+  o aggtrade-capture: sim" condicionado às 4 checagens acima (segunda rodada), ambas em
+  2026-08-18.
+- Justificativa: reversibilidade de captura de dado como eixo de priorização; as 4
+  checagens da segunda rodada são caras de corrigir depois de o serviço já estar
+  acumulando dado com o desenho errado (bucket grosso demais, gap silencioso, coletor
+  morrendo sem sinal) — mesmo raciocínio de custo-de-correção-retroativa que já guiava a
+  decisão original.

@@ -5,6 +5,13 @@ into MarketEvent before anything downstream sees it), for the partial-book-depth
 instead of klines. The partial-book-depth message carries no exchange timestamp — only
 `lastUpdateId`, a monotonic counter — so exchange_ts is approximated from local receipt
 time and sequence_id uses lastUpdateId instead.
+
+Unlike aggTrade, a skipped `lastUpdateId` is not backfillable/actionable the way a missing
+trade id is: each partial-book-depth message is a complete, self-consistent top-N snapshot,
+not a diff applied on top of a running book — missing some intermediate snapshots between
+one 1-second update and the next loses nothing beyond that intermediate state, which this
+capture (1 sample/minute, see depth_sampler.py) already discards by design. Only the
+time-based liveness signal (2026-08-18, mirrored from BinanceKlineStream) applies here.
 """
 
 from __future__ import annotations
@@ -26,6 +33,7 @@ TESTNET_WS_BASE = "wss://stream.testnet.binance.vision/stream"
 
 INITIAL_BACKOFF_SECONDS = 1.0
 MAX_BACKOFF_SECONDS = 30.0
+GAP_ALERT_THRESHOLD_SECONDS = 10.0
 
 
 def _ws_base(testnet: bool) -> str:
@@ -52,7 +60,11 @@ def _parse_depth_message(msg: dict) -> tuple[str, DepthPayload] | None:
 
 class BinanceDepthStream:
     """Async iterator of MarketEvent (DEPTH) for a set of symbols. Reconnects on
-    failure; the caller drives the loop with `async for event in stream:`."""
+    failure; the caller drives the loop with `async for event in stream:`.
+
+    Also emits EventType.GAP (symbol="*", `payload["gap_seconds"]`) when no message
+    arrived for GAP_ALERT_THRESHOLD_SECONDS before a (re)connect — a collector that goes
+    quiet should not do so unnoticed (2026-08-18)."""
 
     def __init__(
         self,
@@ -65,6 +77,24 @@ class BinanceDepthStream:
         self.levels = levels
         self.update_speed_ms = update_speed_ms
         self.testnet = testnet
+        self._last_event_local_ts: float | None = None
+
+    def _maybe_gap_event(self) -> MarketEvent | None:
+        now = time.time()
+        if self._last_event_local_ts is not None:
+            gap = now - self._last_event_local_ts
+            if gap > GAP_ALERT_THRESHOLD_SECONDS:
+                self._last_event_local_ts = now
+                return MarketEvent(
+                    symbol="*",
+                    event_type=EventType.GAP,
+                    exchange_ts=int(now * 1000),
+                    local_ts=int(now * 1000),
+                    sequence_id=int(now * 1000),
+                    payload={"gap_seconds": gap},
+                )
+        self._last_event_local_ts = now
+        return None
 
     async def __aiter__(self):
         url = f"{_ws_base(self.testnet)}?streams={'/'.join(_stream_names(self.symbols, self.levels, self.update_speed_ms))}"
@@ -76,9 +106,15 @@ class BinanceDepthStream:
                     logger.info("connected to %s", url)
                     backoff = INITIAL_BACKOFF_SECONDS
 
+                    gap_event = self._maybe_gap_event()
+                    if gap_event is not None:
+                        logger.error("depth stream was silent for %.1fs before reconnecting", gap_event.payload["gap_seconds"])
+                        yield gap_event
+
                     async for raw in ws:
                         try:
                             msg = json.loads(raw)
+                            self._last_event_local_ts = time.time()
                             parsed = _parse_depth_message(msg)
                         except Exception:
                             logger.warning("failed to parse depth ws message, skipping: %.200r", raw)

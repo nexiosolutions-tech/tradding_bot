@@ -4,7 +4,7 @@ against Postgres once the Railway addon is provisioned (spec 10) — only DATABA
 
 from __future__ import annotations
 
-from sqlalchemy import JSON, BigInteger, Boolean, DateTime, Float, Integer, String
+from sqlalchemy import JSON, BigInteger, Boolean, DateTime, Float, Integer, String, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -94,13 +94,23 @@ class OrderBookSnapshot(Base):
 
 
 class AggTradeBucket(Base):
-    """1 bucket/minuto de volume comprador/vendedor (aggressor side) — spec 02/03,
+    """1 bucket/segundo de volume comprador/vendedor (aggressor side) — spec 02/03,
     2026-08-18. Sem histórico retroativo possível (Binance não expõe aggTrade passado além
     da janela recente da REST API), então esta tabela é o único jeito de acumular dado de
     fluxo de ordens para uma futura feature de order flow imbalance — mesma lógica de
-    order_book_snapshots acima, aplicada a trades em vez de book depth."""
+    order_book_snapshots acima, aplicada a trades em vez de book depth.
+
+    `notional` (preço × quantidade somado, não só o vwap já dividido) é guardado explicitamente
+    para que um backfill de gap (`ingestion/binance_aggtrade_ws.py`) possa fazer merge exato
+    num bucket já persistido pelo caminho ao vivo — recalcular vwap a partir de um vwap já
+    perdido não reproduz o valor exato; a partir do notional bruto, reproduz.
+
+    Unique em (symbol, ts): o mesmo bucket pode ser tocado duas vezes (caminho ao vivo e
+    backfill de gap) — upsert_agg_trade_bucket (repository.py) depende dessa constraint
+    para decidir merge vs. insert."""
 
     __tablename__ = "agg_trade_buckets"
+    __table_args__ = (UniqueConstraint("symbol", "ts", name="uq_agg_trade_buckets_symbol_ts"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     symbol: Mapped[str] = mapped_column(String, index=True)
@@ -110,6 +120,7 @@ class AggTradeBucket(Base):
     buy_count: Mapped[int] = mapped_column(Integer)
     sell_count: Mapped[int] = mapped_column(Integer)
     vwap: Mapped[float] = mapped_column(Float)
+    notional: Mapped[float] = mapped_column(Float)
 
 
 class EngineEvent(Base):

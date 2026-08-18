@@ -2,6 +2,7 @@ from sqlalchemy import select
 
 from tradingbot.persistence.db import get_session_factory
 from tradingbot.persistence.models import (
+    AggTradeBucket,
     CircuitBreakerEvent,
     EngineEvent,
     OrderBookSnapshot,
@@ -18,6 +19,7 @@ from tradingbot.persistence.repository import (
     record_trade,
     recent_engine_events,
     trades_in_range,
+    upsert_agg_trade_bucket,
     upsert_order,
 )
 
@@ -133,3 +135,54 @@ def test_order_book_snapshot_round_trip(tmp_path):
     assert stored.symbol == "BTCUSDT"
     assert stored.ts == 1_000
     assert stored.raw_bids == [[100.0, 1.5]]
+
+
+def _agg_bucket(symbol="BTCUSDT", ts=1_000, buy_volume=1.0, sell_volume=2.0, buy_count=1, sell_count=1, notional=300.0):
+    total = buy_volume + sell_volume
+    return AggTradeBucket(
+        symbol=symbol,
+        ts=ts,
+        buy_volume=buy_volume,
+        sell_volume=sell_volume,
+        buy_count=buy_count,
+        sell_count=sell_count,
+        vwap=notional / total if total else 0.0,
+        notional=notional,
+    )
+
+
+def test_upsert_agg_trade_bucket_inserts_when_new(tmp_path):
+    session = _session(tmp_path)
+    upsert_agg_trade_bucket(session, _agg_bucket())
+
+    stored = session.scalars(select(AggTradeBucket)).one()
+    assert stored.symbol == "BTCUSDT"
+    assert stored.ts == 1_000
+    assert stored.buy_volume == 1.0
+    assert stored.sell_volume == 2.0
+
+
+def test_upsert_agg_trade_bucket_merges_into_existing_symbol_and_ts(tmp_path):
+    session = _session(tmp_path)
+    upsert_agg_trade_bucket(session, _agg_bucket(buy_volume=1.0, sell_volume=2.0, notional=300.0))
+    upsert_agg_trade_bucket(session, _agg_bucket(buy_volume=0.5, sell_volume=0.0, buy_count=1, sell_count=0, notional=51.0))
+
+    rows = session.scalars(select(AggTradeBucket)).all()
+    assert len(rows) == 1
+    merged = rows[0]
+    assert merged.buy_volume == 1.5
+    assert merged.sell_volume == 2.0
+    assert merged.buy_count == 2
+    assert merged.sell_count == 1
+    assert merged.notional == 351.0
+    assert merged.vwap == 351.0 / 3.5
+
+
+def test_upsert_agg_trade_bucket_keeps_different_ts_or_symbol_separate(tmp_path):
+    session = _session(tmp_path)
+    upsert_agg_trade_bucket(session, _agg_bucket(symbol="BTCUSDT", ts=1_000))
+    upsert_agg_trade_bucket(session, _agg_bucket(symbol="BTCUSDT", ts=2_000))
+    upsert_agg_trade_bucket(session, _agg_bucket(symbol="ETHUSDT", ts=1_000))
+
+    rows = session.scalars(select(AggTradeBucket)).all()
+    assert len(rows) == 3
