@@ -34,7 +34,10 @@ def main() -> None:
     session = session_factory()
 
     path, report = write_daily_report(session, report_date)
-    print(f"Relatório salvo em {path} ({report.num_trades} trades, win rate {report.win_rate:.0%})")
+    print(
+        f"Relatório salvo em {path} ({report.num_trades} trades, "
+        f"win rate líquido {report.net_win_rate:.0%}, P&L líquido {report.net_total_pnl:.2f})"
+    )
 
     proposals = draft_change_proposals(report_date, report)
     if not proposals:

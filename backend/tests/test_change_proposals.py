@@ -16,6 +16,8 @@ def test_no_proposals_when_all_findings_are_preliminary(tmp_path, monkeypatch):
         num_trades=3,
         win_rate=0.0,
         total_pnl=-10.0,
+        net_win_rate=0.0,
+        net_total_pnl=-10.5,
         circuit_breaker_triggered=False,
         findings=[Finding(title="Win rate baixo no horário 05h UTC", observation="x", sample_size=3, preliminary=True)],
     )
@@ -41,6 +43,8 @@ def test_proposal_written_for_finding_with_enough_sample(tmp_path, monkeypatch):
         num_trades=10,
         win_rate=0.1,
         total_pnl=-40.0,
+        net_win_rate=0.0,
+        net_total_pnl=-42.0,
         circuit_breaker_triggered=False,
         findings=[finding],
     )
@@ -61,7 +65,16 @@ def test_proposal_never_marks_itself_approved(tmp_path, monkeypatch):
     monkeypatch.setattr(change_proposals_module, "CHANGES_DIR", tmp_path / "changes")
 
     finding = Finding(title="Win rate baixo no horário 04h UTC", observation="x", sample_size=15, preliminary=False)
-    report = DailyReport(REPORT_DATE, 15, 0.1, -10.0, False, [finding])
+    report = DailyReport(
+        report_date=REPORT_DATE,
+        num_trades=15,
+        win_rate=0.1,
+        total_pnl=-10.0,
+        net_win_rate=0.0,
+        net_total_pnl=-11.5,
+        circuit_breaker_triggered=False,
+        findings=[finding],
+    )
 
     written = draft_change_proposals(REPORT_DATE, report)
     content = written[0].read_text()

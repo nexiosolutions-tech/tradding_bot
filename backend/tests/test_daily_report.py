@@ -1,5 +1,6 @@
 from datetime import date, datetime, timezone
 
+from tradingbot.backtesting.costs import net_trade_pnl
 from tradingbot.learning_engine.daily_report import build_daily_report, render_markdown, write_daily_report
 from tradingbot.persistence.db import get_session_factory
 from tradingbot.persistence.repository import record_engine_event, record_trade
@@ -96,6 +97,59 @@ def test_circuit_breaker_detected_within_day_bounds(tmp_path):
 
     report = build_daily_report(session, REPORT_DATE)
     assert report.circuit_breaker_triggered is True
+
+
+def test_net_pnl_can_flip_a_marginal_raw_win_into_a_net_loss():
+    """The fee-blind-spot finding this project already made by hand, now built into the
+    automated report: testnet's real fees_paid is always 0.0 (execution/orchestrator.py),
+    so a tiny raw win can look profitable while a real round-trip fee (~0.2% notional)
+    would have eaten it entirely."""
+
+    class _Trade:
+        entry_price = 100.0
+        exit_price = 100.15
+        size = 1.0
+        pnl = 0.15
+
+    assert _Trade.pnl > 0  # raw: a win
+    assert net_trade_pnl(_Trade()) < 0  # net of realistic fees: actually a loss
+
+
+def test_daily_report_net_win_rate_is_lower_than_raw_when_wins_are_marginal(tmp_path):
+    session = _session(tmp_path)
+    # 5 trades that are tiny raw wins (+0.10) -- each one is a net loss once fees apply.
+    for i in range(5):
+        _add_trade(session, hour=8, pnl=0.10, i=i)
+
+    report = build_daily_report(session, REPORT_DATE)
+
+    assert report.win_rate == 1.0  # raw: every trade "won"
+    assert report.net_win_rate == 0.0  # net: every trade actually lost money
+    assert report.net_total_pnl < report.total_pnl
+
+
+def test_render_markdown_shows_both_raw_and_net_figures(tmp_path):
+    session = _session(tmp_path)
+    _add_trade(session, hour=8, pnl=0.10, i=0)
+    report = build_daily_report(session, REPORT_DATE)
+    markdown = render_markdown(report)
+
+    assert "bruto, sem taxa" in markdown
+    assert "líquido, com taxa real" in markdown
+
+
+def test_underperforming_hour_finding_uses_net_pnl_not_raw(tmp_path):
+    """A hour whose raw win rate clears the 35% threshold but whose net (fee-corrected)
+    win rate doesn't must still be flagged -- otherwise the automated report would miss
+    exactly the kind of marginal-win pattern this fix exists to catch."""
+    session = _session(tmp_path)
+    for i in range(10):
+        _add_trade(session, hour=6, pnl=0.10, i=i)  # 100% raw win rate, 0% net
+
+    report = build_daily_report(session, REPORT_DATE)
+
+    titles = [f.title for f in report.findings]
+    assert any("06h" in t for t in titles)
 
 
 def test_write_daily_report_creates_markdown_file(tmp_path, monkeypatch):

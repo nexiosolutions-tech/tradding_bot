@@ -11,6 +11,7 @@ from datetime import date as date_type
 from datetime import datetime, timezone
 from pathlib import Path
 
+from tradingbot.backtesting.costs import net_trade_pnl
 from tradingbot.backtesting.metrics import win_rate
 from tradingbot.persistence.repository import recent_engine_events, trades_in_range
 
@@ -19,6 +20,22 @@ LEARNINGS_DIR = Path(__file__).resolve().parents[4] / "learnings"
 
 MIN_SAMPLE_SIZE_FOR_CONFIDENT_FINDING = 10
 HOUR_UNDERPERFORMANCE_WIN_RATE_THRESHOLD = 0.35
+
+# 2026-08-17: TradeRecord.pnl/fees_paid never reflect a real trading fee — fees_paid is
+# hardcoded 0.0 at trade-close time (execution/orchestrator.py) because testnet genuinely
+# charges none, but that means raw pnl systematically overstates what the same trade would
+# net on mainnet (confirmed earlier this project: every real testnet fill reports
+# commission "0.00000000"). Every finding/number in this report is corrected via
+# backtesting.costs.net_trade_pnl (spec 07's own FeeModel) — this module's own docstring
+# already promises "a day of live trading and a backtest run are judged by the same
+# yardstick," which raw pnl broke silently until now.
+
+
+def _net_win_rate(trades: list) -> float:
+    if not trades:
+        return 0.0
+    wins = sum(1 for t in trades if net_trade_pnl(t) > 0)
+    return wins / len(trades)
 
 
 @dataclass(frozen=True)
@@ -35,6 +52,8 @@ class DailyReport:
     num_trades: int
     win_rate: float
     total_pnl: float
+    net_win_rate: float
+    net_total_pnl: float
     circuit_breaker_triggered: bool
     findings: list[Finding] = field(default_factory=list)
 
@@ -53,15 +72,15 @@ def _find_underperforming_hours(trades: list) -> list[Finding]:
 
     findings = []
     for hour, hour_trades in sorted(by_hour.items()):
-        wr = win_rate(hour_trades)
+        wr = _net_win_rate(hour_trades)
         if wr < HOUR_UNDERPERFORMANCE_WIN_RATE_THRESHOLD:
             sample = len(hour_trades)
             findings.append(
                 Finding(
-                    title=f"Win rate baixo no horário {hour:02d}h UTC",
+                    title=f"Win rate líquido baixo no horário {hour:02d}h UTC",
                     observation=(
-                        f"win rate de {wr:.0%} em {sample} trade(s), "
-                        f"P&L total {sum(t.pnl for t in hour_trades):.2f}"
+                        f"win rate líquido (com taxa) de {wr:.0%} em {sample} trade(s), "
+                        f"P&L líquido total {sum(net_trade_pnl(t) for t in hour_trades):.2f}"
                     ),
                     sample_size=sample,
                     preliminary=sample < MIN_SAMPLE_SIZE_FOR_CONFIDENT_FINDING,
@@ -83,6 +102,8 @@ def build_daily_report(session, report_date: date_type) -> DailyReport:
         num_trades=len(trades),
         win_rate=win_rate(trades),
         total_pnl=sum(t.pnl for t in trades),
+        net_win_rate=_net_win_rate(trades),
+        net_total_pnl=sum(net_trade_pnl(t) for t in trades),
         circuit_breaker_triggered=circuit_breaker_triggered,
         findings=_find_underperforming_hours(trades) if trades else [],
     )
@@ -94,8 +115,17 @@ def render_markdown(report: DailyReport) -> str:
         "",
         "## Resumo do dia",
         f"- Trades executados: {report.num_trades}",
-        f"- Win rate do dia: {report.win_rate:.0%}" if report.num_trades else "- Win rate do dia: N/A (sem trades)",
-        f"- P&L do dia: {report.total_pnl:.2f}",
+        f"- Win rate do dia (bruto, sem taxa): {report.win_rate:.0%}"
+        if report.num_trades
+        else "- Win rate do dia: N/A (sem trades)",
+        f"- P&L do dia (bruto, sem taxa): {report.total_pnl:.2f}",
+        f"- **Win rate do dia (líquido, com taxa real): {report.net_win_rate:.0%}**"
+        if report.num_trades
+        else "- Win rate líquido: N/A (sem trades)",
+        f"- **P&L do dia (líquido, com taxa real): {report.net_total_pnl:.2f}**",
+        "  - testnet não cobra taxa real — o bruto acima superestima sistematicamente o "
+        "resultado; o líquido usa o mesmo FeeModel do backtest (spec 07) e é o número que "
+        "importa para qualquer decisão.",
         f"- Estado do circuit breaker: {'acionado' if report.circuit_breaker_triggered else 'não acionado'}",
         "",
         "## Achados",
