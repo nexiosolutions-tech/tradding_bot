@@ -13,13 +13,27 @@ from pathlib import Path
 
 from tradingbot.backtesting.costs import net_trade_pnl
 from tradingbot.backtesting.metrics import win_rate
-from tradingbot.persistence.repository import recent_engine_events, trades_in_range
+from tradingbot.persistence.repository import (
+    count_agg_trade_buckets_in_range,
+    count_order_book_snapshots_in_range,
+    recent_engine_events,
+    trades_in_range,
+)
 
 # backend/src/tradingbot/learning_engine/daily_report.py -> parents[4] is the repo root.
 LEARNINGS_DIR = Path(__file__).resolve().parents[4] / "learnings"
 
 MIN_SAMPLE_SIZE_FOR_CONFIDENT_FINDING = 10
 HOUR_UNDERPERFORMANCE_WIN_RATE_THRESHOLD = 0.35
+
+# Expected floors, not expected values — deliberately well below the theoretical max (1440
+# for a 1/minute sampler, up to 86400 for a 1/second bucket that only emits when a trade
+# actually occurred) so a brief redeploy/restart doesn't false-alarm. The failure mode this
+# guards against (2026-08-18) is a collector dying silently for most/all of the day — that
+# produces a near-zero count, not a slightly-low one — so a generous floor still catches it
+# without crying wolf on routine restarts.
+ORDER_BOOK_SNAPSHOT_DAILY_FLOOR = 500
+AGG_TRADE_BUCKET_DAILY_FLOOR = 5_000
 
 # 2026-08-17: TradeRecord.pnl/fees_paid never reflect a real trading fee — fees_paid is
 # hardcoded 0.0 at trade-close time (execution/orchestrator.py) because testnet genuinely
@@ -47,6 +61,17 @@ class Finding:
 
 
 @dataclass(frozen=True)
+class CaptureFreshness:
+    label: str
+    count_last_24h: int
+    expected_floor: int
+
+    @property
+    def ok(self) -> bool:
+        return self.count_last_24h >= self.expected_floor
+
+
+@dataclass(frozen=True)
 class DailyReport:
     report_date: date_type
     num_trades: int
@@ -56,6 +81,7 @@ class DailyReport:
     net_total_pnl: float
     circuit_breaker_triggered: bool
     findings: list[Finding] = field(default_factory=list)
+    capture_freshness: list[CaptureFreshness] = field(default_factory=list)
 
 
 def _day_bounds_ms(report_date: date_type) -> tuple[int, int]:
@@ -89,6 +115,21 @@ def _find_underperforming_hours(trades: list) -> list[Finding]:
     return findings
 
 
+def _capture_freshness(session, start_ms: int, end_ms: int) -> list[CaptureFreshness]:
+    return [
+        CaptureFreshness(
+            label="order_book_snapshots",
+            count_last_24h=count_order_book_snapshots_in_range(session, start_ms, end_ms),
+            expected_floor=ORDER_BOOK_SNAPSHOT_DAILY_FLOOR,
+        ),
+        CaptureFreshness(
+            label="agg_trade_buckets",
+            count_last_24h=count_agg_trade_buckets_in_range(session, start_ms, end_ms),
+            expected_floor=AGG_TRADE_BUCKET_DAILY_FLOOR,
+        ),
+    ]
+
+
 def build_daily_report(session, report_date: date_type) -> DailyReport:
     start_ms, end_ms = _day_bounds_ms(report_date)
     trades = trades_in_range(session, start_ms, end_ms)
@@ -106,6 +147,7 @@ def build_daily_report(session, report_date: date_type) -> DailyReport:
         net_total_pnl=sum(net_trade_pnl(t) for t in trades),
         circuit_breaker_triggered=circuit_breaker_triggered,
         findings=_find_underperforming_hours(trades) if trades else [],
+        capture_freshness=_capture_freshness(session, start_ms, end_ms),
     )
 
 
@@ -141,6 +183,20 @@ def render_markdown(report: DailyReport) -> str:
             f"- Amostra: {finding.sample_size} trade(s)"
             + (" (preliminar — amostra pequena)" if finding.preliminary else ""),
         ]
+
+    lines += [
+        "",
+        "## Frescor da captura de dados (order book / fluxo de ordens)",
+        "Contagem de linhas gravadas nas últimas 24h por tabela de captura contínua — um "
+        "coletor que parou de gravar não gera nenhum erro visível por conta própria, só "
+        "silêncio; esta seção existe pra transformar esse silêncio num sinal (2026-08-18).",
+    ]
+    for freshness in report.capture_freshness:
+        status = "OK" if freshness.ok else "**ALERTA — abaixo do piso esperado**"
+        lines.append(
+            f"- `{freshness.label}`: {freshness.count_last_24h} linha(s) nas últimas 24h "
+            f"(piso esperado: {freshness.expected_floor}) — {status}"
+        )
 
     lines += [
         "",

@@ -183,9 +183,26 @@ prazo de validade, cálculo sobre dado já persistido não tem — ver
 ## Ambientes
 
 - **Testnet:** `wss://testnet.binance.vision` — usado em todo desenvolvimento e
-  validação antes de qualquer mudança ir para produção (ver `CLAUDE.md`).
-- **Produção:** `wss://stream.binance.com` — só após aprovação explícita,
-  conforme `06-camada-de-execucao.md`.
+  validação da **camada de execução** antes de qualquer mudança ir para produção
+  (ver `CLAUDE.md`, regra 1). Continua sendo o ambiente da `tradding_bot`
+  (orquestrador/ordens) hoje.
+- **Produção:** `wss://stream.binance.com` — só após aprovação explícita para a
+  camada de execução, conforme `06-camada-de-execucao.md`.
+- **Captura de order book/fluxo de ordens roda em mainnet, não testnet
+  (2026-08-18)**: `depth-capture`/`aggtrade-capture` são serviços somente-leitura de
+  market data pública — sem `BINANCE_API_KEY`/`SECRET`, nunca importam
+  `tradingbot.execution` — logo a regra 1 do `CLAUDE.md` (testnet primeiro) não se
+  aplica a eles; ela existe para a camada de execução, que continua em testnet. O
+  motivo de rodar em mainnet: o livro de ofertas e o fluxo de trades do testnet são
+  rasos, movidos por poucos outros bots em teste, não por participantes reais — não
+  carregam o sinal de microestrutura que essa captura existe para acumular.
+  **Consequência**: `order_book_snapshots` capturado entre 2026-08-15 (início da
+  captura) e 2026-08-18 (esta mudança) é testnet, não usável para calibração de
+  slippage/microestrutura (ver `03-motor-de-features.md`, seção de order book, e
+  `changes/2026-08-18-captura-aggtrade-fluxo-ordens.md`) — as linhas não foram
+  apagadas (decisão de manter vs. descartar fica para quando alguém for de fato
+  consumir esse dado), mas qualquer uso futuro precisa filtrar por `ts` a partir do
+  deploy desta mudança.
 
 ## Fora de escopo no MVP
 

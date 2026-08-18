@@ -165,3 +165,87 @@ def test_write_daily_report_creates_markdown_file(tmp_path, monkeypatch):
     assert path.name == "2026-07-30.md"
     assert report.num_trades == 1
     assert "# Learnings — 2026-07-30" in path.read_text()
+
+
+def test_capture_freshness_ok_when_counts_above_floor(tmp_path):
+    import tradingbot.learning_engine.daily_report as daily_report_module
+    from tradingbot.persistence.models import AggTradeBucket, OrderBookSnapshot
+    from tradingbot.persistence.repository import record_order_book_snapshot, upsert_agg_trade_bucket
+
+    session = _session(tmp_path)
+    for i in range(daily_report_module.ORDER_BOOK_SNAPSHOT_DAILY_FLOOR + 10):
+        record_order_book_snapshot(
+            session,
+            OrderBookSnapshot(
+                symbol="BTCUSDT",
+                ts=_ts_at_hour(1) + i,
+                best_bid=100.0,
+                best_ask=100.02,
+                spread_pct=0.0002,
+                bid_depth_top20=1.0,
+                ask_depth_top20=1.0,
+                imbalance=0.0,
+                raw_bids=[],
+                raw_asks=[],
+            ),
+        )
+    for i in range(daily_report_module.AGG_TRADE_BUCKET_DAILY_FLOOR + 10):
+        upsert_agg_trade_bucket(
+            session,
+            AggTradeBucket(
+                symbol="BTCUSDT",
+                ts=_ts_at_hour(1) + i,
+                buy_volume=1.0,
+                sell_volume=1.0,
+                buy_count=1,
+                sell_count=1,
+                vwap=100.0,
+                notional=200.0,
+            ),
+        )
+
+    report = build_daily_report(session, REPORT_DATE)
+
+    assert all(f.ok for f in report.capture_freshness)
+    markdown = render_markdown(report)
+    assert "order_book_snapshots" in markdown
+    assert "agg_trade_buckets" in markdown
+    assert "ALERTA" not in markdown
+
+
+def test_capture_freshness_alerts_when_below_floor(tmp_path):
+    session = _session(tmp_path)
+
+    report = build_daily_report(session, REPORT_DATE)
+
+    assert all(not f.ok for f in report.capture_freshness)
+    markdown = render_markdown(report)
+    assert markdown.count("ALERTA") == len(report.capture_freshness)
+
+
+def test_capture_freshness_only_counts_rows_within_the_report_day(tmp_path):
+    from tradingbot.persistence.models import OrderBookSnapshot
+    from tradingbot.persistence.repository import record_order_book_snapshot
+
+    session = _session(tmp_path)
+    # One day before the report window -- must not count toward this day's freshness.
+    record_order_book_snapshot(
+        session,
+        OrderBookSnapshot(
+            symbol="BTCUSDT",
+            ts=_ts_at_hour(0) - 24 * 60 * 60 * 1000,
+            best_bid=100.0,
+            best_ask=100.02,
+            spread_pct=0.0002,
+            bid_depth_top20=1.0,
+            ask_depth_top20=1.0,
+            imbalance=0.0,
+            raw_bids=[],
+            raw_asks=[],
+        ),
+    )
+
+    report = build_daily_report(session, REPORT_DATE)
+
+    order_book_freshness = next(f for f in report.capture_freshness if f.label == "order_book_snapshots")
+    assert order_book_freshness.count_last_24h == 0

@@ -39,6 +39,14 @@ def main() -> None:
         f"win rate líquido {report.net_win_rate:.0%}, P&L líquido {report.net_total_pnl:.2f})"
     )
 
+    for freshness in report.capture_freshness:
+        if not freshness.ok:
+            print(
+                f"ALERTA: captura '{freshness.label}' gravou só {freshness.count_last_24h} "
+                f"linha(s) nas últimas 24h (piso esperado: {freshness.expected_floor}) — "
+                "coletor possivelmente parado ou capturando o símbolo errado."
+            )
+
     proposals = draft_change_proposals(report_date, report)
     if not proposals:
         print("Nenhuma proposta de mudança gerada hoje.")

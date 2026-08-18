@@ -3,6 +3,14 @@ book snapshot per minute into order_book_snapshots. Read-only market data: no
 BINANCE_API_KEY/SECRET needed, never imports tradingbot.execution — same isolation the
 learning loop already follows (specs/09).
 
+Mainnet, not testnet (2026-08-18): this is public market data, not an order-placing
+client — there's no execution/capital risk here, so CLAUDE.md's "testnet primeiro" rule
+(which governs the execution layer) doesn't apply. Testnet's book is thin and moved by a
+handful of other bots in test, not real participants — it doesn't carry the microstructure
+signal this capture exists to accumulate. See
+changes/2026-08-18-captura-aggtrade-fluxo-ordens.md for the full reasoning and the known
+gap this leaves in the 2026-08-15..2026-08-18 window (captured on testnet, not usable).
+
 Required environment variables:
     SYMBOL          (default BTCUSDT)
     DATABASE_URL    (default: local sqlite under results/)
@@ -27,9 +35,9 @@ async def main() -> None:
     symbol = os.environ.get("SYMBOL", "BTCUSDT")
     session_factory = get_session_factory(os.environ.get("DATABASE_URL"))
     sampler = DepthSampler()
-    stream = BinanceDepthStream(symbols=[symbol], testnet=True)
+    stream = BinanceDepthStream(symbols=[symbol], testnet=False)
 
-    print(f"Capturando order book de {symbol} (testnet), 1 amostra/minuto...")
+    print(f"Capturando order book de {symbol} (mainnet), 1 amostra/minuto...")
     async for event in stream:
         sampled = sampler.sample(event)
         if sampled is None:

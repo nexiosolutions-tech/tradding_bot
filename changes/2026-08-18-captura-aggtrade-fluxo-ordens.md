@@ -1,8 +1,9 @@
 # Change Proposal — 2026-08-18 — Captura de aggTrade (fluxo de ordens / volume por lado)
 
-**Status:** aplicada (código, revisado numa segunda rodada com 4 checagens pedidas pelo
-usuário antes de provisionar). Push e provisionamento do serviço contínuo no Railway
-aprovados pelo usuário ("push: sim, sem ressalva" / "provisionar: sim") — ver seção final.
+**Status:** aplicada (código + serviço em produção). Três rodadas: (1) implementação
+inicial, (2) 4 checagens pré-provisionamento (granularidade, gap/backfill, timestamp,
+liveness), (3) correção de ambiente (testnet → mainnet para captura de dado) + frescor
+real no relatório diário. Ver seções cronológicas abaixo.
 
 ## Evidência (origem)
 
@@ -135,16 +136,17 @@ restart/deploy, que antes desta mudança era descartado silenciosamente).
 
 ## Validação
 
-- Suíte completa do backend: 302 testes, todos passando (29 novos no total das duas
+- Suíte completa do backend: 307 testes, todos passando (34 novos no total das três
   rodadas: parsing/aggressor-side/malformado, acumulação e rollover do bucket, VWAP e
   notional exatos, `flush()`, gap por id (com e sem buraco, e no primeiro trade da
   conexão), heartbeat de liveness (com e sem gap), paginação de `fetch_agg_trades`
   (página cheia, página curta, corte em `to_id`, resposta vazia), `upsert_agg_trade_bucket`
   (insert novo, merge em bucket existente com soma exata dos campos brutos, isolamento por
-  symbol/ts diferentes).
-- Sem validação empírica contra dado real ainda — mesma situação em que order book estava
-  em 2026-08-15: é captura sem histórico prévio possível, nada para validar contra até
-  acumular.
+  symbol/ts diferentes), contagem de linhas por range (`count_order_book_snapshots_in_range`/
+  `count_agg_trade_buckets_in_range`), frescor OK/ALERTA no relatório diário e isolamento
+  por janela de 24h.
+- Sem validação empírica contra dado real de mainnet ainda — captura acabou de trocar de
+  ambiente, sem histórico prévio nesse regime pra validar contra até acumular.
 
 ## Incidente durante o provisionamento: build quebrado por Python 3.13 sem pin
 
@@ -177,19 +179,71 @@ deployment mais recente falhou, ele efetivamente builda de novo (confirmado aqui
 `startCommand` num deployment que já teve sucesso) continua válida — são mecânicas
 diferentes dependendo do estado anterior do deployment.
 
+## Terceira rodada: testnet mascarava o próprio dado que a captura existe pra pegar
+
+O usuário identificou que os dois serviços de captura (`depth-capture` desde 2026-08-15,
+`aggtrade-capture` desde esta mesma sessão) estavam rodando contra `testnet.binance.vision`
+— herdado por padrão do resto do projeto sem questionar. Argumento: livro de ofertas e
+fluxo agressor do testnet são movidos por um punhado de outros bots em teste, não por
+participantes reais — não carregam sinal de microestrutura nenhum, é ruído sintético
+gravado segundo a segundo. Paralelo direto com o achado da correção de taxa de
+2026-08-16 (`fees_paid=0` no testnet mascarando lucratividade real): mesmo modo de falha —
+testnet parecendo dado real e não sendo — só que ali era corrigível retroativamente com uma
+constante (`FeeModel`), e aqui não é: dado de microestrutura capturado errado não se
+reconstrói.
+
+**Por que isso não fere a regra 1 do `CLAUDE.md`** ("testnet primeiro, sempre"): essa regra
+governa a camada de execução (`06-camada-de-execucao.md`) — mudança que pode gerar ordem
+real. `depth-capture`/`aggtrade-capture` são streams públicos de market data, sem
+`BINANCE_API_KEY`/`SECRET`, sem nenhum caminho de código que chegue a
+`tradingbot.execution` — não têm capital em risco, então não são a "mudança na camada de
+execução" que a regra 1 protege. Ambiente de execução (`tradding_bot`, continua testnet) e
+ambiente de dado (as duas capturas, agora mainnet) são independentes por design — a exceção
+não é ad-hoc, decorre de a captura ser estruturalmente incapaz de originar uma ordem.
+
+- **Fix**: `testnet=True` → `testnet=False` em `run_depth_capture.py` e
+  `run_aggtrade_capture.py` (stream WS e, no caso do aggTrade, também o `BinanceRestClient`
+  do backfill — precisa ser mainnet também, já que os ids de trade de testnet e mainnet são
+  sequências completamente diferentes; backfillar um gap mainnet contra a REST de testnet
+  devolveria dado sem relação nenhuma com o buraco real).
+- **Consequência aceita, não corrigida retroativamente**: `order_book_snapshots` capturado
+  entre 2026-08-15 e o deploy desta correção é testnet — não apagado (decisão de
+  descartar vs. manter como referência fica para quando alguém for de fato consumir o
+  dado), mas documentado como não-usável em `specs/02`/`specs/03`. Isso derruba a premissa
+  original do item 7 da fila ("calibrar slippage contra o order book já capturado") só
+  parcialmente: o item continua válido, só que sobre dado que começa a existir a partir de
+  agora, não do que já foi acumulado.
+- **Sem consequência equivalente para `agg_trade_buckets`**: o serviço só entrou em
+  produção nesta mesma sessão, antes de qualquer linha real ter sido persistida em
+  produção — não há janela testnet para descartar.
+
+## Frescor da captura como sinal de liveness real
+
+A limitação já documentada na segunda rodada ("só log, sem alerta externo") foi fechada
+sem provisionar nada novo: `run_daily_learning.py` já roda diariamente
+(`learning-daily-cron`) — ganhou uma asserção de frescor (`daily_report.py`) que conta
+linhas gravadas em `order_book_snapshots`/`agg_trade_buckets` nas últimas 24h contra um
+piso conservador (`ORDER_BOOK_SNAPSHOT_DAILY_FLOOR=500`, `AGG_TRADE_BUCKET_DAILY_FLOOR=5000`
+— bem abaixo do teórico de cada captura, pra não falso-positivar num redeploy breve, mas
+alto o suficiente pra pegar um coletor parado a maior parte do dia). Sempre renderizado no
+relatório (`## Frescor da captura de dados`), não só quando há alerta, e também impresso no
+console/log do cron quando abaixo do piso. Ver `specs/09-aprendizado-continuo.md`.
+
 ## Pendente
 
-- **Provisionamento do serviço contínuo no Railway** (`aggtrade-capture`, mirror de
-  `depth-capture`: builder Railpack, `rootDirectory=backend`,
-  `startCommand=python scripts/run_aggtrade_capture.py`, variáveis `SYMBOL`/
-  `DATABASE_URL`) — próximo passo desta mesma sessão, já aprovado pelo usuário.
+- Nada pendente de infraestrutura — `aggtrade-capture` provisionado e rodando em produção
+  (mainnet), `depth-capture` corrigido para mainnet e redeployado. Decisão em aberto, não
+  bloqueante: o que fazer com a janela `order_book_snapshots` de 2026-08-15..2026-08-18
+  (testnet) — manter como referência histórica filtrável por `ts` ou apagar. Fica para
+  quando alguém for de fato consumir esse dado (item 7 da fila de prioridades).
 
 ## Decisão
 
 - Aprovado por: Brian (usuário, dono do projeto) — "Confirmado — pode começar pelo
   aggTrade" / "Toca o aggTrade" (primeira rodada); "push: sim, sem ressalva" / "provisionar
-  o aggtrade-capture: sim" condicionado às 4 checagens acima (segunda rodada), ambas em
-  2026-08-18.
+  o aggtrade-capture: sim" condicionado às 4 checagens (segunda rodada); "Isso jumpa a
+  fila" — mainnet para as duas capturas + frescor real no relatório diário (terceira
+  rodada). Todas em 2026-08-18.
 - Justificativa: reversibilidade de captura de dado como eixo de priorização; as 4
   checagens da segunda rodada são caras de corrigir depois de o serviço já estar
   acumulando dado com o desenho errado (bucket grosso demais, gap silencioso, coletor

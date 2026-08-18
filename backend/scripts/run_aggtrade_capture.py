@@ -7,6 +7,12 @@ Reacts to two kinds of gap the stream can emit: an id-sequence gap (exact, actio
 backfilled via REST fromId) and a time-based liveness gap (informational only, logged by
 the stream itself, nothing to backfill without a resumed id to anchor to).
 
+Mainnet, not testnet (2026-08-18): this is public market data, no order-placing client —
+no execution/capital risk, so CLAUDE.md's "testnet primeiro" rule (execution layer) doesn't
+apply. Testnet's order flow is a handful of other bots in test, not real participants —
+aggressor-side volume there carries no predictive signal, it's synthetic noise. See
+changes/2026-08-18-captura-aggtrade-fluxo-ordens.md.
+
 Required environment variables:
     SYMBOL          (default BTCUSDT)
     DATABASE_URL    (default: local sqlite under results/)
@@ -92,11 +98,11 @@ async def _backfill_gap(
 async def main() -> None:
     symbol = os.environ.get("SYMBOL", "BTCUSDT")
     session_factory = get_session_factory(os.environ.get("DATABASE_URL"))
-    rest_client = BinanceRestClient(testnet=True)
+    rest_client = BinanceRestClient(testnet=False)
     aggregator = AggTradeAggregator()
-    stream = BinanceAggTradeStream(symbols=[symbol], testnet=True)
+    stream = BinanceAggTradeStream(symbols=[symbol], testnet=False)
 
-    print(f"Capturando fluxo de ordens (aggTrade) de {symbol} (testnet), 1 bucket/segundo...")
+    print(f"Capturando fluxo de ordens (aggTrade) de {symbol} (mainnet), 1 bucket/segundo...")
     try:
         async for event in stream:
             if event.event_type == EventType.GAP:

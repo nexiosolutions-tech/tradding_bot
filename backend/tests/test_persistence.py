@@ -11,6 +11,8 @@ from tradingbot.persistence.models import (
 )
 from tradingbot.persistence.repository import (
     acknowledge_circuit_breaker,
+    count_agg_trade_buckets_in_range,
+    count_order_book_snapshots_in_range,
     get_order,
     latest_unacknowledged_circuit_breaker,
     record_circuit_breaker_event,
@@ -186,3 +188,33 @@ def test_upsert_agg_trade_bucket_keeps_different_ts_or_symbol_separate(tmp_path)
 
     rows = session.scalars(select(AggTradeBucket)).all()
     assert len(rows) == 3
+
+
+def test_count_order_book_snapshots_in_range(tmp_path):
+    session = _session(tmp_path)
+    for ts in (900, 1_000, 1_500, 2_100):
+        record_order_book_snapshot(
+            session,
+            OrderBookSnapshot(
+                symbol="BTCUSDT",
+                ts=ts,
+                best_bid=100.0,
+                best_ask=100.02,
+                spread_pct=0.0002,
+                bid_depth_top20=1.0,
+                ask_depth_top20=1.0,
+                imbalance=0.0,
+                raw_bids=[],
+                raw_asks=[],
+            ),
+        )
+
+    assert count_order_book_snapshots_in_range(session, 1_000, 2_000) == 2
+
+
+def test_count_agg_trade_buckets_in_range(tmp_path):
+    session = _session(tmp_path)
+    for ts in (900, 1_000, 1_500, 2_100):
+        upsert_agg_trade_bucket(session, _agg_bucket(ts=ts))
+
+    assert count_agg_trade_buckets_in_range(session, 1_000, 2_000) == 2

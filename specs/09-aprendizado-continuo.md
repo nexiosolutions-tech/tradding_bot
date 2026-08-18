@@ -234,3 +234,19 @@ de operação real acumulados.
 Ver `changes/2026-08-01-loop-agentico-aprendizado-continuo.md` para a decisão
 que motivou a reescrita da spec, e o commit desta mesma data para a
 implementação v1.
+
+### Frescor da captura de dados como sinal de liveness (2026-08-18)
+
+`scripts/run_depth_capture.py`/`run_aggtrade_capture.py` são serviços contínuos separados
+(`02-ingestao-de-dados.md`) sem healthcheck HTTP nem canal de alerta externo — o modo de
+falha característico de um coletor é morrer calado, sem gerar nenhum erro visível por
+conta própria. `run_daily_learning.py` já roda todo dia (`learning-daily-cron`); em vez de
+provisionar um mecanismo de alerta novo, ele ganhou uma asserção de frescor: conta linhas
+gravadas em `order_book_snapshots`/`agg_trade_buckets` nas últimas 24h e compara contra um
+piso conservador (`daily_report.py::ORDER_BOOK_SNAPSHOT_DAILY_FLOOR`/
+`AGG_TRADE_BUCKET_DAILY_FLOOR`) — bem abaixo do teórico (1440/dia e até 86400/dia
+respectivamente) para não disparar falso positivo num redeploy/restart breve, mas alto o
+suficiente para pegar um coletor parado a maior parte do dia. Sempre renderizado no
+relatório (`## Frescor da captura de dados`), não só quando há alerta, e também impresso no
+console/log do próprio cron quando abaixo do piso — visível sem precisar abrir o PR do dia.
+Ver `changes/2026-08-18-captura-aggtrade-fluxo-ordens.md`.

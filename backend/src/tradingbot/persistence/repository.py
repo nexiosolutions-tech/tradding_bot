@@ -4,7 +4,7 @@ dataclass-like records defined in models.py.
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from tradingbot.persistence.models import (
@@ -125,6 +125,20 @@ def recent_engine_events(session: Session, limit: int = 50) -> list[EngineEvent]
 def record_order_book_snapshot(session: Session, snapshot: OrderBookSnapshot) -> None:
     session.add(snapshot)
     session.commit()
+
+
+def count_order_book_snapshots_in_range(session: Session, start_ts: int, end_ts: int) -> int:
+    stmt = select(func.count()).select_from(OrderBookSnapshot).where(
+        OrderBookSnapshot.ts >= start_ts, OrderBookSnapshot.ts <= end_ts
+    )
+    return session.scalar(stmt) or 0
+
+
+def count_agg_trade_buckets_in_range(session: Session, start_ts: int, end_ts: int) -> int:
+    stmt = select(func.count()).select_from(AggTradeBucket).where(
+        AggTradeBucket.ts >= start_ts, AggTradeBucket.ts <= end_ts
+    )
+    return session.scalar(stmt) or 0
 
 
 def upsert_agg_trade_bucket(session: Session, bucket: AggTradeBucket) -> None:

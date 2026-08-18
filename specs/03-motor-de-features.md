@@ -178,6 +178,12 @@ transformação do mesmo preço de fechamento.
   (a definir — provavelmente algumas semanas), desenhar e validar a
   feature contra um backtest real, seguindo o mesmo processo das rodadas
   anteriores (`evaluate_config`, ablação controlada).
+- **Correção de ambiente (2026-08-18)**: a captura rodou em testnet de 2026-08-15 a
+  2026-08-18 — livro raso, movido por poucos bots em teste, sem o sinal de
+  microestrutura real que a feature (e a calibração de custo/slippage de
+  `backtesting/costs.py`, item futuro) dependem. Trocada para mainnet nesta mesma
+  data (`02-ingestao-de-dados.md`) — qualquer uso desse histórico precisa filtrar
+  `ts` a partir do deploy da correção, a janela testnet não serve.
 
 ### Fluxo de ordens / volume por lado (captura iniciada em 2026-08-18, sem features ainda)
 
