@@ -146,6 +146,37 @@ restart/deploy, que antes desta mudança era descartado silenciosamente).
   em 2026-08-15: é captura sem histórico prévio possível, nada para validar contra até
   acumular.
 
+## Incidente durante o provisionamento: build quebrado por Python 3.13 sem pin
+
+Ao provisionar `aggtrade-capture` no Railway (serviço novo, sem cache de build
+reaproveitável), o primeiro deploy falhou — não por causa de `rootDirectory`/config (essa
+parte funcionou, o Railpack detectou corretamente `backend/` na segunda tentativa) mas por
+`psycopg2-binary==2.9.9` falhar ao compilar contra Python 3.13 (`_PyInterpreterState_Get`,
+removida da API pública do CPython 3.13 — o pacote não tem wheel pré-compilada para essa
+versão e cai para build de fonte, que quebra). O builder Railpack usa `mise` e, sem pin
+explícito, instala o Python mais recente disponível — este projeto nunca fixou uma versão.
+
+**Isso não é exclusivo do `aggtrade-capture`** — é um risco latente para todo serviço
+Python do projeto (`tradding_bot`, `depth-capture`, `learning-daily-cron`). Eles só não
+sentiram ainda porque reaproveitam cache de builds anteriores, feitos antes do Railpack
+apontar para 3.13 por padrão; qualquer rebuild 100% frio deles (mudança de dependência,
+cache do Railway invalidado/expirado) bateria no mesmo erro — incluindo `tradding_bot`, que
+tem capital real em jogo.
+
+**Fix**: `backend/.python-version` (novo arquivo, conteúdo `3.12`) — mesma versão que já
+roda localmente (`.venv` em 3.12.3). Aplica-se a todos os 4 serviços com
+`rootDirectory=backend` (mesmo arquivo compartilhado), fechando o risco latente nos outros
+três de brinde, não só no novo.
+
+**Nota sobre a mecânica de deploy do Railway** (achado técnico, reforça a lição já
+registrada em `changes/2026-08-18-monorepo-root-learnings-changes.md`): `redeploy` **não**
+sempre reusa a build anterior sem re-executar o pipeline — quando chamado num serviço cujo
+deployment mais recente falhou, ele efetivamente builda de novo (confirmado aqui: usou o
+`rootDirectory` corrigido via `update-service` na tentativa seguinte, gerando um
+`snapshotId` novo). A ressalva já documentada (redeploy não reaplica mudança de
+`startCommand` num deployment que já teve sucesso) continua válida — são mecânicas
+diferentes dependendo do estado anterior do deployment.
+
 ## Pendente
 
 - **Provisionamento do serviço contínuo no Railway** (`aggtrade-capture`, mirror de

@@ -3,8 +3,18 @@
 ## Stack
 
 ### Backend / dados / ML
-- **Python** (versão a fixar no ambiente de desenvolvimento) para ingestão,
-  features, modelo e execução.
+- **Python 3.12** para ingestão, features, modelo e execução — fixado em
+  `backend/.python-version` (2026-08-18). Antes disso não havia pin explícito;
+  o builder Railpack do Railway usa `mise` e por padrão instala o Python mais
+  recente disponível, que hoje é 3.13 — `psycopg2-binary==2.9.9` não tem wheel
+  pré-compilado para 3.13 e cai para build de fonte, que falha (`utils.c`
+  referencia `_PyInterpreterState_Get`, removido da API pública do CPython
+  3.13). Achado ao provisionar `aggtrade-capture` (primeiro build 100% frio,
+  sem cache de build reaproveitável) — os demais serviços Python no Railway
+  (`tradding_bot`, `depth-capture`, `learning-daily-cron`) só não tinham
+  sentido isso ainda por reaproveitarem cache de builds anteriores mais
+  antigos; o risco era real e latente para os três. Ver
+  `changes/2026-08-18-captura-aggtrade-fluxo-ordens.md`.
 - **`python-binance`** e/ou **`ccxt`** para integração com a Binance (REST +
   WebSocket). `ccxt` mantém a porta aberta para múltiplas exchanges no futuro
   sem custo de reescrita.
