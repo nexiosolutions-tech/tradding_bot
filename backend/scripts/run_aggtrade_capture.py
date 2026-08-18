@@ -7,11 +7,14 @@ Reacts to two kinds of gap the stream can emit: an id-sequence gap (exact, actio
 backfilled via REST fromId) and a time-based liveness gap (informational only, logged by
 the stream itself, nothing to backfill without a resumed id to anchor to).
 
-Mainnet, not testnet (2026-08-18): this is public market data, no order-placing client —
-no execution/capital risk, so CLAUDE.md's "testnet primeiro" rule (execution layer) doesn't
-apply. Testnet's order flow is a handful of other bots in test, not real participants —
-aggressor-side volume there carries no predictive signal, it's synthetic noise. See
-changes/2026-08-18-captura-aggtrade-fluxo-ordens.md.
+Testnet, not mainnet — reverted same-day (2026-08-18): mainnet is the right target in
+principle (public market data, no execution/capital risk, testnet's order flow is a
+handful of other bots in test and carries no predictive signal — see
+changes/2026-08-18-captura-aggtrade-fluxo-ordens.md), but Binance mainnet rejects every
+connection from this Railway project's region with HTTP 451 (geoblock — same family of
+issue already known for order execution, now confirmed for market-data WS too). Back on
+testnet until that's resolved (different Railway region, or a proxy) — capturing something
+low-signal beats capturing nothing.
 
 Required environment variables:
     SYMBOL          (default BTCUSDT)
@@ -98,11 +101,14 @@ async def _backfill_gap(
 async def main() -> None:
     symbol = os.environ.get("SYMBOL", "BTCUSDT")
     session_factory = get_session_factory(os.environ.get("DATABASE_URL"))
-    rest_client = BinanceRestClient(testnet=False)
+    rest_client = BinanceRestClient(testnet=True)
     aggregator = AggTradeAggregator()
-    stream = BinanceAggTradeStream(symbols=[symbol], testnet=False)
+    stream = BinanceAggTradeStream(symbols=[symbol], testnet=True)
 
-    print(f"Capturando fluxo de ordens (aggTrade) de {symbol} (mainnet), 1 bucket/segundo...")
+    print(
+        f"Capturando fluxo de ordens (aggTrade) de {symbol} (testnet — mainnet bloqueado "
+        "geograficamente pelo Railway, ver changes/), 1 bucket/segundo..."
+    )
     try:
         async for event in stream:
             if event.event_type == EventType.GAP:
