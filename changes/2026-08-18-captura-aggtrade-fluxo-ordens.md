@@ -230,6 +230,32 @@ alto o suficiente pra pegar um coletor parado a maior parte do dia). Sempre rend
 relatório (`## Frescor da captura de dados`), não só quando há alerta, e também impresso no
 console/log do cron quando abaixo do piso. Ver `specs/09-aprendizado-continuo.md`.
 
+## Quinta rodada: bloqueio geográfico é bloqueador de go-live, não só de captura
+
+O usuário reclassificou o achado do incidente abaixo: `HTTP 451` num endpoint de market
+data pública — sem chave, sem ordem, sem risco, o mais permissivo que a Binance oferece —
+significa que o bloqueio é de **região**, não de credencial ou rota específica. Combinado
+com o bloqueio já conhecido para execução de ordens (mesma causa raiz), a conclusão é
+estrutural: nesta infraestrutura, o projeto não tem caminho para operar com capital real.
+No dia em que um modelo passar pelo gate de promoção (`07-backtesting-e-validacao.md`), ele
+não vai ter para onde enviar a ordem. Isso reordena a fila de prioridades acima de qualquer
+item estatístico — não é "resolver depois do benchmark", é pré-requisito de o projeto
+existir em produção.
+
+Duas ações baratas antes de investigar região/proxy (ambas aplicadas nesta rodada):
+
+- **Coluna `environment`** nas duas tabelas de captura (ver `specs/02-ingestao-de-dados.md`)
+  — o alçapão de irreversibilidade que estava armado: sem marcar a origem agora, o dia em
+  que mainnet começasse a fluir para as mesmas tabelas misturaria sinal real com ruído
+  sintético sem como separar depois.
+- **Sondagem de conectividade por hostname** a partir do ambiente real do Railway (não do
+  sandbox local, que não reflete o bloqueio de região) — `stream.binance.com`,
+  `api.binance.com`, `data-api.binance.vision`, `data.binance.vision`. O último é o mais
+  relevante: se não bloqueado, a Binance publica arquivos históricos de aggTrades para
+  download, o que daria backfill de meses de fluxo agressor real de mainnet e desarmaria
+  boa parte do argumento de irreversibilidade que colocou a captura ao vivo na posição
+  zero. Resultado documentado abaixo, junto com o incidente que motivou a investigação.
+
 ## Incidente: mainnet bloqueado geograficamente — revertido para testnet no mesmo dia
 
 O raciocínio da terceira rodada (mainnet é o ambiente certo pra captura de dado) estava

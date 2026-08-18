@@ -10,7 +10,8 @@ changes/2026-08-18-captura-aggtrade-fluxo-ordens.md), but Binance mainnet reject
 connection from this Railway project's region with HTTP 451 (geoblock — same family of
 issue already known for order execution, now confirmed for market-data WS too). Back on
 testnet until that's resolved (different Railway region, or a proxy) — capturing something
-low-signal beats capturing nothing.
+low-signal beats capturing nothing. Every row is tagged `environment="testnet"` so this
+can never silently mix with real mainnet data later.
 
 Required environment variables:
     SYMBOL          (default BTCUSDT)
@@ -31,16 +32,22 @@ from tradingbot.persistence.db import get_session_factory
 from tradingbot.persistence.models import OrderBookSnapshot
 from tradingbot.persistence.repository import record_order_book_snapshot
 
+# Single toggle point — flip to False once the geoblock (see module docstring) is
+# resolved. Drives both the actual connection and the `environment` label persisted on
+# every row, so the two can never drift apart.
+USE_TESTNET = True
+
 
 async def main() -> None:
     symbol = os.environ.get("SYMBOL", "BTCUSDT")
+    environment = "testnet" if USE_TESTNET else "mainnet"
     session_factory = get_session_factory(os.environ.get("DATABASE_URL"))
     sampler = DepthSampler()
-    stream = BinanceDepthStream(symbols=[symbol], testnet=True)
+    stream = BinanceDepthStream(symbols=[symbol], testnet=USE_TESTNET)
 
     print(
-        f"Capturando order book de {symbol} (testnet — mainnet bloqueado geograficamente "
-        "pelo Railway, ver changes/), 1 amostra/minuto..."
+        f"Capturando order book de {symbol} ({environment} — mainnet bloqueado "
+        "geograficamente pelo Railway, ver changes/), 1 amostra/minuto..."
     )
     async for event in stream:
         sampled = sampler.sample(event)
@@ -53,6 +60,7 @@ async def main() -> None:
             OrderBookSnapshot(
                 symbol=fields.symbol,
                 ts=fields.ts,
+                environment=environment,
                 best_bid=fields.best_bid,
                 best_ask=fields.best_ask,
                 spread_pct=fields.spread_pct,

@@ -14,7 +14,8 @@ changes/2026-08-18-captura-aggtrade-fluxo-ordens.md), but Binance mainnet reject
 connection from this Railway project's region with HTTP 451 (geoblock — same family of
 issue already known for order execution, now confirmed for market-data WS too). Back on
 testnet until that's resolved (different Railway region, or a proxy) — capturing something
-low-signal beats capturing nothing.
+low-signal beats capturing nothing. Every row is tagged `environment="testnet"` so this
+can never silently mix with real mainnet data later.
 
 Required environment variables:
     SYMBOL          (default BTCUSDT)
@@ -45,14 +46,21 @@ logger = logging.getLogger(__name__)
 # than looping forever trying to recover data the exchange no longer serves.
 MAX_BACKFILL_TRADES = 50_000
 
+# Single toggle point — flip to False once the geoblock (see module docstring) is
+# resolved. Drives the WS stream, the REST backfill client (must match: testnet and
+# mainnet aggTradeId sequences are unrelated), and the `environment` label persisted on
+# every row, so none of the three can drift apart from the others.
+USE_TESTNET = True
 
-def _persist_bucket(session_factory, bucket: AggTradeBucketFields) -> None:
+
+def _persist_bucket(session_factory, bucket: AggTradeBucketFields, environment: str) -> None:
     session = session_factory()
     upsert_agg_trade_bucket(
         session,
         AggTradeBucket(
             symbol=bucket.symbol,
             ts=bucket.ts,
+            environment=environment,
             buy_volume=bucket.buy_volume,
             sell_volume=bucket.sell_volume,
             buy_count=bucket.buy_count,
@@ -66,6 +74,7 @@ def _persist_bucket(session_factory, bucket: AggTradeBucketFields) -> None:
 async def _backfill_gap(
     rest_client: BinanceRestClient,
     session_factory,
+    environment: str,
     symbol: str,
     expected_from_id: int,
     found_id: int,
@@ -90,24 +99,25 @@ async def _backfill_gap(
     for event in events:
         completed = backfill_aggregator.add(event)
         if completed is not None:
-            _persist_bucket(session_factory, completed)
+            _persist_bucket(session_factory, completed, environment)
     trailing = backfill_aggregator.flush(symbol)
     if trailing is not None:
-        _persist_bucket(session_factory, trailing)
+        _persist_bucket(session_factory, trailing, environment)
 
     logger.info("aggTrade backfill for %s recovered %d/%d missing trade(s)", symbol, len(events), missing_count)
 
 
 async def main() -> None:
     symbol = os.environ.get("SYMBOL", "BTCUSDT")
+    environment = "testnet" if USE_TESTNET else "mainnet"
     session_factory = get_session_factory(os.environ.get("DATABASE_URL"))
-    rest_client = BinanceRestClient(testnet=True)
+    rest_client = BinanceRestClient(testnet=USE_TESTNET)
     aggregator = AggTradeAggregator()
-    stream = BinanceAggTradeStream(symbols=[symbol], testnet=True)
+    stream = BinanceAggTradeStream(symbols=[symbol], testnet=USE_TESTNET)
 
     print(
-        f"Capturando fluxo de ordens (aggTrade) de {symbol} (testnet — mainnet bloqueado "
-        "geograficamente pelo Railway, ver changes/), 1 bucket/segundo..."
+        f"Capturando fluxo de ordens (aggTrade) de {symbol} ({environment} — mainnet "
+        "bloqueado geograficamente pelo Railway, ver changes/), 1 bucket/segundo..."
     )
     try:
         async for event in stream:
@@ -116,6 +126,7 @@ async def main() -> None:
                     await _backfill_gap(
                         rest_client,
                         session_factory,
+                        environment,
                         event.symbol,
                         event.payload["expected_from_id"],
                         event.payload["found_id"],
@@ -125,11 +136,11 @@ async def main() -> None:
 
             bucket = aggregator.add(event)
             if bucket is not None:
-                _persist_bucket(session_factory, bucket)
+                _persist_bucket(session_factory, bucket, environment)
     finally:
         trailing = aggregator.flush(symbol)
         if trailing is not None:
-            _persist_bucket(session_factory, trailing)
+            _persist_bucket(session_factory, trailing, environment)
 
 
 if __name__ == "__main__":

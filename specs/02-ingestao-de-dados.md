@@ -213,6 +213,16 @@ prazo de validade, cálculo sobre dado já persistido não tem — ver
     apagadas (decisão de manter vs. descartar fica para quando alguém for de fato
     consumir esse dado), mas continuará crescendo em testnet até o bloqueio
     geográfico ser resolvido.
+  - **Coluna `environment` ("testnet"/"mainnet")**: adicionada a `order_book_snapshots`
+    e `agg_trade_buckets` antes que dado de mainnet pudesse começar a fluir para as
+    mesmas tabelas — sem isso, no dia em que o bloqueio geográfico for resolvido, não
+    haveria como separar dado sintético de dado real na mesma tabela (o alçapão de
+    irreversibilidade real aqui: retroativamente não dá pra reconstruir a origem de
+    uma linha já gravada sem essa marca). `db.py::_ensure_capture_environment_column`
+    faz a migração aditiva (este projeto não tem framework de migração — Alembic ou
+    equivalente — só `Base.metadata.create_all`, que nunca altera tabela existente) e
+    já backfilla toda linha antiga como `"testnet"`, o que é exatamente correto (era
+    tudo testnet até aqui).
 
 ## Fora de escopo no MVP
 

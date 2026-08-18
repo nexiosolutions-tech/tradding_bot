@@ -75,7 +75,15 @@ class OrderBookSnapshot(Base):
     Sem histórico retroativo possível (Binance não expõe order book passado), então esta
     tabela é o único jeito de acumular dado para uma futura feature de microestrutura —
     campos derivados (spread/imbalance) já vêm prontos para não precisar reprocessar os
-    níveis brutos quando a feature for desenhada de verdade."""
+    níveis brutos quando a feature for desenhada de verdade.
+
+    `environment` ("testnet"/"mainnet", 2026-08-18): qual endpoint da Binance gerou a
+    linha. Sem isso, dado de testnet (sinal sintético — ver
+    changes/2026-08-18-captura-aggtrade-fluxo-ordens.md) e mainnet (real) ficariam
+    misturados na mesma tabela sem como separar depois — pior que não ter dado nenhum,
+    é treinar em dado contaminado achando que é real. Default "testnet" porque é o que a
+    captura já vinha gravando antes desta coluna existir (`db.py::_ensure_environment_column`
+    faz o backfill retroativo das linhas já persistidas)."""
 
     __tablename__ = "order_book_snapshots"
 
@@ -83,6 +91,7 @@ class OrderBookSnapshot(Base):
     symbol: Mapped[str] = mapped_column(String, index=True)
     # Capturado localmente, não é um timestamp autoritativo da exchange — ver spec 02.
     ts: Mapped[int] = mapped_column(BigInteger, index=True)
+    environment: Mapped[str] = mapped_column(String, default="testnet")
     best_bid: Mapped[float] = mapped_column(Float)
     best_ask: Mapped[float] = mapped_column(Float)
     spread_pct: Mapped[float] = mapped_column(Float)
@@ -115,6 +124,10 @@ class AggTradeBucket(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     symbol: Mapped[str] = mapped_column(String, index=True)
     ts: Mapped[int] = mapped_column(BigInteger, index=True)
+    # "testnet"/"mainnet" (2026-08-18) — mesmo raciocínio de OrderBookSnapshot.environment
+    # acima: sem isso, dado sintético de testnet e dado real de mainnet ficam misturados na
+    # mesma tabela sem como separar depois.
+    environment: Mapped[str] = mapped_column(String, default="testnet")
     buy_volume: Mapped[float] = mapped_column(Float)
     sell_volume: Mapped[float] = mapped_column(Float)
     buy_count: Mapped[int] = mapped_column(Integer)
