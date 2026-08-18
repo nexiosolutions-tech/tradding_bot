@@ -62,6 +62,36 @@
   `tradding_bot` e `learning-daily-cron` com deploy `SUCCESS`, `/api/learnings`
   e `/api/changes` conferidos contra a URL pública de produção.
 
+## Incidente durante o rollout (mesmo dia)
+
+O primeiro deploy com `Dockerfile.backend` (build `SUCCESS`) deixou o
+`tradding_bot` em crash loop: `Error: Invalid value for '--port': '$PORT' is
+not a valid integer.` — o `startCommand` configurado
+(`uvicorn ... --port $PORT`) não teve `$PORT` expandido, ao contrário do
+comportamento sob Railpack. View "Live" ficou vazia em produção por ~12
+minutos (sem posição aberta arriscada nesse intervalo — o processo nunca
+chegou a inicializar o `Orchestrator`, então não tomou nenhuma decisão, só
+ficou fora do ar).
+
+Correção: `startCommand` do `tradding_bot` mudado pra
+`sh -c "uvicorn tradingbot.api.app:app --host 0.0.0.0 --port $PORT"`
+(via `update-service`). **Lição operacional importante:** `redeploy`
+reaproveita o deployment mais recente *como estava congelado* (imagem +
+comando resolvido no momento em que foi criado) — mudar a config do serviço
+via `update-service` não afeta deployments já existentes, só os próximos.
+Um `redeploy` logo após o `update-service` reproduziu o erro antigo
+inalterado. A correção só entrou em vigor com um deployment genuinamente
+novo (disparado por outro `git push`, que também trouxe o `CMD` do
+`Dockerfile.backend` em shell form como defesa em profundidade). Daqui pra
+frente: depois de um `update-service` que muda `startCommand`, confirmar via
+`get-service-config` que a mudança está salva, mas **sempre forçar um
+deployment novo** (push, não `redeploy`) pra ter certeza que ela está em
+vigor.
+
+Confirmado recuperado com dado real: `/api/health` → 200, `/api/engine/state`
+mostrando o `Orchestrator` avaliando candles e tendo fechado um trade
+normalmente, `/api/learnings`/`/api/changes` com conteúdo real (34 changes).
+
 ## Decisão
 - Aprovado por: Brian (usuário, dono do projeto)
 - Data: 2026-08-18

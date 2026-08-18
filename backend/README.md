@@ -128,6 +128,15 @@ Variáveis de serviço obrigatórias no `tradding_bot`:
 via `RAILPACK_DEPLOY_APT_PACKAGES` — essa variável só importa nos serviços que
 continuam em Railpack (`depth-capture`).
 
+**Depois de mudar `startCommand`/config de um serviço via API, force um
+deployment novo (git push) — não `redeploy`.** `redeploy` reaproveita o
+deployment mais recente como ele estava congelado (imagem + comando
+resolvidos no momento em que foi criado); mudanças de config feitas depois
+não afetam deployments já existentes, só os próximos a serem criados. Um
+`redeploy` logo após mudar `startCommand` reproduz o comando antigo
+inalterado — incidente real em 2026-08-18 (ver
+`changes/2026-08-18-monorepo-root-learnings-changes.md`).
+
 Build command do `dashboard`: **`npm run build`**, não `npm ci && npm run
 build` — o Railpack já roda sua própria etapa de install antes do
 `buildCommand`; rodar `npm ci` de novo colide com o cache dessa etapa
