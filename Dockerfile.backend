@@ -1,0 +1,37 @@
+# Image for the tradding_bot (API) and learning-daily-cron Railway services.
+#
+# Built from the REPO ROOT (not backend/) on purpose: backend/src/tradingbot/{api/app.py,
+# learning_engine/daily_report.py, learning_engine/change_proposals.py,
+# learning_engine/tools.py} all locate learnings/ and changes/ via
+# `Path(__file__).resolve().parents[4]`, which assumes those directories are siblings of
+# backend/ (true in local dev). Railway's "Root Directory: backend" setting only pulls down
+# backend/ for the build — learnings/ and changes/ are simply never in that build context, no
+# matter how the path arithmetic is written. Building from the repo root and copying
+# learnings/ and changes/ alongside backend/ restores that sibling relationship inside the
+# container, so the existing parents[4] code works unmodified.
+#
+# Each service's own Start Command (kept as-is in Railway) still selects what actually runs
+# (uvicorn for tradding_bot, scripts/run_daily_learning.py for learning-daily-cron) — this
+# image just provides the environment both need. See changes/2026-08-18-monorepo-root-...md.
+
+FROM python:3.12-slim
+
+# Matches RAILPACK_DEPLOY_APT_PACKAGES on the existing Railpack-built services (libgomp1 for
+# lightgbm's OpenMP threading, libpq5 for the Postgres driver).
+RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 libpq5 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY backend/requirements.txt backend/requirements.txt
+RUN pip install --no-cache-dir -r backend/requirements.txt
+
+COPY backend/ backend/
+COPY learnings/ learnings/
+COPY changes/ changes/
+
+RUN pip install --no-cache-dir -e backend/
+
+WORKDIR /app/backend
+
+CMD ["uvicorn", "tradingbot.api.app:app", "--host", "0.0.0.0", "--port", "8000"]

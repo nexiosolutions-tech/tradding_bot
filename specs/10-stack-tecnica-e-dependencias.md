@@ -55,10 +55,23 @@
   (um "web", um "worker" rodando `scripts/run_live.py`) se um redeploy do
   dashboard interrompendo a operação ao vivo se mostrar um problema real — aí
   vira uma proposta em `changes/`, não uma decisão especulativa de agora.
-- **Status: provisionado.** Projeto Railway com 3 serviços: `tradding_bot`
-  (esta API + Orchestrator, `rootDirectory=backend`), `dashboard`
+- **Status: provisionado.** Projeto Railway com serviços: `tradding_bot`
+  (esta API + Orchestrator), `learning-daily-cron` (cron diário),
+  `depth-capture` (captura contínua de order book), `dashboard`
   (`rootDirectory=frontend/dashboard`), `Postgres` (addon oficial,
   `DATABASE_URL` referenciado no backend via `${{Postgres.DATABASE_URL}}`).
+- **`tradding_bot` e `learning-daily-cron` buildam via `Dockerfile.backend`
+  a partir da raiz do repo (2026-08-18), não `rootDirectory=backend` +
+  Railpack.** Os dois precisam ler `learnings/`/`changes/` em runtime
+  (`Path(__file__).resolve().parents[4]`, assume esses diretórios como irmãos
+  de `backend/`) — com `rootDirectory=backend`, a Railway nunca inclui esses
+  diretórios no build daquele serviço (isolamento de monorepo documentado da
+  própria Railway, não um bug de configuração). O Dockerfile copia
+  `backend/`, `learnings/` e `changes/` lado a lado na imagem, replicando o
+  layout do checkout local sem mudar o código de resolução de caminho. Ver
+  `changes/2026-08-18-monorepo-root-learnings-changes.md` e
+  `backend/README.md#deploy-no-railway`. `depth-capture` e `dashboard`
+  continuam em Railpack normal — nenhum dos dois lê `learnings/`/`changes/`.
 - Variáveis de ambiente necessárias em produção: `BINANCE_API_KEY`,
   `BINANCE_API_SECRET`, `BINANCE_TESTNET` (default `true` — só pode ser
   `false` com decisão humana explícita, `bootstrap.py` bloqueia isso por

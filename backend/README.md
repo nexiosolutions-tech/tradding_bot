@@ -90,11 +90,29 @@ crash entre confirmação da exchange e persistência local ainda não é tratad
 
 ## Deploy no Railway
 
-Projeto usa 3 serviços no mesmo ambiente Railway: `tradding_bot` (esta API,
-`rootDirectory=backend`), `dashboard` (`frontend/dashboard`, ver seu próprio
-README) e `Postgres` (addon oficial). Configuração feita via mutation
-`serviceInstanceUpdate` da API GraphQL da Railway (não há `railway.json` no
-repo) — variáveis de serviço obrigatórias no `tradding_bot`:
+Projeto usa 5 serviços no mesmo ambiente Railway: `tradding_bot` (esta API),
+`learning-daily-cron` (`scripts/run_daily_learning.py`, cron diário),
+`depth-capture` (`scripts/run_depth_capture.py`, contínuo), `dashboard`
+(`frontend/dashboard`, ver seu próprio README) e `Postgres` (addon oficial).
+Configuração feita via mutation `serviceInstanceUpdate` da API GraphQL da
+Railway (não há `railway.json` no repo).
+
+**`tradding_bot` e `learning-daily-cron` buildam a partir da raiz do repo**
+com `Dockerfile.backend` (`rootDirectory=/`, `dockerfilePath=Dockerfile.backend`),
+não mais via Railpack com `rootDirectory=backend` (2026-08-18, ver
+`changes/2026-08-18-monorepo-root-learnings-changes.md`). Motivo: os dois
+precisam ler `learnings/`/`changes/` (via `Path(__file__).resolve().parents[4]`
+em `api/app.py`, `daily_report.py`, `change_proposals.py`, `tools.py`) — esses
+diretórios são irmãos de `backend/` no repo, e com `rootDirectory=backend` a
+Railway nunca baixa esses arquivos pro build daquele serviço (comportamento
+documentado da Railway para "isolated monorepo", não um bug). O Dockerfile
+resolve isso copiando `backend/`, `learnings/` e `changes/` lado a lado dentro
+da imagem, replicando o layout do checkout local — o código não precisou
+mudar. `depth-capture` e `dashboard` continuam em Railpack normal
+(`rootDirectory=backend` / `frontend/dashboard`) — nenhum dos dois lê
+`learnings/`/`changes/`.
+
+Variáveis de serviço obrigatórias no `tradding_bot`:
 
 | Variável | Valor |
 |---|---|
@@ -102,18 +120,13 @@ repo) — variáveis de serviço obrigatórias no `tradding_bot`:
 | `BINANCE_API_KEY` / `BINANCE_API_SECRET` | Segredos — setar manualmente, nunca via commit |
 | `BINANCE_TESTNET` | `true` |
 | `SYMBOL`, `INITIAL_EQUITY`, `DASHBOARD_ORIGIN` | Ver `.env.example` |
-| **`RAILPACK_DEPLOY_APT_PACKAGES`** | **`libgomp1 libpq5`** |
 
-Essa é a que trava sem aviso óbvio, e trava em duas partes: `lightgbm` precisa
-de `libgomp.so.1` (runtime OpenMP) e `psycopg2-binary` precisa de `libpq.so.5`
-(cliente Postgres) — ambos em tempo de **execução**, não só de build. A
-imagem padrão do Railpack não inclui nenhuma das duas, e sem essa variável o
-processo crasha em loop logo no primeiro `import lightgbm` ou na primeira
-tentativa de `create_engine` com uma URL Postgres (o build em si aparece como
-`SUCCESS`, só o container morre ao subir — dois incidentes reais, corrigidos
-um de cada vez). `RAILPACK_DEPLOY_APT_PACKAGES` (não
-`RAILPACK_BUILD_APT_PACKAGES`) instala no estágio final da imagem, que é o
-que roda em produção.
+`libgomp1`/`libpq5` (necessários em runtime para `lightgbm` e
+`psycopg2-binary` — sem eles o processo crasha em loop logo no primeiro
+`import lightgbm` ou na primeira tentativa de `create_engine`, mesmo com build
+`SUCCESS`) agora são instalados diretamente no `Dockerfile.backend`, não mais
+via `RAILPACK_DEPLOY_APT_PACKAGES` — essa variável só importa nos serviços que
+continuam em Railpack (`depth-capture`).
 
 Build command do `dashboard`: **`npm run build`**, não `npm ci && npm run
 build` — o Railpack já roda sua própria etapa de install antes do
