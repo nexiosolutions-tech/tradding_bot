@@ -1,9 +1,10 @@
 # Change Proposal — 2026-08-18 — Captura de aggTrade (fluxo de ordens / volume por lado)
 
-**Status:** aplicada (código + serviço em produção). Três rodadas: (1) implementação
-inicial, (2) 4 checagens pré-provisionamento (granularidade, gap/backfill, timestamp,
-liveness), (3) correção de ambiente (testnet → mainnet para captura de dado) + frescor
-real no relatório diário. Ver seções cronológicas abaixo.
+**Status:** aplicada e em produção, rodando em **testnet** (não mainnet — ver incidente
+abaixo). Quatro rodadas: (1) implementação inicial, (2) 4 checagens pré-provisionamento
+(granularidade, gap/backfill, timestamp, liveness), (3) tentativa de correção de ambiente
+para mainnet + frescor real no relatório diário, (4) mainnet bloqueado geograficamente pelo
+Railway (`HTTP 451`) — revertido para testnet no mesmo dia. Ver seções cronológicas abaixo.
 
 ## Evidência (origem)
 
@@ -229,13 +230,45 @@ alto o suficiente pra pegar um coletor parado a maior parte do dia). Sempre rend
 relatório (`## Frescor da captura de dados`), não só quando há alerta, e também impresso no
 console/log do cron quando abaixo do piso. Ver `specs/09-aprendizado-continuo.md`.
 
-## Pendente
+## Incidente: mainnet bloqueado geograficamente — revertido para testnet no mesmo dia
 
-- Nada pendente de infraestrutura — `aggtrade-capture` provisionado e rodando em produção
-  (mainnet), `depth-capture` corrigido para mainnet e redeployado. Decisão em aberto, não
-  bloqueante: o que fazer com a janela `order_book_snapshots` de 2026-08-15..2026-08-18
-  (testnet) — manter como referência histórica filtrável por `ts` ou apagar. Fica para
-  quando alguém for de fato consumir esse dado (item 7 da fila de prioridades).
+O raciocínio da terceira rodada (mainnet é o ambiente certo pra captura de dado) estava
+correto, mas a execução expôs um problema de infraestrutura não previsto: assim que os dois
+serviços foram redeployados apontando pra mainnet, toda tentativa de conexão WebSocket
+(`@aggTrade` e `@depth20@1000ms`) foi rejeitada com `HTTP 451` — bloqueio geográfico da
+Binance contra a região do projeto no Railway. Mesma família de bloqueio já identificada
+para execução de ordens em investigação anterior deste projeto, agora confirmada também
+para market data pública (não é um bloqueio restrito a endpoints de trading).
+
+- **Efeito em produção**: os dois serviços entraram em loop de reconexão com backoff
+  exponencial (o próprio `_maybe_liveness_gap_event`/`websockets` funcionando exatamente
+  como desenhado — reconectando, não travando), mas nunca conseguiram estabelecer conexão.
+  Resultado: ~15-20 minutos sem capturar **nenhum** dado, nem testnet nem mainnet (o
+  processo antigo, em testnet, já tinha sido substituído pelo deploy novo).
+- **Detecção**: manual, via `mcp__railway__get-logs` logo depois do redeploy — a asserção
+  de frescor recém-adicionada ao `run_daily_learning.py` também teria pego isso no ciclo
+  seguinte do cron (piso de linhas nas últimas 24h), mas não é imediata (roda 1x/dia); vale
+  registrar como um limite real do mecanismo de liveness, não só uma vantagem.
+- **Fix imediato**: revertido `testnet=False` → `testnet=True` nos dois scripts (stream WS
+  e, no aggTrade, também o `BinanceRestClient` do backfill — precisa casar com o ambiente
+  do stream, já que as sequências de id de testnet e mainnet não têm relação nenhuma entre
+  si). Push + redeploy confirmado via logs: os dois voltaram a conectar normalmente.
+- **Não resolvido, fica para depois**: o bloqueio geográfico de verdade — provisionar numa
+  região do Railway fora do bloqueio, ou um proxy/relay. Até lá, a captura continua em
+  testnet (baixo sinal, mas não zero) e a limitação já registrada em `specs/02` permanece
+  válida: `order_book_snapshots`/`agg_trade_buckets` seguem não-usáveis para calibração de
+  microestrutura real enquanto isso não for resolvido.
+
+## Frescor da captura como sinal de liveness real
+
+- **Resolver o bloqueio geográfico da Binance mainnet no Railway** (outra região, ou
+  proxy/relay) — até lá, `depth-capture`/`aggtrade-capture` continuam em testnet, e
+  qualquer trabalho futuro que dependa de microestrutura real (item 7 da fila) fica
+  bloqueado por essa mesma causa raiz.
+- Decisão em aberto, não bloqueante: o que fazer com a janela `order_book_snapshots` de
+  2026-08-15 em diante, toda ela testnet enquanto o bloqueio não for resolvido — manter
+  como referência histórica filtrável por `ts` ou apagar. Fica para quando alguém for de
+  fato consumir esse dado.
 
 ## Decisão
 
@@ -243,7 +276,9 @@ console/log do cron quando abaixo do piso. Ver `specs/09-aprendizado-continuo.md
   aggTrade" / "Toca o aggTrade" (primeira rodada); "push: sim, sem ressalva" / "provisionar
   o aggtrade-capture: sim" condicionado às 4 checagens (segunda rodada); "Isso jumpa a
   fila" — mainnet para as duas capturas + frescor real no relatório diário (terceira
-  rodada). Todas em 2026-08-18.
+  rodada). O revert para testnet (quarta rodada, achado técnico de bloqueio geográfico) foi
+  ação corretiva imediata, não uma decisão de produto — não alterou a direção aprovada,
+  só constatou que a infraestrutura atual não a permite ainda. Todas em 2026-08-18.
 - Justificativa: reversibilidade de captura de dado como eixo de priorização; as 4
   checagens da segunda rodada são caras de corrigir depois de o serviço já estar
   acumulando dado com o desenho errado (bucket grosso demais, gap silencioso, coletor

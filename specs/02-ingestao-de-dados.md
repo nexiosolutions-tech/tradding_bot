@@ -188,21 +188,31 @@ prazo de validade, cálculo sobre dado já persistido não tem — ver
   (orquestrador/ordens) hoje.
 - **Produção:** `wss://stream.binance.com` — só após aprovação explícita para a
   camada de execução, conforme `06-camada-de-execucao.md`.
-- **Captura de order book/fluxo de ordens roda em mainnet, não testnet
-  (2026-08-18)**: `depth-capture`/`aggtrade-capture` são serviços somente-leitura de
-  market data pública — sem `BINANCE_API_KEY`/`SECRET`, nunca importam
-  `tradingbot.execution` — logo a regra 1 do `CLAUDE.md` (testnet primeiro) não se
-  aplica a eles; ela existe para a camada de execução, que continua em testnet. O
-  motivo de rodar em mainnet: o livro de ofertas e o fluxo de trades do testnet são
-  rasos, movidos por poucos outros bots em teste, não por participantes reais — não
-  carregam o sinal de microestrutura que essa captura existe para acumular.
-  **Consequência**: `order_book_snapshots` capturado entre 2026-08-15 (início da
-  captura) e 2026-08-18 (esta mudança) é testnet, não usável para calibração de
-  slippage/microestrutura (ver `03-motor-de-features.md`, seção de order book, e
-  `changes/2026-08-18-captura-aggtrade-fluxo-ordens.md`) — as linhas não foram
-  apagadas (decisão de manter vs. descartar fica para quando alguém for de fato
-  consumir esse dado), mas qualquer uso futuro precisa filtrar por `ts` a partir do
-  deploy desta mudança.
+- **Captura de order book/fluxo de ordens: mainnet é o alvo certo, mas bloqueado na
+  infra atual (2026-08-18)**: `depth-capture`/`aggtrade-capture` são serviços
+  somente-leitura de market data pública — sem `BINANCE_API_KEY`/`SECRET`, nunca
+  importam `tradingbot.execution` — logo a regra 1 do `CLAUDE.md` (testnet primeiro)
+  não se aplica a eles; ela existe para a camada de execução, que continua em
+  testnet. O motivo de mainnet ser o alvo certo: o livro de ofertas e o fluxo de
+  trades do testnet são rasos, movidos por poucos outros bots em teste, não por
+  participantes reais — não carregam o sinal de microestrutura que essa captura
+  existe para acumular.
+  - **Tentativa de migração revertida no mesmo dia**: apontar os dois serviços para
+    mainnet resultou em `HTTP 451` (bloqueio geográfico) em toda tentativa de
+    conexão a partir da região do projeto no Railway — mesma família de bloqueio já
+    conhecida para execução de ordens (ver task histórica "bloqueio geográfico da
+    Binance nas ordens"), agora confirmada também para WebSocket de market data.
+    Os dois serviços entraram em loop de reconexão infinito, sem capturar nada (nem
+    testnet nem mainnet) por ~15-20 minutos até o revert. Voltado para testnet como
+    paliativo — captura de baixo sinal é melhor que nenhuma. Resolver o bloqueio de
+    verdade (outra região do Railway, ou proxy) é trabalho futuro, não desta rodada.
+  - **Consequência**: `order_book_snapshots` capturado entre 2026-08-15 (início da
+    captura) e hoje é testnet, não usável para calibração de slippage/microestrutura
+    (ver `03-motor-de-features.md`, seção de order book, e
+    `changes/2026-08-18-captura-aggtrade-fluxo-ordens.md`) — as linhas não foram
+    apagadas (decisão de manter vs. descartar fica para quando alguém for de fato
+    consumir esse dado), mas continuará crescendo em testnet até o bloqueio
+    geográfico ser resolvido.
 
 ## Fora de escopo no MVP
 
