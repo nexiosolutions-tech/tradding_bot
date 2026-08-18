@@ -132,6 +132,29 @@ skills de UI definidas em [`CLAUDE.md`](../CLAUDE.md#skills-de-ui-a-utilizar-no-
   endpoint e seleciona o run recém-criado. Ver
   [`changes/2026-08-18-endpoint-rodar-backtest.md`](../changes/2026-08-18-endpoint-rodar-backtest.md).
 
+### Redesign para tema de exchange cripto (2026-08-18)
+
+Pedido explícito do usuário: a interface não tinha "a cara do negócio" — o tema anterior
+(claro, tons quentes) não puxava o vocabulário visual que o usuário já conhece de
+exchanges como Binance/Bybit/OKX (tema escuro, verde/vermelho de mercado). Redesign
+estritamente visual — nenhum endpoint, dado ou regra de negócio mudou. Decisões
+completas de paleta/tipografia/componentes em
+[`frontend/dashboard/DESIGN.md`](../frontend/dashboard/DESIGN.md); resumo:
+
+- Tema escuro único (`#0b0e11`/`#181b20`), verde/vermelho (`#0ecb81`/`#f6465d`) como
+  vocabulário semântico consistente (preço, P&L, stop-loss, badges), accent âmbar
+  evoluído do já existente (não trocado por um genérico). Space Grotesk + JetBrains Mono
+  mantidos (já eram a escolha certa pro gênero).
+- **`CoinSelector`** (novo componente) — placeholder estrutural pra expansão
+  multi-moeda: mostra o par ativo (`state.symbol`) com preço/variação reais, e uma lista
+  de pares "em breve" sem lógica de troca real (nenhum `onClick`, nenhum estado) — trocar
+  de ativo no futuro é mudança de dado, não de design.
+- View Live reorganizada num grid de 3 colunas (seletor de par | gráfico dominante |
+  posição + controles do engine) inspirado na hierarquia de um terminal de trading — os
+  controles são os que já existiam (play/pause/reconhecer circuit breaker), não um
+  formulário de compra/venda fabricado (segue "fora de escopo" abaixo).
+- Ver `changes/2026-08-18-redesign-exchange-dark-theme.md`.
+
 ### Feed de atividade em tempo real (adicionado após feedback de uso)
 
 O usuário reportou que a Fase 3 original não "parecia viva" — sem um jeito de

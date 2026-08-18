@@ -1,24 +1,31 @@
+/* Exchange-terminal dark theme (2026-08-18 redesign) — see DESIGN.md for the full
+   rationale. Kept the existing amber accent family and the Space Grotesk/JetBrains Mono
+   pairing (both already matched the target genre); everything else — surfaces, the
+   green/red market-signal pair, density — moved to the dark trading-terminal register
+   this product's data (live P&L, candles, buy/sell semantics) actually calls for. */
 :root {
-  --bg: #faf8f4;
-  --bg-elevated: #f2efe7;
-  --surface: #ffffff;
-  --surface-hover: #f5f2ea;
-  --border: #e8e3d8;
-  --border-strong: #d7cfbd;
+  --bg: #0b0e11;
+  --bg-elevated: #12151a;
+  --surface: #181b20;
+  --surface-hover: #21252b;
+  --border: #262a31;
+  --border-strong: #363b44;
 
-  --text: #211f1a;
-  --text-secondary: #5c574a;
-  --text-muted: #8b8474;
+  --text: #eaecef;
+  --text-secondary: #b7bdc6;
+  --text-muted: #848e9c;
 
-  --accent: #b45309;
-  --accent-strong: #92400e;
-  --accent-soft: rgba(180, 83, 9, 0.1);
-  --accent-border: rgba(180, 83, 9, 0.3);
+  --accent: #f0b90b;
+  --accent-strong: #f8d33a;
+  --accent-soft: rgba(240, 185, 11, 0.12);
+  --accent-border: rgba(240, 185, 11, 0.32);
 
-  --positive: #15803d;
-  --positive-soft: rgba(21, 128, 61, 0.1);
-  --negative: #b91c1c;
-  --negative-soft: rgba(185, 28, 28, 0.1);
+  --positive: #0ecb81;
+  --positive-strong: #3ddb99;
+  --positive-soft: rgba(14, 203, 129, 0.12);
+  --negative: #f6465d;
+  --negative-strong: #f97a8c;
+  --negative-soft: rgba(246, 70, 93, 0.12);
 
   --font-ui: "Space Grotesk", -apple-system, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
@@ -27,7 +34,7 @@
   --radius-md: 10px;
   --radius-lg: 16px;
 
-  color-scheme: light;
+  color-scheme: dark;
   color: var(--text);
   background: var(--bg);
   font-family: var(--font-ui);
@@ -190,15 +197,15 @@ code {
 /* -- topbar --------------------------------------------------------- */
 
 .topbar {
-  height: 60px;
+  height: 56px;
   border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 28px;
+  padding: 0 24px;
   position: sticky;
   top: 0;
-  background: rgba(250, 248, 244, 0.85);
+  background: rgba(11, 14, 17, 0.85);
   backdrop-filter: blur(10px);
   z-index: 5;
 }
@@ -270,8 +277,8 @@ code {
 
 .state-badge--active {
   background: var(--positive-soft);
-  color: var(--positive);
-  border-color: rgba(21, 128, 61, 0.3);
+  color: var(--positive-strong);
+  border-color: rgba(14, 203, 129, 0.32);
 }
 
 .state-badge--muted {
@@ -282,8 +289,8 @@ code {
 
 .state-badge--danger {
   background: var(--negative-soft);
-  color: var(--negative);
-  border-color: rgba(185, 28, 28, 0.3);
+  color: var(--negative-strong);
+  border-color: rgba(246, 70, 93, 0.32);
 }
 
 /* -- panels / cards ---------------------------------------------------- */
@@ -297,7 +304,7 @@ code {
 }
 
 .panel--warning {
-  border-color: rgba(180, 83, 9, 0.3);
+  border-color: var(--accent-border);
 }
 
 .panel h3 {
@@ -401,6 +408,32 @@ code {
   font-variant-numeric: tabular-nums;
 }
 
+/* -- live view terminal grid --------------------------------------------- */
+
+.terminal-grid {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr) 260px;
+  gap: 16px;
+  align-items: start;
+  margin-bottom: 16px;
+}
+
+.terminal-grid .panel {
+  margin-bottom: 0;
+}
+
+.terminal-grid__side {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+@media (max-width: 1100px) {
+  .terminal-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* -- controls ----------------------------------------------------------- */
 
 .controls {
@@ -424,7 +457,7 @@ code {
 }
 
 .icon-btn:hover {
-  background: #262319;
+  background: var(--surface-hover);
   border-color: var(--border-strong);
 }
 
@@ -439,23 +472,23 @@ code {
 }
 
 .icon-btn--primary {
-  background: var(--accent-soft);
-  border-color: var(--accent-border);
-  color: var(--accent-strong);
+  background: var(--positive-soft);
+  border-color: rgba(14, 203, 129, 0.35);
+  color: var(--positive-strong);
 }
 
 .icon-btn--primary:hover {
-  background: rgba(180, 83, 9, 0.22);
+  background: rgba(14, 203, 129, 0.22);
 }
 
 .icon-btn--danger {
   background: var(--negative-soft);
-  border-color: rgba(185, 28, 28, 0.35);
-  color: var(--negative);
+  border-color: rgba(246, 70, 93, 0.35);
+  color: var(--negative-strong);
 }
 
 .icon-btn--danger:hover {
-  background: rgba(185, 28, 28, 0.22);
+  background: rgba(246, 70, 93, 0.22);
 }
 
 .operator-field {
@@ -569,19 +602,19 @@ code {
   height: 6px;
   border-radius: 50%;
   background: var(--positive);
-  box-shadow: 0 0 0 0 rgba(21, 128, 61, 0.5);
+  box-shadow: 0 0 0 0 rgba(14, 203, 129, 0.5);
   animation: pulse-dot 2s ease-out infinite;
 }
 
 @keyframes pulse-dot {
   0% {
-    box-shadow: 0 0 0 0 rgba(21, 128, 61, 0.45);
+    box-shadow: 0 0 0 0 rgba(14, 203, 129, 0.45);
   }
   70% {
-    box-shadow: 0 0 0 6px rgba(21, 128, 61, 0);
+    box-shadow: 0 0 0 6px rgba(14, 203, 129, 0);
   }
   100% {
-    box-shadow: 0 0 0 0 rgba(21, 128, 61, 0);
+    box-shadow: 0 0 0 0 rgba(14, 203, 129, 0);
   }
 }
 
@@ -693,14 +726,94 @@ code {
 
 .tag--negative {
   background: var(--negative-soft);
-  color: var(--negative);
-  border-color: rgba(185, 28, 28, 0.3);
+  color: var(--negative-strong);
+  border-color: rgba(246, 70, 93, 0.32);
 }
 
 .tag-list {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+/* -- coin selector (spec 08, structural multi-asset placeholder) -------- */
+
+.coin-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.coin-selector__active {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-border);
+  margin-bottom: 8px;
+}
+
+.coin-selector__pair {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+}
+
+.coin-selector__base {
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: -0.01em;
+}
+
+.coin-selector__quote {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.coin-selector__price-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.coin-selector__price {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.coin-selector__change {
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.coin-selector__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.coin-selector__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.coin-selector__item-label {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--text-secondary);
 }
 
 /* -- side-by-side list/detail layout ------------------------------------ */

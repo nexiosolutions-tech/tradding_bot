@@ -13,8 +13,8 @@ import {
 import { theme } from "../theme";
 import type { Candle, Trade } from "../api/types";
 
-const POSITIVE = "#15803d";
-const NEGATIVE = "#b91c1c";
+const POSITIVE = theme.positive;
+const NEGATIVE = theme.negative;
 
 function toChartTime(tsMs: number): Time {
   return Math.floor(tsMs / 1000) as Time;
@@ -87,7 +87,7 @@ export function PriceChart({ candles, trades }: { candles: Candle[]; trades: Tra
       title: "EMA 26",
     });
     const bollUpper = chart.addSeries(LineSeries, {
-      color: "rgba(139, 132, 116, 0.5)",
+      color: "rgba(132, 142, 156, 0.5)",
       lineWidth: 1,
       lineStyle: 2,
       priceLineVisible: false,
@@ -95,7 +95,7 @@ export function PriceChart({ candles, trades }: { candles: Candle[]; trades: Tra
       crosshairMarkerVisible: false,
     });
     const bollLower = chart.addSeries(LineSeries, {
-      color: "rgba(139, 132, 116, 0.5)",
+      color: "rgba(132, 142, 156, 0.5)",
       lineWidth: 1,
       lineStyle: 2,
       priceLineVisible: false,

@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
 import { EngineControls } from "../components/EngineControls";
 import { ActivityConsole } from "../components/ActivityConsole";
 import { TradesTable } from "../components/TradesTable";
 import { PriceChart } from "../components/PriceChart";
+import { CoinSelector } from "../components/CoinSelector";
+import { StateBadge } from "../components/StateBadge";
 import { IconTarget } from "../components/Icons";
 import { Timer } from "../components/Timer";
 import { MiniEquityChart } from "../components/MiniEquityChart";
@@ -57,6 +59,16 @@ export function LiveView({ state }: { state: EngineState | null }) {
     });
   }, [state?.equity]);
 
+  // "Changed" here is over the visible candle window (last ~200 closed candles), not a
+  // true 24h ticker — the backend doesn't expose one yet. Framed honestly in the label
+  // rather than implying a 24h figure we don't actually have.
+  const marketSnapshot = useMemo(() => {
+    if (candles.length === 0) return { price: null, changePct: null };
+    const last = candles[candles.length - 1].close;
+    const first = candles[0].close;
+    return { price: last, changePct: first !== 0 ? ((last - first) / first) * 100 : null };
+  }, [candles]);
+
   if (!state) {
     return (
       <div className="panel">
@@ -97,7 +109,7 @@ export function LiveView({ state }: { state: EngineState | null }) {
               {delta.toFixed(2)} nesta sessão
             </div>
           </div>
-          <EngineControls state={state.state} onChanged={refreshEvents} />
+          <StateBadge state={state.state} />
         </div>
 
         <div className="hero__chart">
@@ -116,24 +128,41 @@ export function LiveView({ state }: { state: EngineState | null }) {
         </div>
       </div>
 
-      <div className="panel">
-        <h3>Preço e indicadores</h3>
-        <PriceChart candles={candles} trades={trades} />
-      </div>
-
-      {state.position && (
-        <div className="panel">
-          <h3>Posição aberta</h3>
-          <dl className="kv-grid">
-            <dt>Preço de entrada</dt>
-            <dd>{state.position.entry_price.toFixed(2)}</dd>
-            <dt>Tamanho</dt>
-            <dd>{state.position.size}</dd>
-            <dt>Stop-loss</dt>
-            <dd>{state.position.stop_loss_price.toFixed(2)}</dd>
-          </dl>
+      <div className="terminal-grid">
+        <div className="panel terminal-grid__market">
+          <h3>Ativo</h3>
+          <CoinSelector symbol={state.symbol ?? "BTCUSDT"} price={marketSnapshot.price} changePct={marketSnapshot.changePct} />
         </div>
-      )}
+
+        <div className="panel terminal-grid__chart">
+          <h3>Preço e indicadores</h3>
+          <PriceChart candles={candles} trades={trades} />
+        </div>
+
+        <div className="terminal-grid__side">
+          <div className="panel">
+            <h3>Posição</h3>
+            {state.position ? (
+              <dl className="kv-grid">
+                <dt>Preço de entrada</dt>
+                <dd>{state.position.entry_price.toFixed(2)}</dd>
+                <dt>Tamanho</dt>
+                <dd>{state.position.size}</dd>
+                <dt>Stop-loss</dt>
+                <dd className="delta delta--negative">{state.position.stop_loss_price.toFixed(2)}</dd>
+              </dl>
+            ) : (
+              <p className="muted" style={{ fontSize: 13, margin: 0 }}>
+                Nenhuma posição aberta no momento — o engine está avaliando candles em busca de sinal.
+              </p>
+            )}
+          </div>
+          <div className="panel">
+            <h3>Controle do engine</h3>
+            <EngineControls state={state.state} onChanged={refreshEvents} />
+          </div>
+        </div>
+      </div>
 
       <div className="panel">
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>

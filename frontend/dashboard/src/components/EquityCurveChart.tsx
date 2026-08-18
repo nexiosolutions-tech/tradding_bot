@@ -23,8 +23,8 @@ export function EquityCurveChart({ points }: { points: [number, number][] }) {
     });
     const series = chart.addSeries(AreaSeries, {
       lineColor: theme.accent,
-      topColor: "rgba(180, 83, 9, 0.18)",
-      bottomColor: "rgba(180, 83, 9, 0.01)",
+      topColor: "rgba(240, 185, 11, 0.20)",
+      bottomColor: "rgba(240, 185, 11, 0.01)",
       lineWidth: 2,
     });
 

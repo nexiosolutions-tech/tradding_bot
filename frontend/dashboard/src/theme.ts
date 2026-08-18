@@ -4,9 +4,11 @@
 // libraries don't resolve var(--x) the way DOM elements do, so these can't just
 // reference the CSS variables directly; keep the two in sync when the palette changes.
 export const theme = {
-  border: "#e8e3d8",
-  textMuted: "#8b8474",
-  textSecondary: "#5c574a",
-  surface: "#ffffff",
-  accent: "#b45309",
+  border: "#262a31",
+  textMuted: "#848e9c",
+  textSecondary: "#b7bdc6",
+  surface: "#181b20",
+  accent: "#f0b90b",
+  positive: "#0ecb81",
+  negative: "#f6465d",
 } as const;
