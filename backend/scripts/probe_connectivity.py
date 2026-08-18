@@ -14,12 +14,22 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
+import json
+
 import httpx
+import websockets
 
 PING_HOSTS = [
     ("stream.binance.com", "https://stream.binance.com:9443/api/v3/ping"),
     ("api.binance.com", "https://api.binance.com/api/v3/ping"),
 ]
+
+# The plain-GET check above hits a WS-only host with a REST path that doesn't exist there
+# — a 404 only proves the TCP/TLS connection reached the server, not that the actual WS
+# upgrade (what depth-capture/aggtrade-capture and execution actually need) succeeds. Do
+# the real handshake and read one real message.
+WS_STREAM_URL = "wss://stream.binance.com:9443/ws/btcusdt@aggTrade"
 
 # data-api.binance.vision claims to mirror api.binance.com's public market-data routes —
 # check the routes this project actually needs, not just the root, since a 200 on root
@@ -39,6 +49,16 @@ SPOT_ARCHIVE_LISTING_URL = (
 )
 
 
+async def _probe_ws_handshake() -> None:
+    try:
+        async with websockets.connect(WS_STREAM_URL, open_timeout=10.0) as ws:
+            raw = await asyncio.wait_for(ws.recv(), timeout=10.0)
+            msg = json.loads(raw)
+            print(f"WS handshake em {WS_STREAM_URL}: OK — primeira mensagem: {json.dumps(msg)[:200]}")
+    except Exception as exc:
+        print(f"WS handshake em {WS_STREAM_URL}: FALHOU ({exc!r})")
+
+
 def main() -> None:
     print("=== Sondagem de conectividade Binance — rotas concretas (2026-08-18) ===\n")
 
@@ -49,6 +69,9 @@ def main() -> None:
             print(f"{label}: HTTP {resp.status_code}")
         except httpx.HTTPError as exc:
             print(f"{label}: ERRO DE REDE ({exc!r})")
+
+    print("\n-- WebSocket real (handshake + 1 mensagem) --")
+    asyncio.run(_probe_ws_handshake())
 
     print("\n-- data-api.binance.vision, rotas concretas --")
     for label, url in DATA_API_ROUTES:
