@@ -226,14 +226,37 @@ neste pipeline, com estes dados, com este número de folds" — sem o custo de
 implementar o DSR ainda. Não o substitui, mas cobre parte da mesma pergunta
 sem custo adicional.
 
-**Resultado esperado: p-valor alto** — o resultado real não se distingue do
-que permutações aleatórias produzem no mesmo pipeline. Um p-valor baixo não
-é evidência de sorte — é evidência de vazamento no harness (provável
-violação do invariante anti-leakage de `03-motor-de-features.md`: alguma
-feature carregando informação do futuro além de `knowledge_ts`), e a
-investigação vai para o harness, não para a estratégia. O valor inteiro
-deste teste está em levar esse resultado a sério quando ele acontecer, não
-em rodá-lo como formalidade.
+**Interpretação (corrigida no mesmo dia em que foi implementada, depois de
+uma primeira versão invertida — ver `changes/2026-08-19-benchmark-e-teste-
+de-nulidade.md`).** A hipótese nula do teste é "as features não carregam
+informação real sobre o label". **Um p-valor baixo (real muito acima da
+distribuição nula) rejeita essa hipótese — é evidência de sinal preditivo
+genuíno, o resultado desejado, não um alarme.** As permutações são as
+execuções sem informação real, por construção; o real superá-las é
+exatamente a cara de "as features são informativas".
+
+Ressalva de precaução, não alarme: esse padrão (real muito acima do nulo)
+também é compatível com vazamento de lookahead na construção de
+features/labels — se uma feature ou o label enxergar informação futura além
+de `knowledge_ts`, embaralhar o label não elimina esse vazamento (só muda
+qual futuro o label aponta), e tanto as permutações quanto o real ficariam
+afetados de formas diferentes. Por isso um p-valor baixo justifica conferir
+o invariante anti-leakage (`03-motor-de-features.md`) e a purga na fronteira
+do walk-forward (`model/training.py::walk_forward_splits`, `purge_bars` —
+ver seção "Janela de dados fixa" abaixo... na verdade ver a seção de purga
+em `04-modelo-ml-e-scoring.md`) — não porque o teste acusou algo, mas porque
+ele não distingue sinal real de sinal vazado sozinho.
+
+Um p-valor alto (real indistinguível do nulo) **não é conclusivamente
+"sem sinal"** por si só: se algum outro mecanismo destrói a performance de
+forma igual independente da qualidade do label (ex.: uma regra de saída que
+dispara por ruído do score antes de qualquer trade se desenvolver — achado
+real de 2026-08-19), tanto o real quanto as permutações ficam igualmente
+estrangulados e o teste perde poder de detectar sinal genuíno por baixo
+disso. Uma mediana da distribuição nula anormalmente baixa (bem abaixo do
+que entradas aleatórias líquidas de custo produziriam) é sintoma disso —
+vale rodar de novo depois de corrigir esse mecanismo, para que a distância
+real-vs-nulo meça sinal, não sobrevivência ao mesmo estrangulamento.
 
 ## Série de retorno por fold, persistida (2026-08-19)
 

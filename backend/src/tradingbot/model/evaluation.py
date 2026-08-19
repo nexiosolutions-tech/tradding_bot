@@ -76,10 +76,10 @@ class ConfigEvaluation:
 
 def _with_shuffled_labels(rows: list[DatasetRow], seed: int) -> list[DatasetRow]:
     """Permutes labels across rows — the multiset (and therefore label_rate) is unchanged,
-    only which row each label lands on. Used by the nullity test (specs/11,
-    statistical-rigor thread): if the harness has no leak, training on this should find no
-    real edge in any fold, since the label carries no information about that row's
-    features anymore."""
+    only which row each label lands on. Used by the nullity test (run_nullity_test below,
+    specs/11): each individual permuted run should find no real edge, since the label
+    carries no information about that row's features anymore — the null distribution these
+    permuted runs build is what the real (non-shuffled) run is compared against."""
     labels = [row.label for row in rows]
     random.Random(seed).shuffle(labels)
     return [replace(row, label=label) for row, label in zip(rows, labels)]
@@ -118,8 +118,9 @@ def evaluate_config(
     comparison (spec 03, 14ª rodada). shuffle_labels=True (default False) runs this exact
     same pipeline — same events, same folds, same training/calibration/backtest — with real
     triple-barrier labels replaced by a permutation of themselves, for the nullity test
-    (specs/11): expected result is folds_won == 0; any fold won is evidence the harness is
-    leaking information, not evidence of a lucky model."""
+    (specs/11) — see run_nullity_test below, which runs this N times to build a null
+    distribution and compares the real (shuffle_labels=False) result against it; a single
+    shuffled run in isolation is too noisy to draw a conclusion from on its own."""
     target_config = TargetConfig(
         horizon_minutes=horizon_minutes,
         candle_minutes=candle_minutes,
@@ -141,14 +142,14 @@ def evaluate_config(
     )
     train_kwargs = {} if model_feature_names is None else {"feature_names": model_feature_names}
 
-    for fold_index, (train_rows, test_rows) in enumerate(walk_forward_splits(rows, n_splits=n_splits)):
+    for fold_index, (train_rows, test_rows) in enumerate(
+        walk_forward_splits(rows, n_splits=n_splits, purge_bars=target_config.horizon_bars)
+    ):
         if not train_rows or not test_rows:
             continue
         fit_rows, calib_rows = split_fit_calibration(train_rows, calibration_fraction=0.2)
         model = train_model(fit_rows, model_config, calibration_fraction=0.2, **train_kwargs)
-        entry_threshold, exit_threshold = choose_thresholds(
-            model, calib_rows, entry_percentile=entry_percentile, exit_percentile=50.0
-        )
+        entry_threshold, exit_threshold = choose_thresholds(model, calib_rows, entry_percentile=entry_percentile)
         model_strategy = ModelStrategy(
             model=model, entry_threshold=entry_threshold, exit_threshold=exit_threshold, stop_loss_pct=stop_loss_pct
         )
@@ -233,17 +234,34 @@ def run_nullity_test(
     base_seed: int = 0,
     **evaluate_config_kwargs,
 ) -> NullityTestResult:
-    """Nullity test (specs/07/11, statistical-rigor thread, 2026-08-19): a single
-    shuffle_labels seed only tells you whether that one permutation happened to look
-    like an edge — it says nothing about whether the real result is typical or a fluke of
-    the whole family of permutations. Runs evaluate_config once for real and
-    n_permutations times with shuffle_labels=True (different shuffle_seed each time,
-    base_seed..base_seed+n_permutations-1) to build the null distribution of
-    mean_profit_factor, then reports where the real result falls in it as an empirical
-    p-value. A useful side effect: this null distribution is a cheap approximation of what
-    a proper Deflated Sharpe Ratio will give later (same question — "how good is this
-    number against what chance produces on this exact pipeline and data" — without DSR's
-    own implementation cost).
+    """Nullity test (specs/07/11, statistical-rigor thread, 2026-08-19). Tests H0: "the
+    features carry no real information about the label". Runs evaluate_config once for real
+    and n_permutations times with shuffle_labels=True (different shuffle_seed each time,
+    base_seed..base_seed+n_permutations-1, which destroys the feature-label correspondence
+    while preserving label_rate) to build the null distribution of mean_profit_factor, then
+    reports where the real result falls in it as an empirical p-value.
+
+    Interpretation (corrected same day after an initial inversion — see
+    changes/2026-08-19-benchmark-e-teste-de-nulidade.md): real substantially ABOVE the null
+    distribution (low p-value) REJECTS H0 — evidence of genuine predictive signal in the
+    features, the desired finding, not an alarm. The permuted runs are the ones with no real
+    information by construction; real beating them is what "the features are informative"
+    looks like. Caveat, not an alarm: this pattern is also consistent with lookahead leakage
+    in feature/label construction (spec 03's anti-leakage invariant, and the walk-forward
+    purge — walk_forward_splits' purge_bars) — worth a due-diligence check on a low p-value,
+    not because the test flagged a problem but because it can't tell "real signal" from
+    "leaked signal" apart on its own. Real indistinguishable from null (high p-value) is
+    NOT unconditionally "no signal" either: if some other mechanism (e.g. an exit rule
+    firing from score noise before any trade can develop) destroys performance the same way
+    regardless of label quality, real and permuted both get strangled identically and the
+    test loses power — an unusually low null-distribution median (well below what
+    random-entry-net-of-cost would produce) is itself a symptom of this, worth a rerun once
+    that mechanism is fixed.
+
+    A useful side effect: this null distribution is a cheap approximation of what a proper
+    Deflated Sharpe Ratio will give later (same question — "how good is this number against
+    what chance produces on this exact pipeline and data" — without DSR's own implementation
+    cost).
 
     evaluate_config_kwargs forwards every other evaluate_config parameter (n_splits,
     min_trades, move_threshold_pct, ...) unchanged to both the real and every permuted run,

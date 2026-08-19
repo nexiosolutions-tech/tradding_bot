@@ -150,6 +150,43 @@ calibrado cria — a mudança não altera a semântica da estratégia (ainda é
 decisão. Ver `changes/2026-08-19-benchmark-e-teste-de-nulidade.md` para a
 cadeia completa de diagnóstico que levou a este achado.
 
+**Correção acima medida como insuficiente sozinha, política de threshold
+corrigida em cima (2026-08-19, mesmo dia).** Rankear no score cru corrigiu o
+mecanismo (granularidade), mas piorou o resultado prático — 362 trades e
+pnl líquido -2152 contra 113 trades e -765 antes da mudança, mesma janela
+fixa. Causa: `entry_percentile` é a ferramenta errada para um alvo de evento
+raro. `label=1` ocorre em 0.5-6% das linhas (ver "Pipeline de treino"
+abaixo) — `entry_percentile=80` significa operar nos 20% de barras com
+score mais alto, uma a duas ordens de grandeza mais permissivo que o
+próprio evento que o modelo tenta capturar. Isso já era verdade no score
+calibrado; a calibração isotônica só mascarava por acidente, criando
+empates que restringiam entradas sem que ninguém tivesse decidido
+restringir — remover o acidente expôs o problema de desenho inteiro.
+
+Duas correções em `choose_thresholds` (`model/training.py`):
+- **Piso de entrada ancorado no `label_rate`**: o percentil efetivo nunca é
+  mais permissivo que `100 - label_rate_floor_multiple × label_rate_pct`
+  do próprio fold de calibração (`label_rate_floor_multiple` default 3.0).
+  Um `entry_percentile` mais permissivo que o piso é apertado
+  automaticamente; um caller que já pede algo mais seletivo (os presets
+  95-99.5 de `risk_profiles.py`, spec 13) não é afetado.
+- **Saída por histerese de ruído, não por percentil**: `exit_threshold =
+  max(0.0, entry_threshold - exit_hysteresis_stdevs × stdev(diff(score
+  cru)))` — a saída fica expressa em unidades do próprio ruído bar-a-bar
+  medido na fatia de calibração, não numa posição arbitrária da
+  distribuição do score. Não pode disparar por ruído por construção,
+  independente do formato dessa distribuição.
+
+Versão mais forte, não implementada — registrada como follow-up: em vez de
+um piso sobre um percentil, varrer candidatos de threshold contra a fatia
+de calibração escolhendo o que maximiza o resultado líquido esperado
+(mesma disciplina que `choose_regime_threshold` já usa para
+`min_trend_pct`) — encaixaria o piso de custo (taxa/rodada) diretamente na
+escolha do threshold, em vez de descobrir depois que o trade médio não
+cobre o custo. Ver `changes/2026-08-19-benchmark-e-teste-de-nulidade.md`,
+quinta rodada, para a comparação empírica completa e o critério de sucesso
+escrito antes de revalidar.
+
 ## Filtro de regime de tendência (2026-07-31)
 
 O score do modelo (comparado contra `entry_threshold`, cru desde 2026-08-19 —
@@ -222,6 +259,22 @@ ou se proteger numa tendência de baixa.
    cronológicos sequenciais.
 3. Validação via **walk-forward** (ver `07-backtesting-e-validacao.md`) — nunca
    validação cruzada aleatória, que vaza informação do futuro para o passado.
+   **Purga na fronteira treino/teste (2026-08-19)**: o label de uma linha é
+   calculado olhando até `horizon_bars` candles à frente dela mesma
+   (triple-barrier, `model/dataset.py::_triple_barrier_label`) — sem purga,
+   as últimas `horizon_bars` linhas de cada fatia de treino têm label
+   calculado usando preço que só existe dentro da fatia de teste
+   imediatamente seguinte. Vazamento real, confirmado por inspeção de
+   código, distinto do invariante anti-leakage de features (spec 03, que
+   segue intacto — só o label tem essa janela para frente).
+   `model/training.py::walk_forward_splits` ganhou `purge_bars`: remove as
+   últimas `purge_bars` linhas de cada fatia de treino antes de devolvê-la;
+   a fatia de teste não precisa de *embargo* correspondente porque o label
+   dela nunca é consultado (o backtest roda sobre preço real via
+   `BacktestEngine`, não sobre `DatasetRow.label`). Todo chamador (
+   `evaluate_config`, `train_model.py`, `run_benchmark_comparison.py`,
+   `model/importance.py`) passa `purge_bars=target_config.horizon_bars`.
+   Ver `changes/2026-08-19-benchmark-e-teste-de-nulidade.md`.
 4. Calibração do score (ex.: `CalibratedClassifierCV` ou calibração isotônica)
    para que "score 0.7" realmente signifique ~70% de acerto histórico — sem
    isso, o score não é utilizável de forma confiável pela camada de decisão.

@@ -262,21 +262,157 @@ o primeiro decisivo:
   sólida; "perde em geral" não está demonstrado por este número sozinho. Registrado
   explicitamente para não deixar o t-stat carregar mais certeza do que sustenta.
 
-## Revalidação empírica pós-correção (janela fixa)
+## Revalidação empírica pós-correção do score cru (janela fixa) — resultado: PIOROU
 
-Pendente no momento em que esta seção foi escrita — rerun do diagnóstico e do benchmark de
-referência em andamento; resultado a preencher aqui quando terminar (evitando o mesmo erro
-de ancoragem já registrado para o teste de nulidade: não citar números de antes da correção
-como se fossem o estado atual).
+Comparação, mesma janela fixa, mesmos 5 folds, único fator variando (thresholds no espaço
+calibrado vs. cru):
+
+| | pré-fix (calibrado) | pós-fix (cru, percentis 80/50 inalterados) |
+|---|---|---|
+| trades totais (5 folds) | 113 | **362** |
+| pnl líquido total | -765.92 | **-2152.13** |
+| gap entry−exit (ordem de grandeza) | ~1e-3 | **~1e-5** |
+| razão stdev(score)/gap | 0.28 a 3.96 | **111 a 3187** |
+
+O mecanismo diagnosticado (isotônica colapsa em poucos patamares) estava correto e ficou
+confirmado de novo (score cru: 259-561 valores distintos; calibrado: 8-31 — mesma proporção
+da terceira rodada). Mas resolver a granularidade não resolveu a banda entry/exit — piorou:
+o score cru de um classificador de evento raro (label_rate 0.5-6%) fica concentrado perto de
+um valor baixo para a maioria das barras, com separação real só numa cauda superior fina.
+Os percentis 50 e 80 caem os dois dentro dessa massa concentrada — degenerescência por
+concentração de classe, mecanismo diferente do isotônico, mesmo sintoma. **Mecanismo
+correto, insuficiente sozinho, não validado como melhoria** (nas palavras do usuário) — o
+commit `deaff5f` fica (o ranqueamento em score cru é pré-requisito necessário para qualquer
+política de threshold funcionar — 8-31 valores não dão resolução nenhuma), mas não foi
+suficiente e a política de threshold em cima dele precisa mudar.
+
+## Critério de sucesso, escrito antes de rodar a próxima tentativa
+
+Instrução explícita do usuário: "escreva o critério de sucesso antes de rodar... Sem isso, a
+próxima rodada vira a mesma armadilha — a gente olha o resultado e constrói a explicação
+depois." Critérios fixados **antes** da revalidação da quinta rodada (abaixo):
+
+1. Trades totais (5 folds) não pode aumentar em relação ao baseline pré-fix (113) — idealmente
+   cai bem abaixo, refletindo seletividade ancorada no label_rate real (0.5-6%), não um
+   percentil fixo arbitrário.
+2. Bruto médio por trade deve exceder a taxa média por trade (~3.9-4.0) em todo fold com
+   amostra razoável (n≥20) — critério direto do achado do fold 2 (piso de custo).
+3. Pnl líquido total não pode ficar pior que o baseline pré-fix (-765.92) — não precisa
+   vencer o flat/buy&hold ainda (placeholder), só não regredir do que já existia antes desta
+   rodada de correções.
+4. Nenhum fold pode ter `exit_threshold` colapsado num valor absurdo (ex.: 0.0 cravado em
+   todo fold) sem isso ser reportado explicitamente como achado, não aceito em silêncio.
+
+## Quinta rodada: piso de entry ancorado no label_rate + saída por histerese de ruído
+
+Duas correções de desenho sobre a causa raiz real (percentil fixo é ferramenta errada para
+evento raro), escolhendo a versão mais simples que o usuário ofereceu como primeiro passo
+(não o sweep completo de valor esperado — registrado como possível refinamento mais forte,
+não implementado nesta rodada, para não expandir o raio de mudança em cima de um resultado
+que ainda precisa se provar):
+
+- **Entrada**: `choose_thresholds` (`model/training.py`) ganha um piso — o percentil efetivo
+  usado nunca é mais permissivo que `100 - label_rate_floor_multiple × label_rate_pct` do
+  próprio fold de calibração (`label_rate_floor_multiple` default 3.0). Um `entry_percentile`
+  chamado com 80 (ou qualquer valor mais permissivo que o piso) é automaticamente apertado;
+  um caller que já pede algo mais seletivo (ex.: os presets 95-99.5 de `risk_profiles.py`)
+  não é afetado. Preserva 100% das assinaturas externas existentes (`evaluate_config`,
+  `sweep_thresholds.py`, `risk_profiles.py`, o schema de ferramenta do loop agêntico em
+  `learning_engine/tools.py`) — só muda o piso interno, não o parâmetro que os chamadores já
+  passam.
+- **Saída**: `exit_percentile` removido de `choose_thresholds` — substituído por
+  `exit_hysteresis_stdevs` (default 3.0). `exit_threshold = max(0.0, entry_threshold -
+  exit_hysteresis_stdevs × stdev(diff(score cru na fatia de calibração)))`. A saída passa a
+  ser expressa em unidades do próprio ruído bar-a-bar já medido, não numa posição arbitrária
+  na distribuição — não pode disparar por ruído por construção, independente do formato da
+  distribuição do score. `scripts/train_model.py` e `scripts/run_benchmark_comparison.py`
+  trocam `--exit-percentile` por `--exit-hysteresis-stdevs`/`--label-rate-floor-multiple`.
+
+Follow-ups explicitamente registrados, não implementados: sweep completo de threshold por
+valor esperado líquido (a versão "correta" mais forte, considerada mas adiada); orçamento
+de trades/mês derivado de custo como restrição explícita (a inversão threshold←orçamento,
+capturada em espírito pelo piso de label_rate, mas não como mecanismo separado); saída por
+barreira temporal do horizonte do label como alternativa à histerese (exigiria estender o
+protocolo `Strategy` com estado de duração de posição — mudança maior, fora de escopo aqui).
+
+## Resultado do teste de nulidade na janela fixa (pré-correção de threshold) — e uma leitura invertida corrigida no mesmo dia
+
+Rodou (código pré-quarta-rodada, mas isso não invalida o resultado — `shuffle_labels` só
+mexe no label, nunca nas features, então o resultado não depende da política de
+threshold):
+
+```
+Real: mean_profit_factor=0.250 (0/5 folds vencidos)
+Distribuição nula (30 permutações): min=0.001 mediana=0.025 max=0.169
+p-valor empírico: 0.032
+```
+
+0 das 30 permutações alcançou o resultado real (o p mínimo que N=30 permite). **Minha
+primeira leitura deste resultado estava invertida** — tratei p<0.05 como alarme de
+vazamento ("ATENÇÃO... isso não é sorte, é evidência de vazamento no harness"). Está
+errado, e o usuário corrigiu: a hipótese nula do teste é "as features não carregam
+informação real sobre o label". As permutações são as execuções sem informação real, por
+construção (destroem a correspondência feature→label); o real superando todas elas é
+exatamente a cara de "rejeita a hipótese nula" — **evidência de sinal preditivo genuíno,
+o resultado desejado, não um alarme**. Corrigido nos docstrings de
+`run_nullity_test`/`NullityTestResult`/`evaluate_config`, no `scripts/run_nullity_test.py`
+(mensagem de saída) e em `specs/07-backtesting-e-validacao.md`.
+
+Ressalva que sobrevive à correção, agora enquadrada como precaução e não como acusação: o
+padrão "real muito acima do nulo" também é compatível com vazamento de lookahead na
+construção de features/labels (embaralhar o label não elimina esse tipo de vazamento — só
+muda qual futuro o label aponta). Por isso, mesmo sendo a leitura positiva, vale conferir
+o invariante anti-leakage antes de comemorar — não porque o teste "acusou" (ele não
+acusa), mas porque ele não distingue as duas fontes sozinho.
+
+**Nota técnica do usuário, também registrada**: a mediana da nuvem nula (0,025) é baixa
+demais para ser só "entrada aleatória com custo" — entrada aleatória com custo dá PF ruim,
+não quase zero. Isso é evidência (pelo lado oposto) de que o mecanismo de saída
+estrangula qualquer trade, real ou permutado, igualmente — os dois braços do teste estão
+sob o mesmo estrangulamento que a quinta rodada tentou consertar. Vale re-rodar depois da
+correção de threshold, para que a distância real-vs-nulo meça sinal, não sobrevivência.
+
+## Auditoria de purga/embargo — vazamento real confirmado por inspeção de código
+
+Prioridade levantada pelo usuário sobre o resultado acima: "real muito acima do nulo" é
+compatível tanto com sinal genuíno quanto com vazamento de lookahead — e há um suspeito
+concreto nunca verificado nesta investigação, o mesmo padrão clássico de walk-forward com
+label sobreposto. Confirmado por leitura direta do código, não por medição:
+`model/training.py::walk_forward_splits` (antes desta rodada) fazia
+`train = rows[:train_end]`, `test = rows[train_end:test_end]` — limite exato, sem gap. O
+label de uma linha (`model/dataset.py::_triple_barrier_label`) é calculado olhando até
+`horizon_bars` (15, no default) candles à frente da própria linha. Logo, as últimas 15
+linhas de `train_rows` em todo fold tinham label calculado usando preço que só existe
+dentro do `test_rows` imediatamente seguinte — vazamento real, não hipotético.
+
+**Correção**: `walk_forward_splits` ganhou `purge_bars` — remove as últimas `purge_bars`
+linhas de `train_rows` antes de devolvê-la. Sem *embargo* correspondente do lado do teste
+(o label de `test_rows` nunca é consultado — o backtest roda sobre preço real via
+`BacktestEngine`, não sobre `DatasetRow.label`). Threadeado em todo chamador:
+`evaluate_config` (`model/evaluation.py`), `scripts/train_model.py`,
+`scripts/run_benchmark_comparison.py`, `model/importance.py` — todos passam
+`purge_bars=target_config.horizon_bars`. Testes novos:
+`test_walk_forward_splits_purges_trailing_train_rows_when_requested`,
+`test_walk_forward_splits_purge_never_produces_negative_length_train`. `specs/04` documenta
+o achado e a correção. Suíte completa: 353 passed.
+
+Consequência prática: **todo resultado empírico desta investigação até aqui (benchmark,
+diagnósticos, o p=0,032 acima) foi produzido sem a purga** — não invalida os achados sobre
+mecanismo (banda de threshold, exit por ruído, piso de custo, degenerescência de score),
+que são sobre a política de decisão e não dependem da purga, mas o teste de nulidade
+especificamente precisa ser relido depois da correção, já que é exatamente o que a purga
+poderia estar contaminando.
 
 ## Pendente
 
-- Resultado do teste de nulidade na janela fixa, **pré-correção do threshold** (rodando —
-  iniciado antes da quarta rodada; leitura válida em si, mas não reflete a correção de
-  `choose_thresholds` acima).
-- Revalidação empírica pós-correção (diagnóstico + benchmark de referência) — rodando.
-- Restrição de desenho identificada no fold 2 (piso de custo vs. movimento capturado) — não
-  atacada nesta rodada.
+- Re-rodar o teste de nulidade com a purga aplicada — é a leitura que decide se o p=0,032
+  acima é sinal genuíno ou vazamento de lookahead.
+- Revalidação empírica da quinta rodada (threshold) contra os 4 critérios escritos acima —
+  precisa rodar de novo com a purga também aplicada (fold splits mudam).
+- Restrição de desenho identificada no fold 2 (piso de custo vs. movimento capturado) —
+  critério #2 acima ataca isso diretamente; resultado a confirmar.
+- Sweep de valor esperado líquido (versão mais forte da correção de entrada) — registrado,
+  não implementado.
 - Itens da fila estatística que seguem inalterados: DSR, PBO/CSCV, meta-labeling, detecção
   de regime (ordem definida pelo usuário em `changes/2026-08-18-captura-aggtrade-fluxo-ordens.md`).
 
@@ -315,3 +451,13 @@ como se fossem o estado atual).
   desta investigação. Duas notas adicionais do usuário (piso de custo do fold 2; ressalva
   de não-independência por trás do t=-12.65) registradas como achados/restrições, sem ação
   de código nesta rodada por não terem correção imediata associada.
+- Sexta rodada (correção da leitura invertida do teste de nulidade + auditoria de
+  purga/embargo): correção de leitura apontada por Brian ao ler o resultado do p=0,032 —
+  "esse resultado não é o achado de vazamento — é o resultado limpo... rejeita a hipótese
+  nula... a conclusão é: as features carregam sinal real". Prioridade de investigação
+  (purga antes de qualquer outra coisa) também definida por ele: "auditoria de
+  purga/embargo primeiro, porque é barata e é a única coisa que poderia invalidar
+  retroativamente tudo o que vier depois". A purga em si (limite exato sem gap em
+  `walk_forward_splits`, vazamento das últimas `horizon_bars` linhas de treino) foi
+  confirmada por leitura direta do código nesta sessão, não pré-existente na conversa —
+  a hipótese do usuário apontou exatamente onde olhar.

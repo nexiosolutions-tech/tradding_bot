@@ -8,12 +8,18 @@ or a fluke of that one shuffle — N permutations build a null distribution, and
 result's position in it is reported as an empirical p-value (fraction of permutations that
 matched or beat the real mean profit factor).
 
-Expected result: a high p-value (the real result looks unremarkable next to what pure
-chance produces on this pipeline). A low p-value is not evidence of a lucky model — it's
-evidence the harness itself is leaking information (most likely a violation of spec 03's
-anti-leakage invariant somewhere in the feature pipeline), and the fix belongs in the
-harness, not in the strategy. That is the entire value of this test: taking a positive
-result here seriously instead of shrugging it off as noise.
+Interpretation (corrected same day after shipping an inverted version — see
+changes/2026-08-19-benchmark-e-teste-de-nulidade.md): tests H0 "the features carry no real
+information about the label". A LOW p-value (real >> the null distribution) REJECTS H0 —
+that is evidence of genuine predictive signal, the desired finding, not an alarm. Caveat,
+not an alarm: this pattern is also consistent with lookahead leakage in feature/label
+construction (spec 03's anti-leakage invariant, and the walk-forward purge —
+model/training.py::walk_forward_splits' purge_bars) — worth a due-diligence check on a low
+p-value, not because the test flagged something wrong. A HIGH p-value (real indistinguishable
+from null) is not unconditionally "no signal" either: if some other mechanism (e.g. an exit
+rule firing from score noise) destroys performance the same way regardless of label quality,
+both real and permuted get strangled identically and the test loses power to detect a real
+signal underneath — an unusually low null-distribution median is itself a symptom of this.
 
 Usage:
     python scripts/run_nullity_test.py --symbol BTCUSDT --interval 1m --days 45 --n-permutations 30
@@ -91,17 +97,25 @@ def main() -> None:
     )
     print(f"p-valor empírico: {result.p_value:.3f}")
 
-    if result.p_value >= 0.05:
+    if result.p_value < 0.05:
         print(
-            "Resultado esperado: o resultado real não se distingue do que o acaso produz "
-            "neste pipeline (p >= 0.05)."
+            "Sinal real (p < 0.05): o resultado real supera a esmagadora maioria das "
+            "permutações com labels embaralhados — rejeita a hipótese nula de que as "
+            "features não carregam informação sobre o label. É o resultado desejado, não "
+            "um alarme. Ressalva de precaução (não porque o teste acusou algo): esse "
+            "padrão também é compatível com vazamento de lookahead na construção de "
+            "features/labels — vale conferir o invariante anti-vazamento (spec 03) e a "
+            "purga na fronteira do walk-forward (walk_forward_splits, purge_bars) antes "
+            "de confiar no número."
         )
     else:
         print(
-            "ATENÇÃO: o resultado real supera a esmagadora maioria das permutações com "
-            "labels embaralhados (p < 0.05) — isso não é sorte, é evidência de vazamento "
-            "no harness (spec 03). Investigue antes de confiar em qualquer resultado real "
-            "de evaluate_config."
+            "Sem sinal detectável (p >= 0.05): o resultado real não se distingue do que o "
+            "acaso produz neste pipeline. Não é conclusivo por si só se a mediana da "
+            "distribuição nula estiver anormalmente baixa (abaixo do que entradas "
+            "aleatórias líquidas de custo produziriam) — pode indicar que algum mecanismo "
+            "(ex.: saída disparando por ruído) estrangula real e permutado por igual, "
+            "mascarando sinal genuíno em vez de confirmar sua ausência."
         )
 
 

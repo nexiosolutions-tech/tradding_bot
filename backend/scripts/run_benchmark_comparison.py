@@ -74,7 +74,8 @@ def main() -> None:
     parser.add_argument("--horizon-minutes", type=int, default=15)
     parser.add_argument("--move-threshold-pct", type=float, default=0.008)
     parser.add_argument("--entry-percentile", type=float, default=80.0)
-    parser.add_argument("--exit-percentile", type=float, default=50.0)
+    parser.add_argument("--label-rate-floor-multiple", type=float, default=3.0)
+    parser.add_argument("--exit-hysteresis-stdevs", type=float, default=3.0)
     parser.add_argument("--regime-calib-min-trades", type=int, default=5)
     parser.add_argument("--initial-capital", type=float, default=10_000.0)
     parser.add_argument("--testnet", action="store_true")
@@ -120,13 +121,19 @@ def main() -> None:
     model_config = ModelConfig()
 
     fold_reports = []
-    for fold_index, (train_rows, test_rows) in enumerate(walk_forward_splits(rows, n_splits=args.n_splits)):
+    for fold_index, (train_rows, test_rows) in enumerate(
+        walk_forward_splits(rows, n_splits=args.n_splits, purge_bars=target_config.horizon_bars)
+    ):
         if not train_rows or not test_rows:
             continue
         fit_rows, calib_rows = split_fit_calibration(train_rows, calibration_fraction=0.2)
         model = train_model(fit_rows, model_config, calibration_fraction=0.2)
         entry_threshold, exit_threshold = choose_thresholds(
-            model, calib_rows, entry_percentile=args.entry_percentile, exit_percentile=args.exit_percentile
+            model,
+            calib_rows,
+            entry_percentile=args.entry_percentile,
+            label_rate_floor_multiple=args.label_rate_floor_multiple,
+            exit_hysteresis_stdevs=args.exit_hysteresis_stdevs,
         )
         model_strategy = ModelStrategy(
             model=model, entry_threshold=entry_threshold, exit_threshold=exit_threshold, stop_loss_pct=STOP_LOSS_PCT

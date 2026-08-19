@@ -48,6 +48,31 @@ def test_walk_forward_splits_never_overlap_and_expand():
     assert splits[-1][1][-1].knowledge_ts == rows[-1].knowledge_ts
 
 
+def test_walk_forward_splits_purges_trailing_train_rows_when_requested():
+    """purge_bars (2026-08-19 finding, "purged walk-forward"): a training row's label is
+    computed by looking up to horizon_bars forward from its own knowledge_ts
+    (model/dataset.py::_triple_barrier_label) — with purge_bars=0, the last horizon_bars
+    rows of every training slice have labels that peek into the immediately following test
+    slice. Confirmed real leakage by code inspection, not the feature-side anti-leakage
+    invariant (spec 03), which stays intact. test_rows must be untouched — test labels are
+    never consulted (the backtest runs on real price action)."""
+    rows = _separable_rows(500)
+    purge_bars = 15
+    unpurged = list(walk_forward_splits(rows, n_splits=5, min_train_fraction=0.4, purge_bars=0))
+    purged = list(walk_forward_splits(rows, n_splits=5, min_train_fraction=0.4, purge_bars=purge_bars))
+
+    assert len(unpurged) == len(purged)
+    for (train_u, test_u), (train_p, test_p) in zip(unpurged, purged):
+        assert test_p == test_u
+        assert train_p == train_u[:-purge_bars]
+
+
+def test_walk_forward_splits_purge_never_produces_negative_length_train():
+    rows = _separable_rows(50)
+    for train, _test in walk_forward_splits(rows, n_splits=2, min_train_fraction=0.4, purge_bars=10_000):
+        assert len(train) == 0
+
+
 def test_split_fit_calibration_is_chronological_and_non_overlapping():
     rows = _separable_rows(200)
     fit_rows, calib_rows = split_fit_calibration(rows, calibration_fraction=0.2)
@@ -73,7 +98,7 @@ def test_choose_thresholds_are_derived_from_calibration_rows_only():
     fit_rows, calib_rows = split_fit_calibration(rows, calibration_fraction=0.2)
     model = train_model(fit_rows, ModelConfig(n_estimators=50), calibration_fraction=0.2)
 
-    entry, exit_ = choose_thresholds(model, calib_rows, entry_percentile=80, exit_percentile=50)
+    entry, exit_ = choose_thresholds(model, calib_rows, entry_percentile=80)
     assert 0.0 <= exit_ <= entry <= 1.0
 
 
@@ -88,10 +113,53 @@ def test_choose_thresholds_ranks_on_raw_score_not_calibrated():
         def predict_raw_batch(self, rows):
             return np.arange(len(rows), dtype=float)
 
-    calib_rows = _separable_rows(11)
-    entry, exit_ = choose_thresholds(_StubRawModel(), calib_rows, entry_percentile=80, exit_percentile=50)
+    # label_rate = 0% here -> floor_percentile = 100 - 3*0 = 100, capped at 99.9, so the
+    # floor (not the requested 80) decides — covered separately by the floor-specific test
+    # below. Use a high enough label_rate that the floor stays out of the way, isolating
+    # "does this rank on raw score at all" from "does the floor apply".
+    calib_rows = [_row(i, rsi=0.0, label=1) for i in range(11)]  # label_rate 100% -> floor = -200
+    entry, exit_ = choose_thresholds(_StubRawModel(), calib_rows, entry_percentile=80)
     assert entry == pytest.approx(np.percentile(np.arange(11), 80))
-    assert exit_ == pytest.approx(np.percentile(np.arange(11), 50))
+
+
+def test_choose_thresholds_applies_label_rate_floor_and_noise_hysteresis():
+    """Regression guard (2026-08-19, fifth round): switching to the raw score alone
+    (without this floor) measurably made results worse on real data — 362 trades vs. 113,
+    net pnl -2152 vs. -765 on the same fixed window (changes/2026-08-19-benchmark-e-teste-
+    de-nulidade.md) — because a rare-event classifier's raw score is itself concentrated
+    near a low value for most rows, so entry_percentile=80 alone is still far too
+    permissive relative to the true event rate."""
+
+    class _StubRawModel:
+        def predict_raw_batch(self, rows):
+            return np.array([0.0, 1.0, 2.0, 10.0, 11.0, 12.0, 20.0, 21.0, 22.0, 100.0])
+
+    raw = np.array([0.0, 1.0, 2.0, 10.0, 11.0, 12.0, 20.0, 21.0, 22.0, 100.0])
+    calib_rows = [_row(i, rsi=0.0, label=1 if i == 0 else 0) for i in range(10)]  # label_rate 10%
+
+    entry, exit_ = choose_thresholds(_StubRawModel(), calib_rows, entry_percentile=50.0)
+
+    # floor_percentile = 100 - 3.0 * 10.0 = 70, stricter than the requested 50 -> floor wins
+    expected_entry = np.percentile(raw, 70.0)
+    assert entry == pytest.approx(expected_entry)
+
+    noise_stdev = float(np.std(np.diff(raw)))
+    expected_exit = max(0.0, expected_entry - 3.0 * noise_stdev)
+    assert exit_ == pytest.approx(expected_exit)
+    assert exit_ < entry
+
+
+def test_choose_thresholds_leaves_a_stricter_caller_percentile_untouched():
+    """A caller already asking for something stricter than the label-rate floor (e.g.
+    risk_profiles.py's 95-99.5 presets) must not be loosened by this change."""
+
+    class _StubRawModel:
+        def predict_raw_batch(self, rows):
+            return np.arange(len(rows), dtype=float)
+
+    calib_rows = [_row(i, rsi=0.0, label=1 if i == 0 else 0) for i in range(10)]  # label_rate 10% -> floor 70
+    entry, _ = choose_thresholds(_StubRawModel(), calib_rows, entry_percentile=95.0)
+    assert entry == pytest.approx(np.percentile(np.arange(10), 95.0))
 
 
 def test_predict_raw_bypasses_calibration():

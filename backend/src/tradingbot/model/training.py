@@ -75,10 +75,23 @@ def walk_forward_splits(
     rows: list[DatasetRow],
     n_splits: int = 5,
     min_train_fraction: float = 0.4,
+    purge_bars: int = 0,
 ) -> Iterator[tuple[list[DatasetRow], list[DatasetRow]]]:
     """Expanding-window walk-forward: each fold trains on everything up to that point in
     time and tests on the immediately following block it has never seen — never a random
-    shuffle, per spec 04/07."""
+    shuffle, per spec 04/07.
+
+    purge_bars (2026-08-19 finding — "purged walk-forward", López de Prado): a row's label
+    is computed by looking up to horizon_bars forward from its own knowledge_ts
+    (model/dataset.py::_triple_barrier_label) — so, with purge_bars=0, the last horizon_bars
+    rows of every training slice have labels that were determined using price action from
+    inside the immediately following test slice. That is real leakage across the train/test
+    boundary, confirmed by code inspection (not the anti-leakage invariant spec 03 already
+    guards for features, which stays intact — only the label's own forward-looking window is
+    affected). Pass target_config.horizon_bars here to drop those trailing rows from
+    train_rows before it's returned; test_rows is untouched (test labels are never used —
+    the backtest runs on real price action, not DatasetRow.label — so no embargo is needed
+    on the test side)."""
     n = len(rows)
     min_train = int(n * min_train_fraction)
     remaining = n - min_train
@@ -89,7 +102,8 @@ def walk_forward_splits(
     for i in range(n_splits):
         train_end = min_train + i * fold_size
         test_end = train_end + fold_size if i < n_splits - 1 else n
-        yield rows[:train_end], rows[train_end:test_end]
+        purged_train_end = max(0, train_end - purge_bars)
+        yield rows[:purged_train_end], rows[train_end:test_end]
 
 
 def split_fit_calibration(
@@ -146,19 +160,47 @@ def choose_thresholds(
     model: TrainedModel,
     calib_rows: list[DatasetRow],
     entry_percentile: float = 80.0,
-    exit_percentile: float = 50.0,
+    label_rate_floor_multiple: float = 3.0,
+    exit_hysteresis_stdevs: float = 3.0,
 ) -> tuple[float, float]:
     """Derives entry/exit score thresholds from the *training-side* calibration rows only
     — never from the out-of-sample test fold, which would leak the evaluation data into a
     model hyperparameter. Ranks on the raw (uncalibrated) score, not predict_proba_batch's
     calibrated output — percentiles only need ordering, and isotonic calibration collapses
-    the score into a handful of plateaus by construction (see TrainedModel.predict_raw),
-    which can make entry_threshold and exit_threshold collide exactly on real data
-    (2026-08-19 finding). The returned thresholds live in raw-score space — callers must
-    compare against model.predict_raw, not model.predict_proba (see ModelStrategy)."""
+    the score into a handful of plateaus by construction (see TrainedModel.predict_raw).
+    The returned thresholds live in raw-score space — callers must compare against
+    model.predict_raw, not model.predict_proba (see ModelStrategy).
+
+    entry_percentile alone is the wrong tool for a rare-event target (2026-08-19): label=1
+    has been observed at 0.5-6% of rows (spec 04), so entry_percentile=80 means trading on
+    the top 20% of bars — one to two orders of magnitude more permissive than the event
+    itself. Switching to the raw score alone (removing isotonic calibration's incidental,
+    unintentional tie-driven filtering) measurably made this worse, not better (362 trades
+    vs. 113, net pnl -2152 vs. -765, same fixed window) — see
+    changes/2026-08-19-benchmark-e-teste-de-nulidade.md, quarta/quinta rodadas. A floor
+    anchored to this fold's own label_rate is applied on top of whatever percentile the
+    caller asks for: the effective percentile is never more permissive than
+    `100 - label_rate_floor_multiple * label_rate_pct`, so a caller-selected percentile too
+    loose for this fold's real event rate gets tightened automatically, while a caller
+    already asking for something stricter (e.g. risk_profiles.py's 95-99.5) is untouched.
+
+    exit_threshold is derived, not an independent percentile: entry_threshold minus
+    exit_hysteresis_stdevs times the bar-to-bar raw-score noise measured on this same
+    calibration slice — a fixed number of noise-units below entry, so should_exit can't
+    fire from ordinary score noise by construction, independent of how the score is
+    distributed (unlike a percentile-based exit, which reads an arbitrary position in
+    whatever shape the score happens to have)."""
     scores = model.predict_raw_batch(calib_rows)
-    entry = float(np.percentile(scores, entry_percentile))
-    exit_ = float(np.percentile(scores, exit_percentile))
+
+    label_rate_pct = 100.0 * sum(r.label for r in calib_rows) / len(calib_rows) if calib_rows else 0.0
+    floor_percentile = min(100.0 - label_rate_floor_multiple * label_rate_pct, 99.9)
+    effective_entry_percentile = max(entry_percentile, floor_percentile)
+    entry = float(np.percentile(scores, effective_entry_percentile))
+
+    score_diffs = np.diff(scores)
+    noise_stdev = float(np.std(score_diffs)) if len(score_diffs) > 1 else 0.0
+    exit_ = max(0.0, entry - exit_hysteresis_stdevs * noise_stdev)
+
     return entry, exit_
 
 

@@ -51,7 +51,7 @@ def compute_feature_importance(
     )
     rows = build_dataset(events, target_config)
 
-    *_, (train_rows, test_rows) = walk_forward_splits(rows, n_splits=n_splits)
+    *_, (train_rows, test_rows) = walk_forward_splits(rows, n_splits=n_splits, purge_bars=target_config.horizon_bars)
     fit_rows, _ = split_fit_calibration(train_rows, calibration_fraction=0.2)
     model = train_model(fit_rows, ModelConfig())
 
