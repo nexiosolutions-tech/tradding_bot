@@ -41,10 +41,24 @@ def main() -> None:
     parser.add_argument("--n-permutations", type=int, default=30)
     parser.add_argument("--base-seed", type=int, default=0)
     parser.add_argument("--testnet", action="store_true")
+    parser.add_argument(
+        "--start-ms", type=int, default=None,
+        help="Fixed window start (ms epoch). --days is relative to time.time() otherwise, "
+        "which makes two runs minutes apart pull different data and produce non-comparable "
+        "fold splits (2026-08-19 finding) — pass this (with --end-ms) to match a specific "
+        "run_benchmark_comparison.py window.",
+    )
+    parser.add_argument("--end-ms", type=int, default=None, help="Fixed window end (ms epoch); see --start-ms.")
     args = parser.parse_args()
 
-    end_ms = int(time.time() * 1000)
-    start_ms = end_ms - args.days * 24 * 60 * 60 * 1000
+    if (args.start_ms is None) != (args.end_ms is None):
+        raise SystemExit("--start-ms and --end-ms must be given together")
+    if args.end_ms is not None:
+        end_ms, start_ms = args.end_ms, args.start_ms
+    else:
+        end_ms = int(time.time() * 1000)
+        start_ms = end_ms - args.days * 24 * 60 * 60 * 1000
+    print(f"Janela: start_ms={start_ms} end_ms={end_ms} (passe ambos de volta via --start-ms/--end-ms para reproduzir)")
 
     print(f"Fetching {args.symbol} {args.interval} klines for the last {args.days} day(s)...")
     client = BinanceRestClient(testnet=args.testnet)

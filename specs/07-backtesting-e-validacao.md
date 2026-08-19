@@ -246,6 +246,30 @@ jogar fora um dado que já estava em memória. Motivação: DSR e PBO/CSCV
 fold, não só do profit factor agregado — sem isso, implementá-los mais
 tarde exigiria re-rodar todo backtest de novo só para recuperar o dado.
 
+## Janela de dados fixa para runs comparáveis (2026-08-19)
+
+`--days N` relativo a `time.time()` (o padrão em praticamente todo script de
+`scripts/`) não é reprodutível: dois runs do mesmo código minutos apart
+buscam janelas de klines diferentes, o que desloca `len(rows)` e, com ele,
+todo limite de fold do walk-forward — confirmado empiricamente
+(`changes/2026-08-19-benchmark-e-teste-de-nulidade.md`, terceira rodada): o
+mesmo fold, mesmo código, produziu 28 trades numa execução e 9 em outra,
+~20 minutos depois. Resultados de janela relativa não são apenas
+"não-comparáveis" entre execuções — são **inválidos** como leitura de
+desempenho, porque não se sabe se uma diferença observada veio de uma
+mudança real ou só da janela ter mudado.
+
+`scripts/run_benchmark_comparison.py` e `scripts/run_nullity_test.py`
+aceitam `--start-ms`/`--end-ms` para fixar a janela explicitamente
+(mantêm o comportamento relativo por `--days` se omitidos, e sempre
+imprimem a janela resolvida). Qualquer comparação entre execuções — antes
+e depois de uma mudança, candidato vs. benchmark, leitura A vs. leitura B
+— exige a mesma janela fixa nos dois lados. O mesmo padrão existe em outros
+scripts do projeto (`train_model.py`, `sweep_thresholds.py`,
+`backtesting/runner.py`, `run_agentic_learning.py`, entre outros) e não foi
+corrigido em massa — resolver caso a caso quando cada um precisar de
+reprodutibilidade.
+
 ## Relação com o dashboard e o motor de aprendizado
 
 - Todo relatório de backtest gerado (seja de validação de mudança, seja
