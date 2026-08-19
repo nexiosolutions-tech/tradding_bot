@@ -1,6 +1,11 @@
 """Reads back the samples scripts/measure_aggtrade_rate.py collected and reports the
-peak (p95/p99), not the average — a single busy 5-minute window decides whether REST
-polling can be aggtrade-capture's primary source, not the typical case. Run this after
+high percentile (p95/p99), not the average — the busiest windows decide whether REST
+polling can be aggtrade-capture's primary source, not the typical case. The measurer runs
+continuously (not a fixed 24h window — even a full day only captures intraday
+seasonality, not event-driven tail risk), so re-running this later, once more history has
+accumulated, only makes the percentile more trustworthy. Whatever it reports is still a
+floor on the true peak, not the peak itself — that's what the 3x headroom margin below
+exists to cover, not a separate safety factor on top of it. Run this any time after
 measure_aggtrade_rate.py has been collecting for at least one full ~24h cycle. See
 changes/2026-08-18-captura-aggtrade-fluxo-ordens.md.
 

@@ -485,11 +485,34 @@ partir do que já roda.
   — qualquer feature futura que cruzasse as duas produziria correlação sem sentido. Nenhuma
   existe ainda, mas a janela deve durar alguns dias e o risco não é visível olhando o schema.
 
+## Oitava rodada: cadência mais fina + medidor vira monitor permanente
+
+Duas correções ao desenho da sétima rodada, feitas ainda no início da janela de coleta
+(mais barato corrigir agora do que descobrir depois que 24h foram amostradas grosso
+demais):
+
+- **Cadência de 5min → 30s**: uma amostra mede só o span dos últimos 1000 trades naquele
+  instante — entre uma amostra e a seguinte há um intervalo não observado, e uma rajada de
+  60-90s (o modo de falha exato que a medição existe pra detectar) cabe inteira nesse
+  buraco. O peso real observado por chamada (~4, lido do próprio header
+  `X-MBX-USED-WEIGHT-1M`, não estimado) dá folga enorme contra o teto de 6000/min mesmo a
+  30s — a mudança foi feita com evidência de folga, não palpite.
+- **24h captura sazonalidade intradiária, não cauda de evento**: abertura de sessão e
+  virada de horário aparecem num ciclo diário; uma cascata de liquidação ou dado macro não
+  obedece relógio e pode não aparecer em nenhuma janela de 24h específica. Consequência:
+  todo percentil que `scripts/analyze_aggtrade_rate.py` calcular é um **piso** do pico
+  real, nunca o pico em si — é exatamente esse gap que a margem de folga de 3x da decisão
+  de arquitetura existe pra cobrir, não uma segurança adicional por cima dela.
+- **`measure_aggtrade_rate.py` deixa de ser "investigação de 24h, apagar depois" e vira
+  monitor permanente**: custo irrisório (poucas chamadas/minuto, peso de dígito único), o
+  percentil só fica mais confiável com mais histórico, e sobra de brinde um detector se o
+  comportamento do endpoint mudar no futuro. `AggTradeRateSample` e o próprio script
+  documentam essa decisão explicitamente agora.
+
 ## Pendente
 
-- **Rodar `scripts/measure_aggtrade_rate.py` por ~24h e analisar com
-  `scripts/analyze_aggtrade_rate.py`** — medição em andamento, resultado ainda não
-  conhecido.
+- **Rodar `scripts/analyze_aggtrade_rate.py`** quando houver histórico suficiente — o
+  medidor roda permanentemente agora, sem prazo fixo de "esperar 24h e desligar".
 - **`aggtrade-capture` → REST mainnet**, desenho decidido pelo resultado da medição acima
   (mas com preferência já registrada por arquivo+cauda, não só polling puro).
 - **Backfill histórico de aggTrade** (`data.binance.vision`) com bucketização

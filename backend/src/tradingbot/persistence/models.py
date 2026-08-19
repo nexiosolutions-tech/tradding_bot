@@ -137,15 +137,21 @@ class AggTradeBucket(Base):
 
 
 class AggTradeRateSample(Base):
-    """Investigação pontual (2026-08-18, changes/2026-08-18-captura-aggtrade-fluxo-ordens.md)
-    — não é captura permanente, seguro apagar depois que a decisão de arquitetura do
-    aggtrade-capture (polling REST como fonte primária vs. arquivo diário + polling como
-    cauda) for tomada. Cada linha é uma amostra de quantos segundos de atividade real de
-    mercado (mainnet) cabem numa única resposta de 1000 trades — `scripts/measure_aggtrade_rate.py`
-    amostra repetidamente ao longo de um ciclo de ~24h porque o fluxo de BTCUSDT é
-    heterogêneo (abertura de sessão, dados macro, movimentos bruscos); uma amostra única
-    num momento calmo mentiria. `used_weight_1m` vem direto do header
-    `X-MBX-USED-WEIGHT-1M` da própria resposta — peso real observado, não estimado."""
+    """Monitor permanente, não investigação de uma vez só (2026-08-18, decisão revisada no
+    mesmo dia — changes/2026-08-18-captura-aggtrade-fluxo-ordens.md): o custo de
+    `scripts/measure_aggtrade_rate.py` rodando indefinidamente é trivial (poucas
+    chamadas/minuto, peso de dígito único), o percentil alto só fica mais confiável com
+    mais histórico, e vira detector se o comportamento do endpoint mudar — não há razão
+    pra desligar depois da decisão inicial de arquitetura do aggtrade-capture. Cada linha
+    é uma amostra de quantos segundos de atividade real de mercado (mainnet) cabem numa
+    única resposta de 1000 trades. Amostragem contínua a cada 30s (não uma janela fixa de
+    24h): o fluxo de BTCUSDT é heterogêneo (abertura de sessão, dados macro, movimentos
+    bruscos) e mesmo um ciclo diário completo só captura sazonalidade intradiária, não
+    risco de cauda de evento (uma cascata de liquidação não obedece relógio) — o percentil
+    medido é sempre um piso do pico real, nunca o pico em si; é exatamente essa lacuna que
+    a margem de folga de 3x na decisão de arquitetura existe para cobrir. `used_weight_1m`
+    vem direto do header `X-MBX-USED-WEIGHT-1M` da própria resposta — peso real observado,
+    não estimado."""
 
     __tablename__ = "aggtrade_rate_samples"
 
