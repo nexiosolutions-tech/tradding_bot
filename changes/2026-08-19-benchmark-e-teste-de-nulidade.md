@@ -209,9 +209,74 @@ Encadeamento de hipóteses testadas e descartadas, nesta ordem:
   janela relativa, caso/quando cada um precisar de reprodutibilidade — não corrigido em
   massa aqui.
 
+## Quarta rodada: causa raiz da causa raiz — calibração isotônica colapsa o score, thresholds passam a ranquear no score cru
+
+Dois acréscimos do usuário sobre o achado de degenerescência de score da terceira rodada,
+o primeiro decisivo:
+
+- **Teste decisivo**: contar valores distintos do score *antes* da calibração isotônica e
+  comparar com depois. Medido nos mesmos 5 folds da janela fixa: score cru tem 259 a 561
+  valores distintos (3.5%-7.5% das ~7500 amostras); calibrado tem 8 a 31 (0.1%-0.4%) — uma
+  razão de ~20-70x. Confirma a hipótese estrutural: regressão isotônica é uma função-degrau
+  monotônica que resolve por blocos por construção, não o modelo (LightGBM) sendo
+  degenerado — a calibração é quem colapsa, não o classificador de base.
+- **Correção implementada, não só registrada**: como `entry_threshold`/`exit_threshold` só
+  precisam de ordenação (são percentis), e a isotônica preserva ordem mas destrói
+  granularidade, ranquear sobre o score cru remove a banda degenerada sem precisar
+  entender/consertar a calibração em si.
+  - `TrainedModel.predict_raw`/`predict_raw_batch` (`model/training.py`, novo): saída do
+    LightGBM antes da isotônica.
+  - `choose_thresholds` passou a ranquear sobre `predict_raw_batch`, não mais
+    `predict_proba_batch`.
+  - `ModelStrategy.on_features`/`should_exit` (`model/strategy.py`) comparam contra os
+    thresholds via `predict_raw`, nunca mais `predict_proba`. `TradeSignal.confidence`
+    continua vindo de `predict_proba` (calibrado) — só a decisão de entrada/saída muda de
+    espaço, a leitura humana ("score 0.7 ≈ 70% de acerto") continua igual.
+  - `brier_score` continua sobre `predict_proba_batch` — é a métrica de qualidade de
+    calibração, deveria mesmo medir o calibrado.
+  - Testes novos: `test_choose_thresholds_ranks_on_raw_score_not_calibrated` (regressão via
+    stub sem `predict_proba_batch` — quebraria com `AttributeError` se o código voltasse a
+    usar o calibrado), `test_predict_raw_bypasses_calibration`,
+    `test_predict_raw_batch_has_at_least_as_many_distinct_values_as_calibrated`,
+    `test_on_features_decides_on_raw_score_reports_calibrated_confidence`,
+    `test_should_exit_decides_on_raw_score_not_calibrated`. Suíte completa: 349 passed (5
+    novos).
+  - `specs/04-modelo-ml-e-scoring.md` documenta a mudança e o raciocínio de por que o
+    *conjunto* de linhas selecionado por "top 20% do score" não muda (percentil preserva
+    ordem) — só a fronteira deixa de colidir nos empates que o calibrado cria.
+
+## Duas notas do usuário sobre a leitura estatística do fold 2, registradas sem ação de código
+
+- **Piso de custo, achado distinto de "sinal negativo"**: no fold 2 (único com amostra
+  confiável), bruto médio por trade = -2.32, taxa média por trade = 3.92 — mesmo que o
+  sinal estivesse com o lado certo (bruto invertido para +2.32), não pagaria a taxa. O
+  movimento capturado por trade é estruturalmente pequeno demais para o custo de round-trip
+  neste horizonte/parametrização — problema de desenho (permanência/movimento capturado),
+  não só de qualidade do modelo. Entra como restrição de desenho na task #191, não corrigido
+  nesta rodada (depende de decidir o que muda: horizonte, `move_threshold_pct`, ou ambos).
+  A checagem foi replicada nos outros folds pós-correção do threshold — ver seção de
+  revalidação abaixo.
+- **Ressalva sobre o t=-12.65 do fold 2**: decisivo sobre *este fold* (67 trades, mesmo
+  modelo, mesma janela, mesmo regime de mercado — mas não 67 observações independentes;
+  amostra efetiva de episódios de mercado é bem menor). "Perdeu neste fold" é conclusão
+  sólida; "perde em geral" não está demonstrado por este número sozinho. Registrado
+  explicitamente para não deixar o t-stat carregar mais certeza do que sustenta.
+
+## Revalidação empírica pós-correção (janela fixa)
+
+Pendente no momento em que esta seção foi escrita — rerun do diagnóstico e do benchmark de
+referência em andamento; resultado a preencher aqui quando terminar (evitando o mesmo erro
+de ancoragem já registrado para o teste de nulidade: não citar números de antes da correção
+como se fossem o estado atual).
+
 ## Pendente
 
-- Resultado do teste de nulidade na janela fixa (rodando).
+- Resultado do teste de nulidade na janela fixa, **pré-correção do threshold** (rodando —
+  iniciado antes da quarta rodada; leitura válida em si, mas não reflete a correção de
+  `choose_thresholds` acima).
+- Revalidação empírica pós-correção (diagnóstico + benchmark de referência) — rodando.
+- Restrição de desenho identificada no fold 2 (piso de custo vs. movimento capturado) — não
+  atacada nesta rodada.
 - Itens da fila estatística que seguem inalterados: DSR, PBO/CSCV, meta-labeling, detecção
   de regime (ordem definida pelo usuário em `changes/2026-08-18-captura-aggtrade-fluxo-ordens.md`).
 
@@ -241,3 +306,12 @@ Encadeamento de hipóteses testadas e descartadas, nesta ordem:
   via campo `INVALID` no JSON original e nesta seção. Instrução sobre o teste de nulidade em
   curso: deixar terminar como leitura da janela antiga (rotulada como tal) e relançar na
   janela fixa para o registro oficial, evitando ancoragem no primeiro número lido.
+- Quarta rodada aprovada por: Brian, a partir da própria hipótese estrutural sobre por que
+  isotônica colapsa em poucos patamares ("regressão isotônica... resolve por blocos e
+  produz poucos patamares distintos por construção... É exatamente a faixa que você
+  mediu") e da correção proposta como "vale mais que a guarda contra banda zero... isso
+  remove a causa do sintoma". Implementação feita após confirmar a hipótese por medição
+  (raw vs. calibrado), não antes — mesma disciplina de medir-antes-de-implementar do resto
+  desta investigação. Duas notas adicionais do usuário (piso de custo do fold 2; ressalva
+  de não-independência por trás do t=-12.65) registradas como achados/restrições, sem ação
+  de código nesta rodada por não terem correção imediata associada.

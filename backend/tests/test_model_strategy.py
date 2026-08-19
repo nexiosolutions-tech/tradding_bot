@@ -15,13 +15,19 @@ from tradingbot.model.strategy import (
 
 @dataclass
 class StubModel:
-    """Duck-types TrainedModel: ModelStrategy only needs feature_names and predict_proba."""
+    """Duck-types TrainedModel: ModelStrategy needs feature_names, predict_raw (the entry/
+    exit decision, 2026-08-19) and predict_proba (TradeSignal.confidence only) — kept
+    independently settable so tests can verify the two are never conflated."""
 
     feature_names: tuple
-    score: float
+    raw_score: float
+    proba_score: float | None = None
+
+    def predict_raw(self, features):
+        return self.raw_score
 
     def predict_proba(self, features):
-        return self.score
+        return self.proba_score if self.proba_score is not None else self.raw_score
 
 
 def _snapshot(features=None):
@@ -34,7 +40,7 @@ def _snapshot(features=None):
 
 
 def test_on_features_emits_signal_above_entry_threshold():
-    model = StubModel(feature_names=FEATURE_NAMES, score=0.8)
+    model = StubModel(feature_names=FEATURE_NAMES, raw_score=0.8)
     strategy = ModelStrategy(model=model, entry_threshold=0.7, exit_threshold=0.4, stop_loss_pct=0.02)
 
     signal = strategy.on_features(_snapshot())
@@ -44,14 +50,14 @@ def test_on_features_emits_signal_above_entry_threshold():
 
 
 def test_on_features_returns_none_below_entry_threshold():
-    model = StubModel(feature_names=FEATURE_NAMES, score=0.5)
+    model = StubModel(feature_names=FEATURE_NAMES, raw_score=0.5)
     strategy = ModelStrategy(model=model, entry_threshold=0.7, exit_threshold=0.4, stop_loss_pct=0.02)
 
     assert strategy.on_features(_snapshot()) is None
 
 
 def test_on_features_returns_none_when_features_incomplete():
-    model = StubModel(feature_names=FEATURE_NAMES, score=0.9)
+    model = StubModel(feature_names=FEATURE_NAMES, raw_score=0.9)
     strategy = ModelStrategy(model=model, entry_threshold=0.7, exit_threshold=0.4, stop_loss_pct=0.02)
 
     incomplete = {name: 0.0 for name in FEATURE_NAMES[:-1]}  # missing one required feature
@@ -59,17 +65,39 @@ def test_on_features_returns_none_when_features_incomplete():
 
 
 def test_should_exit_below_exit_threshold():
-    model = StubModel(feature_names=FEATURE_NAMES, score=0.3)
+    model = StubModel(feature_names=FEATURE_NAMES, raw_score=0.3)
     strategy = ModelStrategy(model=model, entry_threshold=0.7, exit_threshold=0.4, stop_loss_pct=0.02)
 
     assert strategy.should_exit(_snapshot()) is True
 
 
 def test_should_not_exit_above_exit_threshold():
-    model = StubModel(feature_names=FEATURE_NAMES, score=0.6)
+    model = StubModel(feature_names=FEATURE_NAMES, raw_score=0.6)
     strategy = ModelStrategy(model=model, entry_threshold=0.7, exit_threshold=0.4, stop_loss_pct=0.02)
 
     assert strategy.should_exit(_snapshot()) is False
+
+
+def test_on_features_decides_on_raw_score_reports_calibrated_confidence():
+    """Regression guard (2026-08-19): entry/exit decisions must ignore predict_proba
+    entirely — isotonic calibration collapses the score into a handful of plateaus and can
+    make entry_threshold/exit_threshold collide, so thresholds live in raw-score space
+    (choose_thresholds). A low calibrated score paired with a raw score above threshold
+    must still enter, and TradeSignal.confidence must report the calibrated value, not the
+    raw one used for the decision."""
+    model = StubModel(feature_names=FEATURE_NAMES, raw_score=0.9, proba_score=0.05)
+    strategy = ModelStrategy(model=model, entry_threshold=0.7, exit_threshold=0.4, stop_loss_pct=0.02)
+
+    signal = strategy.on_features(_snapshot())
+    assert signal is not None
+    assert signal.confidence == 0.05
+
+
+def test_should_exit_decides_on_raw_score_not_calibrated():
+    model = StubModel(feature_names=FEATURE_NAMES, raw_score=0.3, proba_score=0.99)
+    strategy = ModelStrategy(model=model, entry_threshold=0.7, exit_threshold=0.4, stop_loss_pct=0.02)
+
+    assert strategy.should_exit(_snapshot()) is True
 
 
 @dataclass

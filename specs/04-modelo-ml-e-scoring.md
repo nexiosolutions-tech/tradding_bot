@@ -118,10 +118,43 @@ direcional genuíno.
   uma extensão silenciosa desta.
 - Ver `changes/2026-07-31-recalibracao-target-move-threshold.md`.
 
+## Decisão de entrada/saída usa o score cru, não o calibrado (2026-08-19)
+
+`entry_threshold`/`exit_threshold` (`choose_thresholds`, `model/training.py`) são
+percentis do score do modelo — e percentil só precisa de ordenação, não de
+probabilidade calibrada. Calibração isotônica é uma função-degrau monotônica:
+preserva a ordem, mas por construção resolve por poucos patamares — medido em
+dado real (`changes/2026-08-19-benchmark-e-teste-de-nulidade.md`): 259 a 561
+valores distintos no score cru contra 8 a 31 no calibrado, no mesmo fold,
+81-100% da massa do calibrado concentrada nos 5 valores mais frequentes. Um
+percentil calculado sobre o score calibrado pode cair exatamente num desses
+patamares — um fold real chegou a produzir `entry_threshold == exit_threshold`
+exatos, banda de decisão de largura zero, onde qualquer ruído do score dispara
+saída.
+
+Correção: `TrainedModel.predict_raw`/`predict_raw_batch` (`model/training.py`)
+expõem a saída do LightGBM antes da isotônica; `choose_thresholds` ranqueia
+sobre isso, e `ModelStrategy.on_features`/`should_exit` (`model/strategy.py`)
+comparam contra os thresholds usando `predict_raw`, nunca `predict_proba`. O
+score calibrado continua existindo e sendo usado — só não decide mais entrada/
+saída:
+- `TradeSignal.confidence` (o que o dashboard mostra) usa `predict_proba` —
+  "score 0.7 ≈ 70% de acerto histórico" continua válido para leitura humana.
+- `brier_score` (qualidade de calibração) continua sobre `predict_proba_batch`
+  — é exatamente a métrica que calibração deveria medir.
+
+Como percentil preserva ordem, o *conjunto* de linhas selecionado por "top 20%
+do score" é o mesmo nos dois espaços, exceto exatamente nos empates que o
+calibrado cria — a mudança não altera a semântica da estratégia (ainda é
+"opera nos scores mais altos"), só remove a degeneração da fronteira de
+decisão. Ver `changes/2026-08-19-benchmark-e-teste-de-nulidade.md` para a
+cadeia completa de diagnóstico que levou a este achado.
+
 ## Filtro de regime de tendência (2026-07-31)
 
-O score do modelo (calibrado, comparado contra `entry_threshold`) decide
-"esse candle específico parece uma oportunidade?" — uma pergunta diferente
+O score do modelo (comparado contra `entry_threshold`, cru desde 2026-08-19 —
+ver seção acima) decide "esse candle específico parece uma oportunidade?" —
+uma pergunta diferente
 de "o regime de mercado atual favorece esta estratégia de forma alguma?".
 Investigação de walk-forward (`11-roadmap-e-fases.md`) mostrou que a
 segunda pergunta importa mais do que o esperado: PF médio 1.02 em folds de

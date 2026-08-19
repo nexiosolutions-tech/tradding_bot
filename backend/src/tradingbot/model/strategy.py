@@ -1,6 +1,8 @@
-"""ModelStrategy — spec 04's calibrated score wired into the same Strategy protocol used
-by the backtest engine (spec 07) and, later, the execution layer (spec 06). This is what
-replaces the Fase 1 placeholder rule once a model has been promoted.
+"""ModelStrategy — spec 04's model score wired into the same Strategy protocol used by the
+backtest engine (spec 07) and, later, the execution layer (spec 06). This is what replaces
+the Fase 1 placeholder rule once a model has been promoted. Entry/exit decisions rank on
+the raw (uncalibrated) score (2026-08-19); the calibrated score is only surfaced via
+TradeSignal.confidence, for human/dashboard interpretability.
 """
 
 from __future__ import annotations
@@ -24,15 +26,20 @@ class ModelStrategy:
     def on_features(self, snapshot: FeatureSnapshot) -> TradeSignal | None:
         if not all(name in snapshot.features for name in self.model.feature_names):
             return None
-        score = self.model.predict_proba(snapshot.features)
-        if score >= self.entry_threshold:
-            return TradeSignal(symbol=snapshot.symbol, confidence=score, stop_loss_pct=self.stop_loss_pct)
+        # entry_threshold/exit_threshold live in raw-score space (choose_thresholds,
+        # 2026-08-19) — calibrated predict_proba is reserved for TradeSignal.confidence
+        # (human/dashboard-facing "~70% historical hit rate"), never for the entry/exit
+        # decision itself, since isotonic calibration collapses the score into a handful of
+        # plateaus and can make the two thresholds collide.
+        if self.model.predict_raw(snapshot.features) >= self.entry_threshold:
+            confidence = self.model.predict_proba(snapshot.features)
+            return TradeSignal(symbol=snapshot.symbol, confidence=confidence, stop_loss_pct=self.stop_loss_pct)
         return None
 
     def should_exit(self, snapshot: FeatureSnapshot) -> bool:
         if not all(name in snapshot.features for name in self.model.feature_names):
             return False
-        return self.model.predict_proba(snapshot.features) < self.exit_threshold
+        return self.model.predict_raw(snapshot.features) < self.exit_threshold
 
 
 # -0.005, not 0.0: trend_regime_pct is close vs. a 240-candle (~4h) EMA, which lags and

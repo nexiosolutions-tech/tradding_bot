@@ -77,6 +77,48 @@ def test_choose_thresholds_are_derived_from_calibration_rows_only():
     assert 0.0 <= exit_ <= entry <= 1.0
 
 
+def test_choose_thresholds_ranks_on_raw_score_not_calibrated():
+    """Regression guard (2026-08-19): ModelStrategy compares live scores against these
+    thresholds via predict_raw, not predict_proba — so they must come from
+    predict_raw_batch. A stub exposing only predict_raw_batch (no predict_proba_batch)
+    would raise AttributeError if choose_thresholds ever regressed to ranking on the
+    calibrated score."""
+
+    class _StubRawModel:
+        def predict_raw_batch(self, rows):
+            return np.arange(len(rows), dtype=float)
+
+    calib_rows = _separable_rows(11)
+    entry, exit_ = choose_thresholds(_StubRawModel(), calib_rows, entry_percentile=80, exit_percentile=50)
+    assert entry == pytest.approx(np.percentile(np.arange(11), 80))
+    assert exit_ == pytest.approx(np.percentile(np.arange(11), 50))
+
+
+def test_predict_raw_bypasses_calibration():
+    rows = _separable_rows(600)
+    fit_rows, calib_rows = split_fit_calibration(rows, calibration_fraction=0.2)
+    model = train_model(fit_rows, ModelConfig(n_estimators=50), calibration_fraction=0.2)
+
+    high_rsi = {**{name: 0.0 for name in FEATURE_NAMES}, "rsi": 90.0}
+    x = np.array([[high_rsi[name] for name in model.feature_names]])
+    expected_raw = float(model.booster.predict_proba(x)[0, 1])
+    assert model.predict_raw(high_rsi) == pytest.approx(expected_raw)
+
+
+def test_predict_raw_batch_has_at_least_as_many_distinct_values_as_calibrated():
+    """The empirical property the 2026-08-19 fix rests on (confirmed on real BTCUSDT
+    folds: 259-561 raw distinct values vs. 8-31 calibrated) — isotonic regression is a
+    monotonic step function and collapses a near-continuous raw score into a handful of
+    plateaus by construction."""
+    rows = _separable_rows(600)
+    fit_rows, calib_rows = split_fit_calibration(rows, calibration_fraction=0.2)
+    model = train_model(fit_rows, ModelConfig(n_estimators=50), calibration_fraction=0.2)
+
+    raw = model.predict_raw_batch(calib_rows)
+    calibrated = model.predict_proba_batch(calib_rows)
+    assert len({round(v, 6) for v in raw}) >= len({round(v, 6) for v in calibrated})
+
+
 def _imbalanced_rows(n=100, positive_every=10):
     """label=1 rate ~10%, evenly spread across the timeline so any chronological prefix
     (as split_fit_calibration/walk_forward_splits produce) keeps the same ratio — real

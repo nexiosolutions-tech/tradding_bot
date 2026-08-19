@@ -37,14 +37,31 @@ class TrainedModel:
     calibrator: IsotonicRegression
     feature_names: tuple[str, ...]
 
-    def predict_proba(self, features: dict[str, float]) -> float:
+    def predict_raw(self, features: dict[str, float]) -> float:
+        """Pre-calibration LightGBM output — near-continuous, used for ranking (entry/exit
+        thresholds, spec 04). Isotonic regression is a monotonic step function: it preserves
+        order but collapses raw scores into a handful of plateaus by construction (confirmed
+        2026-08-19: 259-561 distinct raw values vs. 8-31 calibrated, on the same real fold —
+        changes/2026-08-19-benchmark-e-teste-de-nulidade.md). A percentile computed on the
+        calibrated score can land exactly on a plateau, producing near-identical entry/exit
+        thresholds (a real fold hit entry_threshold == exit_threshold exactly) — ranking on
+        the raw score sidesteps that without needing calibration to be finer-grained."""
         x = np.array([[features[name] for name in self.feature_names]])
-        raw = float(self.booster.predict_proba(x)[0, 1])
+        return float(self.booster.predict_proba(x)[0, 1])
+
+    def predict_raw_batch(self, rows: list[DatasetRow]) -> np.ndarray:
+        x = _to_matrix(rows, self.feature_names)[0]
+        return self.booster.predict_proba(x)[:, 1]
+
+    def predict_proba(self, features: dict[str, float]) -> float:
+        """Calibrated score — "0.7 means ~70% historical hit rate" (module docstring).
+        Used for human/dashboard-facing confidence (TradeSignal.confidence) and for
+        brier_score below; NOT for entry/exit decisions — see predict_raw."""
+        raw = self.predict_raw(features)
         return float(self.calibrator.predict([raw])[0])
 
     def predict_proba_batch(self, rows: list[DatasetRow]) -> np.ndarray:
-        x = _to_matrix(rows, self.feature_names)[0]
-        raw = self.booster.predict_proba(x)[:, 1]
+        raw = self.predict_raw_batch(rows)
         return self.calibrator.predict(raw)
 
 
@@ -133,8 +150,13 @@ def choose_thresholds(
 ) -> tuple[float, float]:
     """Derives entry/exit score thresholds from the *training-side* calibration rows only
     — never from the out-of-sample test fold, which would leak the evaluation data into a
-    model hyperparameter."""
-    scores = model.predict_proba_batch(calib_rows)
+    model hyperparameter. Ranks on the raw (uncalibrated) score, not predict_proba_batch's
+    calibrated output — percentiles only need ordering, and isotonic calibration collapses
+    the score into a handful of plateaus by construction (see TrainedModel.predict_raw),
+    which can make entry_threshold and exit_threshold collide exactly on real data
+    (2026-08-19 finding). The returned thresholds live in raw-score space — callers must
+    compare against model.predict_raw, not model.predict_proba (see ModelStrategy)."""
+    scores = model.predict_raw_batch(calib_rows)
     entry = float(np.percentile(scores, entry_percentile))
     exit_ = float(np.percentile(scores, exit_percentile))
     return entry, exit_
