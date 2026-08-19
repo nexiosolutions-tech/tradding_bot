@@ -23,6 +23,16 @@ Construir um sistema que:
    relatórios estruturados, e propõe mudanças versionadas ao próprio
    comportamento, sob revisão humana para mudanças de risco/lógica.
 
+## Segundo módulo: apoio à decisão de aporte em ações (B3)
+
+`14-modulo-acoes-b3.md` descreve uma frente independente — apoio à decisão de aporte
+mensal em ações da B3, não um bot de execução automática. **Compartilha fundação de
+engenharia com o bot de cripto** (ingestão, validação point-in-time, gate de promoção,
+`changes/`), **mas não compartilha estado, dado, modelo nem runtime com ele**. Decisões,
+resultados e conclusões de um módulo não transferem para o outro — nenhuma leitura deste
+documento ou de qualquer `changes/` sobre um módulo deve ser aplicada ao outro sem
+verificação própria. Status: proposta inicial, não implementada.
+
 ## Não-objetivos (explicitamente fora de escopo)
 
 - Este projeto **não** é uma ferramenta de aconselhamento financeiro nem faz

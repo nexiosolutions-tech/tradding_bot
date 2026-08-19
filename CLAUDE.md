@@ -12,6 +12,13 @@ de observabilidade, e um ciclo de aprendizado contínuo que revisa a própria
 performance diariamente. Ver [`specs/00-visao-geral-e-objetivos.md`](./specs/00-visao-geral-e-objetivos.md)
 para o objetivo completo.
 
+Este repositório também abriga um segundo módulo, independente: apoio à decisão de
+aporte mensal em ações da B3 (não um bot de execução — ver
+[`specs/14-modulo-acoes-b3.md`](./specs/14-modulo-acoes-b3.md)). Os dois módulos
+compartilham fundação de engenharia (ingestão, validação, gate de promoção,
+`changes/`), **nunca estado, dado, modelo ou runtime**. Nenhuma conclusão, resultado
+ou `changes/` de um módulo se aplica ao outro sem verificação própria.
+
 ## Modelo de trabalho: SDD (Spec-Driven Development)
 
 1. Nenhuma funcionalidade é implementada sem uma spec correspondente em `specs/`.
