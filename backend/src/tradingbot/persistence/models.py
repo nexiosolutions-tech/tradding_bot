@@ -136,6 +136,28 @@ class AggTradeBucket(Base):
     notional: Mapped[float] = mapped_column(Float)
 
 
+class AggTradeRateSample(Base):
+    """Investigação pontual (2026-08-18, changes/2026-08-18-captura-aggtrade-fluxo-ordens.md)
+    — não é captura permanente, seguro apagar depois que a decisão de arquitetura do
+    aggtrade-capture (polling REST como fonte primária vs. arquivo diário + polling como
+    cauda) for tomada. Cada linha é uma amostra de quantos segundos de atividade real de
+    mercado (mainnet) cabem numa única resposta de 1000 trades — `scripts/measure_aggtrade_rate.py`
+    amostra repetidamente ao longo de um ciclo de ~24h porque o fluxo de BTCUSDT é
+    heterogêneo (abertura de sessão, dados macro, movimentos bruscos); uma amostra única
+    num momento calmo mentiria. `used_weight_1m` vem direto do header
+    `X-MBX-USED-WEIGHT-1M` da própria resposta — peso real observado, não estimado."""
+
+    __tablename__ = "aggtrade_rate_samples"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String, index=True)
+    ts: Mapped[int] = mapped_column(BigInteger, index=True)
+    trades_per_second: Mapped[float] = mapped_column(Float)
+    span_ms: Mapped[int] = mapped_column(BigInteger)
+    latency_ms: Mapped[float] = mapped_column(Float)
+    used_weight_1m: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
 class EngineEvent(Base):
     """State-machine transitions (spec 01) — the audit trail behind the dashboard's Live view."""
 

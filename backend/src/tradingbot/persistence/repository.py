@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from tradingbot.persistence.models import (
     AggTradeBucket,
+    AggTradeRateSample,
     CircuitBreakerEvent,
     EngineEvent,
     OrderBookSnapshot,
@@ -182,3 +183,13 @@ def upsert_agg_trade_bucket(session: Session, bucket: AggTradeBucket) -> None:
     total_volume = existing.buy_volume + existing.sell_volume
     existing.vwap = existing.notional / total_volume if total_volume else 0.0
     session.commit()
+
+
+def record_aggtrade_rate_sample(session: Session, sample: AggTradeRateSample) -> None:
+    session.add(sample)
+    session.commit()
+
+
+def list_aggtrade_rate_samples(session: Session, symbol: str) -> list[AggTradeRateSample]:
+    stmt = select(AggTradeRateSample).where(AggTradeRateSample.symbol == symbol).order_by(AggTradeRateSample.ts)
+    return list(session.scalars(stmt))

@@ -3,6 +3,7 @@ from sqlalchemy import select
 from tradingbot.persistence.db import get_session_factory
 from tradingbot.persistence.models import (
     AggTradeBucket,
+    AggTradeRateSample,
     CircuitBreakerEvent,
     EngineEvent,
     OrderBookSnapshot,
@@ -19,7 +20,9 @@ from tradingbot.persistence.repository import (
     record_engine_event,
     record_order_book_snapshot,
     record_trade,
+    list_aggtrade_rate_samples,
     recent_engine_events,
+    record_aggtrade_rate_sample,
     trades_in_range,
     upsert_agg_trade_bucket,
     upsert_order,
@@ -260,3 +263,25 @@ def test_upsert_agg_trade_bucket_recovers_from_concurrent_insert_race(tmp_path, 
     assert rows[0].buy_volume == 11.0  # 10.0 (raced-in winner) + 1.0 (merged after recovery)
     assert rows[0].sell_volume == 2.0
     assert rows[0].notional == 1300.0
+
+
+def test_record_and_list_aggtrade_rate_samples(tmp_path):
+    session = _session(tmp_path)
+    record_aggtrade_rate_sample(
+        session,
+        AggTradeRateSample(symbol="BTCUSDT", ts=1_000, trades_per_second=12.5, span_ms=80_000, latency_ms=210.0, used_weight_1m=4),
+    )
+    record_aggtrade_rate_sample(
+        session,
+        AggTradeRateSample(symbol="BTCUSDT", ts=2_000, trades_per_second=30.0, span_ms=33_333, latency_ms=190.0, used_weight_1m=8),
+    )
+    record_aggtrade_rate_sample(
+        session,
+        AggTradeRateSample(symbol="ETHUSDT", ts=1_500, trades_per_second=5.0, span_ms=200_000, latency_ms=200.0, used_weight_1m=6),
+    )
+
+    samples = list_aggtrade_rate_samples(session, symbol="BTCUSDT")
+
+    assert [s.ts for s in samples] == [1_000, 2_000]
+    assert samples[1].trades_per_second == 30.0
+    assert samples[1].used_weight_1m == 8

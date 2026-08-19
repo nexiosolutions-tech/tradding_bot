@@ -207,6 +207,15 @@ feature agora seria código sem forma de checar empiricamente se ajuda ou atrapa
   fluxo de ordens mostra o que de fato cruzou o spread.
 - Próximo passo (não desta rodada): quando houver histórico suficiente, desenhar e validar
   a feature contra um backtest real, seguindo o mesmo processo das rodadas anteriores.
+- **Armadilha da janela de transição de ambiente (2026-08-18)**: `depth-capture` está em
+  mainnet real desde esta data; `aggtrade-capture` ainda em testnet (conversão planejada,
+  não urgente — ver `02-ingestao-de-dados.md`). Enquanto essa assimetria durar, `order_book_snapshots`
+  e `agg_trade_buckets` descrevem **mercados diferentes** um do outro — qualquer feature
+  que cruzasse os dois (ex.: `order_flow_imbalance_pct` acima contra `imbalance` de order
+  book, no mesmo instante) produziria correlação sem sentido, um artefato do descompasso
+  de ambiente, não sinal real. Nenhuma feature assim existe ainda, mas a janela deve durar
+  alguns dias e a assimetria não é visível olhando o schema — checar `environment` nos dois
+  lados antes de qualquer feature que combine as duas tabelas, não só o `ts`.
 
 ### Força relativa cross-asset (2026-08-17, opt-in)
 

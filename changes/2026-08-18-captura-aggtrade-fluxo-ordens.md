@@ -9,7 +9,9 @@ para mainnet + frescor real no relatório diário, (4) mainnet bloqueado geograf
 Railway (`HTTP 451`) — revertido para testnet no mesmo dia, (5) sondagem completa (rotas
 concretas, handshake WS real, 3 regiões) — achado: `data-api.binance.vision` (API viva, não
 arquivo) não está bloqueado nem na região atual, (6) `depth-capture` convertido para REST
-mainnet no mesmo dia do achado. Ver seções cronológicas abaixo.
+mainnet no mesmo dia do achado, (7) medição de ritmo de aggTrade em mainnet iniciada
+(`scripts/measure_aggtrade_rate.py` rodando ~24h, resultado ainda não conhecido) antes de
+decidir o desenho da conversão do `aggtrade-capture`. Ver seções cronológicas abaixo.
 
 ## Evidência (origem)
 
@@ -444,10 +446,52 @@ um GET a cada 60s", a menor razão esforço/irreversibilidade da sessão inteira
   Binance (relevante para execução, irrelevante para captura). Prazo da decisão é "antes
   de existir modelo promovível", não "quando existir".
 
+## Sétima rodada: medição de ritmo de aggTrade antes de converter
+
+`aggtrade-capture` é o próximo item, mas por conveniência, não urgência — o arquivo
+histórico (`data.binance.vision`) cobre o atraso de qualquer coisa que o polling perca,
+diferente de depth. Antes de assumir que o polling por `fromId` acompanha o mercado real,
+o usuário pediu uma medição de verdade, não uma estimativa: `/api/v3/aggTrades` devolve no
+máximo 1000 registros/chamada, e o BTCUSDT de mainnet pode gerar isso em poucos segundos em
+horário movimentado — o testnet nunca exercitou esse volume, então não há como inferir a
+partir do que já roda.
+
+- **`scripts/measure_aggtrade_rate.py`** (novo) — amostra a cada 5 minutos ao longo de um
+  ciclo de ~24h (não uma janela única: o fluxo de BTCUSDT é heterogêneo — abertura de
+  sessão, dados macro, movimentos bruscos — uma amostra de 5 minutos num momento calmo
+  mentiria). Cada amostra busca os 1000 trades mais recentes (sem `fromId` = mais recentes)
+  em `data-api.binance.vision`, deriva trades/segundo do span de tempo real coberto por
+  esses 1000 registros, mede a latência real da chamada, e lê o peso realmente usado do
+  header `X-MBX-USED-WEIGHT-1M` da própria resposta — medido, não estimado (o limite por
+  IP, 6000/minuto, também veio direto de uma resposta real da API, confirmado durante a
+  sondagem anterior).
+- **`AggTradeRateSample`** (`persistence/models.py`) — tabela nova, marcada explicitamente
+  como investigação pontual, não captura permanente; segura de apagar depois que a decisão
+  de arquitetura for tomada.
+- **`scripts/analyze_aggtrade_rate.py`** (novo) — calcula p50/p95/p99/pico de trades/s (o
+  pico decide, não a média), a folga entre segundos de mercado cobertos por chamada e a
+  latência serial da chamada, e recomenda uma direção com base num piso de folga de 3x.
+  Ainda não rodado contra dado real — precisa do ciclo de 24h completar primeiro.
+- **O resultado decide arquitetura, não viabilidade** — porque o arquivo histórico existe
+  para aggTrade (diferente de depth). Duas opções já mapeadas: (a) polling como fonte
+  primária, só se a folga no pico for confortável (3-5x, não 1,2x); (b) arquivo diário como
+  fonte primária, polling só como cauda recente — reconcilia sozinho num dia de volatilidade
+  extrema (quando o dado mais importa e quando o polling mais provavelmente atrasaria),
+  reaproveitando `fetch_agg_trades` e a bucketização compartilhada já planejadas. Preferência
+  registrada do usuário por (b) mesmo que a medição aprove (a), pela propriedade
+  autocurativa — mas a medição roda de qualquer forma, é insumo real, não decoração.
+- **Armadilha da janela de transição registrada em `specs/03`**: enquanto `depth-capture`
+  é mainnet e `aggtrade-capture` é testnet, as duas tabelas descrevem mercados diferentes
+  — qualquer feature futura que cruzasse as duas produziria correlação sem sentido. Nenhuma
+  existe ainda, mas a janela deve durar alguns dias e o risco não é visível olhando o schema.
+
 ## Pendente
 
-- **`aggtrade-capture` → REST mainnet**, com medição de ritmo antes de assumir que o
-  polling acompanha a taxa real de chegada de trades (ver rodada acima).
+- **Rodar `scripts/measure_aggtrade_rate.py` por ~24h e analisar com
+  `scripts/analyze_aggtrade_rate.py`** — medição em andamento, resultado ainda não
+  conhecido.
+- **`aggtrade-capture` → REST mainnet**, desenho decidido pelo resultado da medição acima
+  (mas com preferência já registrada por arquivo+cauda, não só polling puro).
 - **Backfill histórico de aggTrade** (`data.binance.vision`) com bucketização
   compartilhada entre o caminho ao vivo e o de backfill, e teste que passa o mesmo lote
   bruto pelos dois exigindo saída idêntica — evita a quebra silenciosa de regime na
