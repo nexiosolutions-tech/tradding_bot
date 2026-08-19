@@ -4,7 +4,13 @@ import pytest
 
 from tradingbot.ingestion.schema import EventType, MarketEvent
 from tradingbot.model.dataset import DatasetRow
-from tradingbot.model.evaluation import _with_shuffled_labels, evaluate_config, run_nullity_test
+from tradingbot.model.evaluation import (
+    ConfigEvaluation,
+    FoldSummary,
+    _with_shuffled_labels,
+    evaluate_config,
+    run_nullity_test,
+)
 
 
 def _closed_kline(symbol, close, ts, high=None, low=None):
@@ -38,6 +44,71 @@ def _synthetic_events(n=900, seed=0):
         low = price - abs(rng.uniform(0, 0.2))
         events.append(_closed_kline("BTCUSDT", price, (i + 1) * 60_000, high=high, low=low))
     return events
+
+
+def _fold_summary(total_pnl, gross_profit, gross_loss, fold_index=0):
+    return FoldSummary(
+        fold_index=fold_index,
+        profit_factor=0.0,
+        num_trades=1,
+        max_drawdown_pct=0.0,
+        won=False,
+        reason="stub",
+        total_pnl=total_pnl,
+        gross_profit=gross_profit,
+        gross_loss=gross_loss,
+    )
+
+
+def _config_evaluation(folds):
+    return ConfigEvaluation(
+        horizon_minutes=5,
+        entry_percentile=80.0,
+        move_threshold_pct=0.008,
+        move_threshold_atr_multiple=None,
+        use_regime_filter=True,
+        label_rate=0.05,
+        folds=tuple(folds),
+    )
+
+
+def test_config_evaluation_total_pnl_sums_across_folds():
+    result = _config_evaluation(
+        [
+            _fold_summary(total_pnl=100.0, gross_profit=150.0, gross_loss=50.0),
+            _fold_summary(total_pnl=-30.0, gross_profit=20.0, gross_loss=50.0),
+        ]
+    )
+    assert result.total_pnl == pytest.approx(70.0)
+
+
+def test_config_evaluation_aggregate_profit_factor_pools_gross_values_not_mean_of_ratios():
+    """The antipattern this replaces: mean([150/50, 20/50]) = mean([3.0, 0.4]) = 1.7 would
+    overstate this — the pooled sample (170 gross profit over 100 gross loss) is 1.7 too,
+    coincidentally close here, but the point is the *formula*: sum/sum, never mean-of-ratios
+    (2026-08-19)."""
+    result = _config_evaluation(
+        [
+            _fold_summary(total_pnl=100.0, gross_profit=150.0, gross_loss=50.0),
+            _fold_summary(total_pnl=-30.0, gross_profit=20.0, gross_loss=50.0),
+        ]
+    )
+    assert result.aggregate_profit_factor == pytest.approx((150.0 + 20.0) / (50.0 + 50.0))
+
+
+def test_config_evaluation_aggregate_profit_factor_does_not_degenerate_on_one_zero_loss_fold():
+    """The exact bug this fixes: mean_profit_factor would go to inf if any single fold had
+    zero losing trades (backtesting/metrics.py::profit_factor). Pooling across folds first
+    means one degenerate fold no longer blows up the whole run's statistic, as long as the
+    combined sample has any loss at all."""
+    result = _config_evaluation(
+        [
+            _fold_summary(total_pnl=50.0, gross_profit=50.0, gross_loss=0.0),  # degenerate
+            _fold_summary(total_pnl=-30.0, gross_profit=20.0, gross_loss=50.0),
+        ]
+    )
+    assert result.aggregate_profit_factor == pytest.approx(70.0 / 50.0)
+    assert result.aggregate_profit_factor != float("inf")
 
 
 def test_evaluate_config_returns_one_fold_summary_per_split_at_most():
@@ -140,6 +211,20 @@ def test_evaluate_config_folds_carry_the_equity_curve():
         assert len(fold.equity_curve) > 0
 
 
+def test_evaluate_config_folds_carry_total_pnl_and_gross_profit_loss():
+    """Regression guard: ConfigEvaluation.total_pnl/aggregate_profit_factor read from
+    these FoldSummary fields — if the fold loop stopped wiring them from
+    BacktestMetrics, both properties would silently go back to reading all zeros."""
+    events = _synthetic_events(n=900)
+    result = evaluate_config(
+        events, horizon_minutes=5, entry_percentile=80.0, move_threshold_pct=0.002, n_splits=1, min_trades=1
+    )
+    assert result.folds_total >= 1
+    for fold in result.folds:
+        if fold.num_trades > 0:
+            assert fold.gross_profit > 0 or fold.gross_loss > 0
+
+
 def test_run_nullity_test_rejects_shuffle_kwargs_from_caller():
     """run_nullity_test owns shuffle_labels/shuffle_seed — a caller passing them would
     silently fight the permutation loop over who controls the label shuffle."""
@@ -160,7 +245,7 @@ def test_run_nullity_test_builds_null_distribution_with_requested_size():
         base_seed=0,
     )
     assert result.n_permutations == 3
-    assert len(result.permuted_mean_profit_factors) == 3
+    assert len(result.permuted_total_pnls) == 3
     assert 0.0 <= result.p_value <= 1.0
 
 

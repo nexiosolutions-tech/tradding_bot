@@ -40,6 +40,13 @@ class BacktestMetrics:
     # per-fold return series, not just the aggregate scalars above, and it was already being
     # computed here (volatility_pct) and thrown away before this field existed.
     equity_curve: list[tuple[int, float]] = field(default_factory=list)
+    # Exposed directly (2026-08-19), not just folded into profit_factor's ratio — needed to
+    # aggregate profit factor correctly *across* folds/runs (sum of gross_profit over sum of
+    # gross_loss, never a mean of per-fold ratios — see profit_factor's own docstring below)
+    # and to gate a fold with zero losing trades explicitly (model/promotion.py) instead of
+    # letting it slip through as an accidentally-infinite profit_factor.
+    gross_profit: float = 0.0
+    gross_loss: float = 0.0
     pnl_by_hour: dict[int, float] = field(default_factory=dict)
     pnl_by_weekday: dict[int, float] = field(default_factory=dict)
 
@@ -51,12 +58,28 @@ def win_rate(trades: list[ClosedTrade]) -> float:
     return wins / len(trades)
 
 
+def gross_profit(trades: list[ClosedTrade]) -> float:
+    return sum(t.pnl for t in trades if t.pnl > 0)
+
+
+def gross_loss(trades: list[ClosedTrade]) -> float:
+    return sum(-t.pnl for t in trades if t.pnl < 0)
+
+
 def profit_factor(trades: list[ClosedTrade]) -> float:
-    gross_profit = sum(t.pnl for t in trades if t.pnl > 0)
-    gross_loss = sum(-t.pnl for t in trades if t.pnl < 0)
-    if gross_loss == 0:
-        return float("inf") if gross_profit > 0 else 0.0
-    return gross_profit / gross_loss
+    """gross_loss == 0 (no losing trades in the sample) returns inf by the standard
+    literature convention — not a bug, but a degenerate case a caller must not treat as
+    strong evidence: a handful of winning trades with zero losses is far more likely to be
+    a small, lucky sample than a real edge (2026-08-19 finding — model/promotion.py's
+    evaluate_fold rejects a fold in exactly this state instead of letting an accidental
+    inf sail through every downstream comparison). Also never average this across
+    folds/runs — mean of ratios is not the profit factor of the combined sample; aggregate
+    as sum(gross_profit(...) for each) / sum(gross_loss(...) for each) instead."""
+    profit = gross_profit(trades)
+    loss = gross_loss(trades)
+    if loss == 0:
+        return float("inf") if profit > 0 else 0.0
+    return profit / loss
 
 
 def max_drawdown(equity_curve: list[tuple[int, float]]) -> DrawdownResult:
@@ -197,6 +220,8 @@ def compute_metrics(
         return_over_volatility=return_over_volatility(ret, vol),
         exposure_pct=exposure_pct(trades, equity_curve),
         equity_curve=list(equity_curve),
+        gross_profit=gross_profit(trades),
+        gross_loss=gross_loss(trades),
         pnl_by_hour=pnl_by_hour(trades),
         pnl_by_weekday=pnl_by_weekday(trades),
     )

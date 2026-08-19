@@ -91,6 +91,23 @@ def evaluate_fold(
             f"amostra insuficiente ({candidate_metrics.num_trades} trades < {criteria.min_trades})",
         )
 
+    # A fold with zero losing trades makes profit_factor infinite (backtesting/metrics.py)
+    # — inf clears every gate below it trivially (min_profit_factor, beats-baseline,
+    # drawdown), regardless of how few trades or how much luck produced it. min_trades
+    # alone doesn't guarantee this can't happen: a fold with exactly min_trades winners and
+    # zero losers would still pass every other check (2026-08-19 finding — confirmed by
+    # code trace, not yet observed as an actual false promotion in this project, but the
+    # gate must not rely on that being a coincidence). Zero losses is itself insufficient
+    # evidence of a real edge — no risk-side variance was ever observed — so it's rejected
+    # explicitly here, independent of trade count.
+    if candidate_metrics.num_trades > 0 and candidate_metrics.gross_loss == 0:
+        return FoldResult(
+            fold_index, candidate_metrics, baseline_metrics, False,
+            f"fold sem nenhuma perda ({candidate_metrics.num_trades} trades, todos "
+            "vencedores) — profit factor infinito não é evidência confiável sem "
+            "nenhuma perda observada",
+        )
+
     if candidate_metrics.profit_factor < criteria.min_profit_factor:
         return FoldResult(
             fold_index, candidate_metrics, baseline_metrics, False,

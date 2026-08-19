@@ -6,7 +6,9 @@ construction, there is no real relationship left between any row's features and 
 in the permuted runs. A single permutation says nothing about whether a result is typical
 or a fluke of that one shuffle — N permutations build a null distribution, and the real
 result's position in it is reported as an empirical p-value (fraction of permutations that
-matched or beat the real mean profit factor).
+matched or beat the real total_pnl — summed across folds, never a mean of per-fold
+profit_factor ratios, which degenerates to inf whenever any single fold has zero losing
+trades).
 
 Interpretation (corrected same day after shipping an inverted version — see
 changes/2026-08-19-benchmark-e-teste-de-nulidade.md): tests H0 "the features carry no real
@@ -87,13 +89,14 @@ def main() -> None:
         base_seed=args.base_seed,
     )
 
-    print(f"\nReal: mean_profit_factor={result.real_mean_profit_factor:.3f} "
-          f"({result.real_folds_won}/{result.real_folds_total} folds vencidos)")
-    sorted_permuted = sorted(result.permuted_mean_profit_factors)
+    print(f"\nReal: total_pnl={result.real_total_pnl:.2f} "
+          f"(PF agregado={result.real_aggregate_profit_factor:.3f}, "
+          f"{result.real_folds_won}/{result.real_folds_total} folds vencidos)")
+    sorted_permuted = sorted(result.permuted_total_pnls)
     print(
-        f"Distribuição nula ({result.n_permutations} permutações): "
-        f"min={sorted_permuted[0]:.3f} mediana={sorted_permuted[len(sorted_permuted) // 2]:.3f} "
-        f"max={sorted_permuted[-1]:.3f}"
+        f"Distribuição nula ({result.n_permutations} permutações, total_pnl): "
+        f"min={sorted_permuted[0]:.2f} mediana={sorted_permuted[len(sorted_permuted) // 2]:.2f} "
+        f"max={sorted_permuted[-1]:.2f}"
     )
     print(f"p-valor empírico: {result.p_value:.3f}")
 

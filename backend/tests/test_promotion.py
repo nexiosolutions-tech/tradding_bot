@@ -55,6 +55,25 @@ def _rising_events(symbol="BTCUSDT", n=60, start=100.0, step=1.0):
     return [_closed_kline(symbol, start + i * step, (i + 1) * 60_000) for i in range(n)]
 
 
+def _rising_events_with_dips(symbol="BTCUSDT", n=60, start=100.0):
+    """Net-upward overall (like _rising_events) but with a small real dip every 10 bars, so
+    AlwaysProfitableStrategy has a handful of real losing trades among many winners —
+    empirically verified (30 trades, win_rate 0.8, PF~3.8, gross_loss > 0) rather than
+    reasoned about, since a single one-off dip at a fixed index proved too fragile against
+    warm-up and the strategy's own 2-bar trade-cycle alignment, and a dip every 4 bars
+    turned out to hit roughly half of all trades, not a small minority (2026-08-19). Keeps
+    tests using it for drawdown/baseline behavior from accidentally also exercising the
+    zero-loss gate (evaluate_fold) when that's not what they're testing — see
+    test_evaluate_fold_rejects_fold_with_zero_losing_trades below for that gate on its
+    own, using the pure _rising_events (never dips, always zero losses by construction)."""
+    price = start
+    prices = []
+    for i in range(n):
+        price += -0.3 if (i + 1) % 10 == 0 else 1.0
+        prices.append(price)
+    return [_closed_kline(symbol, p, (i + 1) * 60_000) for i, p in enumerate(prices)]
+
+
 @dataclass
 class AlwaysTradeStrategy:
     """Buys every bar it's flat, exits the very next bar — used with a mixed price series
@@ -98,7 +117,7 @@ def test_evaluate_fold_rejects_candidate_that_underperforms_zero_drawdown_baseli
     actually trades incurs at least fee/slippage-driven dips, so it cannot beat a
     never-trade baseline on the drawdown axis alone — evaluate_fold must catch that
     instead of promoting on profit factor alone."""
-    events = _rising_events(n=60)
+    events = _rising_events_with_dips(n=60)
     result = evaluate_fold(
         fold_index=0,
         candidate_strategy=AlwaysProfitableStrategy(),
@@ -112,7 +131,7 @@ def test_evaluate_fold_rejects_candidate_that_underperforms_zero_drawdown_baseli
 
 
 def test_evaluate_fold_promotes_on_profit_factor_when_drawdown_gate_is_relaxed():
-    events = _rising_events(n=60)
+    events = _rising_events_with_dips(n=60)
     result = evaluate_fold(
         fold_index=0,
         candidate_strategy=AlwaysProfitableStrategy(),
@@ -142,6 +161,30 @@ def test_evaluate_fold_rejects_candidate_with_negative_net_expectancy_even_if_it
     assert 0.0 < result.candidate_metrics.profit_factor < 1.0  # a real, partial loser
     assert result.candidate_wins is False
     assert "expectância" in result.reason.lower()
+
+
+def test_evaluate_fold_rejects_fold_with_zero_losing_trades():
+    """Regression guard (2026-08-19): profit_factor is inf whenever gross_loss == 0
+    (backtesting/metrics.py) — inf clears min_profit_factor, the beats-baseline check, and
+    (if the fold also happened to have low drawdown) the drawdown check, all trivially,
+    regardless of how few trades or how much luck produced the all-winning streak.
+    min_trades alone doesn't guard against this: a fold with exactly min_trades winners and
+    zero losers passes every other gate. Confirmed here with a real monotonically rising
+    series where AlwaysProfitableStrategy's buy-then-sell-next-bar never loses — the exact
+    shape that used to slip through before this gate existed (it broke this test's own
+    sibling tests above, which is why they were moved to _rising_events_with_dips)."""
+    events = _rising_events(n=60)
+    result = evaluate_fold(
+        fold_index=0,
+        candidate_strategy=AlwaysProfitableStrategy(),
+        baseline_strategy=NeverTradeStrategy(),
+        events=events,
+        criteria=PromotionCriteria(min_trades=5, max_drawdown_regression_pct=1.0),
+    )
+    assert result.candidate_metrics.num_trades >= 5
+    assert result.candidate_metrics.gross_loss == 0.0
+    assert result.candidate_wins is False
+    assert "sem nenhuma perda" in result.reason
 
 
 def _fold(wins: bool) -> FoldResult:

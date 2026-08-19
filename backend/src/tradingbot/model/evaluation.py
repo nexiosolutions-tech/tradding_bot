@@ -45,6 +45,13 @@ class FoldSummary:
     # inside compute_metrics (BacktestMetrics.equity_curve) and thrown away before this field
     # existed.
     equity_curve: list[tuple[int, float]] = field(default_factory=list)
+    # total_pnl/gross_profit/gross_loss (2026-08-19): what ConfigEvaluation.total_pnl and
+    # .aggregate_profit_factor below are built from — see profit_factor's own docstring in
+    # backtesting/metrics.py for why a mean of per-fold profit_factor ratios is the wrong
+    # aggregate (and degenerates to inf whenever any one fold has zero losing trades).
+    total_pnl: float = 0.0
+    gross_profit: float = 0.0
+    gross_loss: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -67,11 +74,34 @@ class ConfigEvaluation:
 
     @property
     def mean_profit_factor(self) -> float:
+        """Kept for existing callers (sweeps/screening use this as a rough comparison
+        heuristic) — but a mean of ratios is not itself the profit factor of the combined
+        sample, and degenerates to inf if any single fold has zero losing trades
+        (backtesting/metrics.py::profit_factor). Prefer total_pnl or
+        aggregate_profit_factor below wherever the result feeds a statistical comparison
+        (e.g. the nullity test) rather than a quick exploratory readout."""
         return sum(f.profit_factor for f in self.folds) / len(self.folds) if self.folds else 0.0
 
     @property
     def min_profit_factor(self) -> float:
         return min((f.profit_factor for f in self.folds), default=0.0)
+
+    @property
+    def total_pnl(self) -> float:
+        return sum(f.total_pnl for f in self.folds)
+
+    @property
+    def aggregate_profit_factor(self) -> float:
+        """Profit factor of the pooled sample — sum of gross profit over sum of gross
+        loss across every fold, never a mean of per-fold ratios (see
+        backtesting/metrics.py::profit_factor). Only degenerate (inf) if literally no
+        fold in the whole run had a single losing trade, far less likely than any one
+        fold hitting that edge case."""
+        total_gross_profit = sum(f.gross_profit for f in self.folds)
+        total_gross_loss = sum(f.gross_loss for f in self.folds)
+        if total_gross_loss == 0:
+            return float("inf") if total_gross_profit > 0 else 0.0
+        return total_gross_profit / total_gross_loss
 
 
 def _with_shuffled_labels(rows: list[DatasetRow], seed: int) -> list[DatasetRow]:
@@ -196,6 +226,9 @@ def evaluate_config(
                 won=result.candidate_wins,
                 reason=result.reason,
                 equity_curve=result.candidate_metrics.equity_curve,
+                total_pnl=result.candidate_metrics.total_pnl,
+                gross_profit=result.candidate_metrics.gross_profit,
+                gross_loss=result.candidate_metrics.gross_loss,
             )
         )
 
@@ -212,18 +245,27 @@ def evaluate_config(
 
 @dataclass(frozen=True)
 class NullityTestResult:
-    real_mean_profit_factor: float
+    # total_pnl, not mean_profit_factor (2026-08-19, corrected after a real fold — post
+    # purge_bars, with few trades left in some folds — produced profit_factor=inf and
+    # silently contaminated the comparison on both arms). total_pnl never explodes on a
+    # small/degenerate sample and is what every other comparison in this project already
+    # uses (benchmark, diagnostics) — consistency has its own value.
+    real_total_pnl: float
+    # Reported for context only, not compared against a permuted distribution — the pooled
+    # (sum of gross profit / sum of gross loss) profit factor, never a mean of per-fold
+    # ratios (backtesting/metrics.py::profit_factor).
+    real_aggregate_profit_factor: float
     real_folds_won: int
     real_folds_total: int
-    permuted_mean_profit_factors: tuple[float, ...]
-    # Empirical permutation-test p-value: fraction of permuted runs whose mean_profit_factor
-    # matched or beat the real one, with the standard +1/+1 correction (Davison & Hinkley,
-    # 1997) so a small n_permutations never overclaims an exact p=0.0.
+    permuted_total_pnls: tuple[float, ...]
+    # Empirical permutation-test p-value: fraction of permuted runs whose total_pnl matched
+    # or beat the real one, with the standard +1/+1 correction (Davison & Hinkley, 1997) so
+    # a small n_permutations never overclaims an exact p=0.0.
     p_value: float
 
     @property
     def n_permutations(self) -> int:
-        return len(self.permuted_mean_profit_factors)
+        return len(self.permuted_total_pnls)
 
 
 def run_nullity_test(
@@ -238,8 +280,15 @@ def run_nullity_test(
     features carry no real information about the label". Runs evaluate_config once for real
     and n_permutations times with shuffle_labels=True (different shuffle_seed each time,
     base_seed..base_seed+n_permutations-1, which destroys the feature-label correspondence
-    while preserving label_rate) to build the null distribution of mean_profit_factor, then
-    reports where the real result falls in it as an empirical p-value.
+    while preserving label_rate) to build the null distribution of total_pnl (summed across
+    folds — not mean_profit_factor, which is a mean of ratios and degenerates to inf the
+    moment any single fold has zero losing trades; a real fold hit exactly that after
+    purge_bars shrank some folds, 2026-08-19), then reports where the real result falls in
+    it as an empirical p-value. Deliberately not gated by a per-fold min-trades filter
+    before aggregating either — a selection rule that differs between the real arm and the
+    permuted arms (e.g. "only average folds that cleared N trades") would itself bias the
+    comparison; fold validity is instead enforced once, upstream, inside evaluate_fold's own
+    min_trades/zero-loss gates (model/promotion.py), identically for every arm.
 
     Interpretation (corrected same day after an initial inversion — see
     changes/2026-08-19-benchmark-e-teste-de-nulidade.md): real substantially ABOVE the null
@@ -271,7 +320,7 @@ def run_nullity_test(
         raise ValueError("run_nullity_test manages shuffle_labels/shuffle_seed itself")
 
     real = evaluate_config(events, horizon_minutes, entry_percentile, **evaluate_config_kwargs)
-    permuted_pfs = [
+    permuted_pnls = [
         evaluate_config(
             events,
             horizon_minutes,
@@ -279,17 +328,18 @@ def run_nullity_test(
             shuffle_labels=True,
             shuffle_seed=base_seed + i,
             **evaluate_config_kwargs,
-        ).mean_profit_factor
+        ).total_pnl
         for i in range(n_permutations)
     ]
 
-    at_least_as_good = sum(1 for pf in permuted_pfs if pf >= real.mean_profit_factor)
+    at_least_as_good = sum(1 for pnl in permuted_pnls if pnl >= real.total_pnl)
     p_value = (at_least_as_good + 1) / (n_permutations + 1)
 
     return NullityTestResult(
-        real_mean_profit_factor=real.mean_profit_factor,
+        real_total_pnl=real.total_pnl,
+        real_aggregate_profit_factor=real.aggregate_profit_factor,
         real_folds_won=real.folds_won,
         real_folds_total=real.folds_total,
-        permuted_mean_profit_factors=tuple(permuted_pfs),
+        permuted_total_pnls=tuple(permuted_pnls),
         p_value=p_value,
     )

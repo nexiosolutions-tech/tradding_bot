@@ -60,6 +60,18 @@ candidata de produção se, no backtest out-of-sample walk-forward:
   agregada).
 - Passar por um período mínimo de validação em testnet (ver
   `06-camada-de-execucao.md`) antes de qualquer capital real.
+- **Fold sem nenhuma perda é rejeitado explicitamente, independente do número
+  de trades (2026-08-19).** `profit_factor` é infinito quando não há perda
+  bruta nenhuma na amostra (`backtesting/metrics.py`) — esse `inf` passa
+  trivialmente por todo gate posterior (PF mínimo, comparação com baseline,
+  drawdown), então um fold com `min_trades` trades **todos** vencedores
+  promoveria só por sorte de amostra pequena, sem `min_trades` sozinho
+  impedir isso. Confirmado por rastreio de código, não hipotético: uma
+  estratégia determinística numa série monotonicamente ascendente (sem
+  perda estrutural possível) passava por todos os gates antes desta
+  correção. `evaluate_fold` (`model/promotion.py`) rejeita esse caso
+  explicitamente, com motivo próprio ("fold sem nenhuma perda"), antes de
+  sequer olhar para `profit_factor`.
 
 ## Sinais de alerta de overfitting (a checar sempre)
 
@@ -211,13 +223,30 @@ feature→label linha a linha.
 permutação isolada não distingue "harness limpo" de "essa permutação em
 particular calhou de parecer boa/ruim". `model/evaluation.py::run_nullity_test`
 roda a avaliação real uma vez e N permutações (`n_permutations`, sementes
-`base_seed..base_seed+N-1`), monta a distribuição nula de
-`mean_profit_factor` e reporta onde o resultado real cai nela como um
+`base_seed..base_seed+N-1`), monta a distribuição nula de **`total_pnl`
+somado entre folds** e reporta onde o resultado real cai nela como um
 **p-valor empírico**: `(nº de permutações que igualaram ou superaram o real
 + 1) / (N + 1)` — a correção `+1/+1` padrão de teste de permutação (Davison
 & Hinkley) evita declarar um p=0.0 exato só porque N é finito.
 `scripts/run_nullity_test.py` expõe isso via CLI (`--n-permutations`,
 default 30).
+
+**Não é `mean_profit_factor` (corrigido em 2026-08-19, mesmo dia da
+implementação inicial)**: média de razões é antipadrão estatístico — e, na
+prática, degenera para `inf` assim que qualquer fold, real ou permutado, tem
+zero perdas (`profit_factor`, ver limitação acima). Aconteceu de verdade:
+depois da purga (`purge_bars`) encolher alguns folds, um deles ficou com
+poucos trades, todos vencedores, e contaminou os dois braços da comparação.
+`total_pnl` nunca explode com amostra pequena/degenerada e é a mesma métrica
+já usada no resto desta investigação (benchmark, diagnóstico) — consistência
+com valor próprio. **Nenhum piso de trades por fold é aplicado dentro da
+agregação** — variar o critério de seleção entre o braço real e os braços
+permutados enviesaria a comparação; validade de fold já é aplicada uma vez,
+a montante, dentro de `evaluate_fold` (`min_trades`, e o gate de "sem
+nenhuma perda" acima), igualmente para todo braço.
+`ConfigEvaluation.aggregate_profit_factor` (soma de lucro bruto sobre soma
+de perda bruta entre folds, nunca média de razões) é reportado no relatório
+como métrica secundária, de contexto — não é o que decide o p-valor.
 
 Efeito colateral: essa distribuição nula é uma aproximação barata do que o
 Deflated Sharpe Ratio (DSR, item ainda pendente na fila estatística) vai

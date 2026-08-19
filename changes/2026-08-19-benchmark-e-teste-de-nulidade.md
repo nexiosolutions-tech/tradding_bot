@@ -403,16 +403,101 @@ que são sobre a política de decisão e não dependem da purga, mas o teste de 
 especificamente precisa ser relido depois da correção, já que é exatamente o que a purga
 poderia estar contaminando.
 
+## Sétima rodada: mesmo bug do agregador, mas no gate de promoção — mais grave
+
+O `inf` que contaminou `mean_profit_factor` na sexta rodada não é só um bug de estatística
+de diagnóstico. Achado do usuário, confirmado por rastreio direto do código antes de
+qualquer outra ação: **o mesmo `profit_factor() == inf` (fold sem nenhuma perda) passava
+por todo gate de `evaluate_fold`** — `min_profit_factor`, comparação com baseline,
+drawdown — porque `inf` clareia trivialmente qualquer comparação `>` ou `<` contra um
+número finito. `min_trades` sozinho não protege: um fold com exatamente `min_trades`
+trades, todos vencedores, passaria por acaso de amostra pequena, não por edge real.
+
+**Confirmado como reproduzível, não hipotético**: `AlwaysProfitableStrategy` (fixture de
+teste já existente) numa série monotonicamente ascendente produz 30 trades, 100% vencedores,
+`profit_factor=inf` — e, antes da correção, `candidate_wins=True`. Isso quebrou duas
+sub-testes existentes (`test_evaluate_fold_rejects_candidate_that_underperforms_zero_
+drawdown_baseline`, `test_evaluate_fold_promotes_on_profit_factor_when_drawdown_gate_is_
+relaxed`), confirmando que o fixture já testava — sem saber — exatamente o caso degenerado.
+
+**Correção**: `evaluate_fold` (`model/promotion.py`) ganhou um gate explícito, antes do
+gate de `min_profit_factor`: fold com `num_trades > 0 and gross_loss == 0` é rejeitado
+com motivo próprio ("fold sem nenhuma perda"), independente de quantos trades teve.
+`BacktestMetrics` (`backtesting/metrics.py`) expõe `gross_profit`/`gross_loss` diretamente
+(antes só existiam dentro do cálculo de `profit_factor`, descartados depois) — mesmo
+padrão de "parar de jogar fora dado já calculado" das rodadas anteriores. `profit_factor()`
+ganhou um docstring explicando o porquê do `inf` e por que não deve ser mediado entre
+folds.
+
+Os dois testes que quebraram foram corrigidos trocando a série 100%-ascendente por uma
+com dips reais espalhados (`_rising_events_with_dips`, verificada empiricamente, não só
+raciocinada — uma primeira tentativa com dip a cada 4 barras acabou afetando metade dos
+trades por engano). Novo teste dedicado
+(`test_evaluate_fold_rejects_fold_with_zero_losing_trades`) cobre o gate isoladamente,
+usando a série 100%-ascendente original exatamente para provar o caso degenerado.
+
+## Oitava rodada: `total_pnl` como estatística do teste de nulidade, PF agregado (não médio) como secundário
+
+Aplicando a correção prometida no fim da sétima rodada:
+
+- `NullityTestResult` (`model/evaluation.py`) troca `real_mean_profit_factor`/
+  `permuted_mean_profit_factors` por `real_total_pnl`/`permuted_total_pnls` — `total_pnl`
+  somado por fold nunca degenera com amostra pequena, e é a mesma métrica já usada no
+  benchmark e no diagnóstico desta investigação inteira.
+- `ConfigEvaluation` ganha `total_pnl` (soma) e `aggregate_profit_factor` (soma de lucro
+  bruto sobre soma de perda bruta entre folds — nunca média de razões) como propriedades
+  novas. `mean_profit_factor` **não foi removido** — outros chamadores (`sweep_thresholds.py`,
+  `run_coin_discovery.py`, `run_cross_asset_comparison.py`, `run_risk_profile_comparison.py`,
+  `learning_engine/tools.py`, `screening/discovery.py`) o usam como heurística exploratória
+  de comparação, fora do escopo desta rodada — ganhou um docstring apontando para as
+  alternativas corretas onde o resultado alimenta uma comparação estatística rigorosa.
+- **Nenhum piso de trades foi introduzido dentro da agregação do teste de nulidade** —
+  instrução explícita do usuário: variar a regra de seleção entre o braço real e os braços
+  permutados (ex.: "só média folds com N+ trades") enviesaria exatamente o tipo de
+  comparação que um teste de permutação existe para não ter. Validade de fold continua
+  sendo decidida uma única vez, a montante, dentro de `evaluate_fold` — igual para todo
+  braço.
+- `FoldSummary` ganha `total_pnl`/`gross_profit`/`gross_loss`, wireados a partir de
+  `BacktestMetrics` no loop de `evaluate_config` (mesmo padrão de `equity_curve` das
+  rodadas anteriores).
+- `scripts/run_nullity_test.py` reescrito para imprimir `total_pnl` (real e distribuição
+  nula) com `aggregate_profit_factor` como contexto secundário.
+- Testes novos: `test_gross_profit_sums_only_positive_pnl`,
+  `test_gross_loss_sums_only_negative_pnl_as_a_positive_number`,
+  `test_compute_metrics_exposes_gross_profit_and_gross_loss` (`test_metrics.py`);
+  `test_config_evaluation_total_pnl_sums_across_folds`,
+  `test_config_evaluation_aggregate_profit_factor_pools_gross_values_not_mean_of_ratios`,
+  `test_config_evaluation_aggregate_profit_factor_does_not_degenerate_on_one_zero_loss_fold`,
+  `test_evaluate_config_folds_carry_total_pnl_and_gross_profit_loss` (`test_evaluation.py`).
+  Suíte completa: 361 passed.
+
+## Decisão pendente, registrada a pedido do usuário: 5 folds de 45 dias não sustentam walk-forward
+
+Os folds com 1-2 trades observados na sexta rodada (pós-purga) não são só um problema de
+agregador — são o desenho de validação avisando que 45 dias divididos em 5 folds, menos a
+purga de `horizon_bars`, não sustentam cinco medições independentes. Duas direções
+possíveis, nenhuma decidida ainda: menos folds com mais dado cada, ou mais histórico (o
+arquivo `data.binance.vision` já permite baixar mais de 45 dias). O piso de trades por
+fold (`min_trades` em `PromotionCriteria`) continua sendo a forma certa de lidar com isso
+— como condição de validade do fold dentro do gate, declarada de antemão e reportada via
+`reason`, nunca como filtro silencioso dentro de uma média (ver oitava rodada acima).
+
 ## Pendente
 
-- Re-rodar o teste de nulidade com a purga aplicada — é a leitura que decide se o p=0,032
-  acima é sinal genuíno ou vazamento de lookahead.
-- Revalidação empírica da quinta rodada (threshold) contra os 4 critérios escritos acima —
-  precisa rodar de novo com a purga também aplicada (fold splits mudam).
+- Re-rodar o teste de nulidade com a purga **e** as correções desta rodada aplicadas
+  (`total_pnl`, gate de zero-perda) — é a leitura que decide se o p=0,032 observado na
+  sexta rodada é sinal genuíno ou vazamento de lookahead.
+- Revalidação empírica da quinta rodada (threshold) contra os 4 critérios escritos —
+  precisa rodar de novo com purga + correções desta rodada.
+- Decisão pendente sobre dimensionamento do walk-forward (menos folds vs. mais histórico) —
+  registrada acima, não decidida.
 - Restrição de desenho identificada no fold 2 (piso de custo vs. movimento capturado) —
-  critério #2 acima ataca isso diretamente; resultado a confirmar.
+  critério #2 do threshold ataca isso diretamente; resultado a confirmar.
 - Sweep de valor esperado líquido (versão mais forte da correção de entrada) — registrado,
   não implementado.
+- `mean_profit_factor` continua em uso fora do escopo desta investigação (sweeps, triagem,
+  ferramenta do loop agêntico) — mesmo antipadrão estatístico, não corrigido nesses
+  chamadores.
 - Itens da fila estatística que seguem inalterados: DSR, PBO/CSCV, meta-labeling, detecção
   de regime (ordem definida pelo usuário em `changes/2026-08-18-captura-aggtrade-fluxo-ordens.md`).
 
@@ -461,3 +546,14 @@ poderia estar contaminando.
   `walk_forward_splits`, vazamento das últimas `horizon_bars` linhas de treino) foi
   confirmada por leitura direta do código nesta sessão, não pré-existente na conversa —
   a hipótese do usuário apontou exatamente onde olhar.
+- Sétima e oitava rodadas: Brian pediu para checar `promotion.py` antes de aplicar a troca
+  de estatística combinada ("esse bug provavelmente está em um lugar bem pior... Isso é
+  mais grave que o teste de nulidade") — confirmado por rastreio de código antes de
+  qualquer alteração, e reproduzido com um fixture de teste já existente que quebrou ao
+  aplicar a correção, provando o caso degenerado real, não hipotético. Especificou
+  exatamente a forma da correção (`total_pnl` como estatística principal, PF agregado —
+  soma sobre soma, nunca média de razões — como secundário) e vetou explicitamente a
+  alternativa que eu poderia ter escolhido (piso de trades como filtro dentro da média,
+  que enviesaria a comparação entre braço real e permutado). Pediu para registrar a
+  decisão pendente sobre dimensionamento do walk-forward como achado separado, não como
+  correção de código nesta rodada.

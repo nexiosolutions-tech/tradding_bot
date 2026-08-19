@@ -7,6 +7,8 @@ from tradingbot.backtesting.metrics import (
     compute_metrics,
     exposure_pct,
     flat_equity_curve,
+    gross_loss,
+    gross_profit,
     max_drawdown,
     profit_factor,
     return_over_drawdown,
@@ -48,6 +50,23 @@ def test_profit_factor_ratio_of_gross_profit_to_gross_loss():
 def test_profit_factor_is_infinite_with_no_losses():
     trades = [_trade(20), _trade(5)]
     assert profit_factor(trades) == float("inf")
+
+
+def test_gross_profit_sums_only_positive_pnl():
+    trades = [_trade(20), _trade(-10), _trade(5), _trade(-3)]
+    assert gross_profit(trades) == pytest.approx(25)
+
+
+def test_gross_loss_sums_only_negative_pnl_as_a_positive_number():
+    trades = [_trade(20), _trade(-10), _trade(5), _trade(-3)]
+    assert gross_loss(trades) == pytest.approx(13)
+
+
+def test_compute_metrics_exposes_gross_profit_and_gross_loss():
+    trades = [_trade(20, entry_ts=0, exit_ts=1), _trade(-10, entry_ts=1, exit_ts=2)]
+    metrics = compute_metrics(trades, [(0, 1000.0), (1, 1000.0), (2, 1000.0)], initial_capital=1000.0)
+    assert metrics.gross_profit == pytest.approx(20)
+    assert metrics.gross_loss == pytest.approx(10)
 
 
 def test_max_drawdown_measures_largest_peak_to_trough_drop():
