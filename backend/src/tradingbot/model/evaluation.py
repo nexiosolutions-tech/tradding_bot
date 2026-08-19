@@ -7,7 +7,7 @@ a third copy of the same wiring.
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 from tradingbot.backtesting.strategy import RsiBollingerPlaceholderStrategy
 from tradingbot.ingestion.schema import MarketEvent
@@ -40,6 +40,11 @@ class FoldSummary:
     max_drawdown_pct: float
     won: bool
     reason: str
+    # Persisted, not discarded (2026-08-19) — DSR/PBO (specs/11 fila estatística) need the
+    # per-fold return series, not just the aggregate scalars above; it was already computed
+    # inside compute_metrics (BacktestMetrics.equity_curve) and thrown away before this field
+    # existed.
+    equity_curve: list[tuple[int, float]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -189,6 +194,7 @@ def evaluate_config(
                 max_drawdown_pct=result.candidate_metrics.max_drawdown_pct,
                 won=result.candidate_wins,
                 reason=result.reason,
+                equity_curve=result.candidate_metrics.equity_curve,
             )
         )
 
@@ -200,4 +206,72 @@ def evaluate_config(
         use_regime_filter=use_regime_filter,
         label_rate=label_rate,
         folds=tuple(folds),
+    )
+
+
+@dataclass(frozen=True)
+class NullityTestResult:
+    real_mean_profit_factor: float
+    real_folds_won: int
+    real_folds_total: int
+    permuted_mean_profit_factors: tuple[float, ...]
+    # Empirical permutation-test p-value: fraction of permuted runs whose mean_profit_factor
+    # matched or beat the real one, with the standard +1/+1 correction (Davison & Hinkley,
+    # 1997) so a small n_permutations never overclaims an exact p=0.0.
+    p_value: float
+
+    @property
+    def n_permutations(self) -> int:
+        return len(self.permuted_mean_profit_factors)
+
+
+def run_nullity_test(
+    events: list[MarketEvent],
+    horizon_minutes: int,
+    entry_percentile: float,
+    n_permutations: int = 30,
+    base_seed: int = 0,
+    **evaluate_config_kwargs,
+) -> NullityTestResult:
+    """Nullity test (specs/07/11, statistical-rigor thread, 2026-08-19): a single
+    shuffle_labels seed only tells you whether that one permutation happened to look
+    like an edge — it says nothing about whether the real result is typical or a fluke of
+    the whole family of permutations. Runs evaluate_config once for real and
+    n_permutations times with shuffle_labels=True (different shuffle_seed each time,
+    base_seed..base_seed+n_permutations-1) to build the null distribution of
+    mean_profit_factor, then reports where the real result falls in it as an empirical
+    p-value. A useful side effect: this null distribution is a cheap approximation of what
+    a proper Deflated Sharpe Ratio will give later (same question — "how good is this
+    number against what chance produces on this exact pipeline and data" — without DSR's
+    own implementation cost).
+
+    evaluate_config_kwargs forwards every other evaluate_config parameter (n_splits,
+    min_trades, move_threshold_pct, ...) unchanged to both the real and every permuted run,
+    so the only difference between them is the label permutation. Must not include
+    shuffle_labels/shuffle_seed — this function owns both."""
+    if "shuffle_labels" in evaluate_config_kwargs or "shuffle_seed" in evaluate_config_kwargs:
+        raise ValueError("run_nullity_test manages shuffle_labels/shuffle_seed itself")
+
+    real = evaluate_config(events, horizon_minutes, entry_percentile, **evaluate_config_kwargs)
+    permuted_pfs = [
+        evaluate_config(
+            events,
+            horizon_minutes,
+            entry_percentile,
+            shuffle_labels=True,
+            shuffle_seed=base_seed + i,
+            **evaluate_config_kwargs,
+        ).mean_profit_factor
+        for i in range(n_permutations)
+    ]
+
+    at_least_as_good = sum(1 for pf in permuted_pfs if pf >= real.mean_profit_factor)
+    p_value = (at_least_as_good + 1) / (n_permutations + 1)
+
+    return NullityTestResult(
+        real_mean_profit_factor=real.mean_profit_factor,
+        real_folds_won=real.folds_won,
+        real_folds_total=real.folds_total,
+        permuted_mean_profit_factors=tuple(permuted_pfs),
+        p_value=p_value,
     )

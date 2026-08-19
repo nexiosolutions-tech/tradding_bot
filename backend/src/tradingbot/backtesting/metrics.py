@@ -32,6 +32,14 @@ class BacktestMetrics:
     volatility_pct: float = 0.0
     return_over_drawdown: float = 0.0
     return_over_volatility: float = 0.0
+    # Fraction of the backtest's wall-clock span spent with an open position — a candidate
+    # beating (or losing to) buy-and-hold is partly explained by how much of the period it
+    # was even exposed to price risk, not just by strategy skill (2026-08-19).
+    exposure_pct: float = 0.0
+    # Persisted, not discarded (2026-08-19) — DSR/PBO (specs/11 fila estatística) need the
+    # per-fold return series, not just the aggregate scalars above, and it was already being
+    # computed here (volatility_pct) and thrown away before this field existed.
+    equity_curve: list[tuple[int, float]] = field(default_factory=list)
     pnl_by_hour: dict[int, float] = field(default_factory=dict)
     pnl_by_weekday: dict[int, float] = field(default_factory=dict)
 
@@ -125,8 +133,25 @@ def return_over_drawdown(total_return: float, max_dd_pct: float) -> float:
 
 def return_over_volatility(total_return: float, vol_pct: float) -> float:
     """Sharpe-like ratio without a risk-free rate — valid for comparing candidate vs.
-    benchmarks over the identical period, not as a standalone absolute figure."""
+    benchmarks over the identical period, not as a standalone absolute figure. Computed
+    from bar-to-bar volatility (whatever candle_minutes the caller used), not annualized —
+    not comparable to a published annualized Sharpe without that conversion."""
     return _ratio_or_inf(total_return, vol_pct)
+
+
+def exposure_pct(trades: list[ClosedTrade], equity_curve: list[tuple[int, float]]) -> float:
+    """Fraction of the equity curve's wall-clock span spent with an open position. Only
+    meaningful for strategies that report ClosedTrade objects — buy-and-hold (always
+    exposed) and flat (never exposed) aren't, so callers comparing against those benchmarks
+    report exposure for them directly (1.0 / 0.0 by definition) rather than through this
+    function."""
+    if not equity_curve:
+        return 0.0
+    total_span = equity_curve[-1][0] - equity_curve[0][0]
+    if total_span <= 0:
+        return 0.0
+    time_in_position = sum(max(0, t.exit_ts - t.entry_ts) for t in trades)
+    return min(1.0, time_in_position / total_span)
 
 
 def buy_and_hold_equity_curve(
@@ -170,6 +195,8 @@ def compute_metrics(
         volatility_pct=vol,
         return_over_drawdown=return_over_drawdown(ret, dd.max_drawdown_pct),
         return_over_volatility=return_over_volatility(ret, vol),
+        exposure_pct=exposure_pct(trades, equity_curve),
+        equity_curve=list(equity_curve),
         pnl_by_hour=pnl_by_hour(trades),
         pnl_by_weekday=pnl_by_weekday(trades),
     )

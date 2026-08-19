@@ -4,7 +4,7 @@ import pytest
 
 from tradingbot.ingestion.schema import EventType, MarketEvent
 from tradingbot.model.dataset import DatasetRow
-from tradingbot.model.evaluation import _with_shuffled_labels, evaluate_config
+from tradingbot.model.evaluation import _with_shuffled_labels, evaluate_config, run_nullity_test
 
 
 def _closed_kline(symbol, close, ts, high=None, low=None):
@@ -125,3 +125,57 @@ def test_evaluate_config_shuffle_labels_preserves_label_rate():
         shuffle_seed=3,
     )
     assert shuffled.label_rate == pytest.approx(real.label_rate)
+
+
+def test_evaluate_config_folds_carry_the_equity_curve():
+    """The equity curve was already computed inside compute_metrics (it's what
+    volatility_pct is derived from) and used to be discarded — DSR/PBO need the real
+    per-fold return series, not just the aggregate profit_factor."""
+    events = _synthetic_events(n=900)
+    result = evaluate_config(
+        events, horizon_minutes=5, entry_percentile=80.0, move_threshold_pct=0.002, n_splits=1, min_trades=1
+    )
+    assert result.folds_total >= 1
+    for fold in result.folds:
+        assert len(fold.equity_curve) > 0
+
+
+def test_run_nullity_test_rejects_shuffle_kwargs_from_caller():
+    """run_nullity_test owns shuffle_labels/shuffle_seed — a caller passing them would
+    silently fight the permutation loop over who controls the label shuffle."""
+    with pytest.raises(ValueError):
+        run_nullity_test([], horizon_minutes=5, entry_percentile=80.0, shuffle_labels=True)
+
+
+def test_run_nullity_test_builds_null_distribution_with_requested_size():
+    events = _synthetic_events(n=900)
+    result = run_nullity_test(
+        events,
+        horizon_minutes=5,
+        entry_percentile=80.0,
+        move_threshold_pct=0.002,
+        n_splits=1,
+        min_trades=1,
+        n_permutations=3,
+        base_seed=0,
+    )
+    assert result.n_permutations == 3
+    assert len(result.permuted_mean_profit_factors) == 3
+    assert 0.0 <= result.p_value <= 1.0
+
+
+def test_run_nullity_test_p_value_never_exactly_zero():
+    """(# at least as good + 1) / (n_permutations + 1) — the standard permutation-test
+    correction — can never round to a literal 0.0, no matter how decisively the real
+    result beats every permutation."""
+    events = _synthetic_events(n=900)
+    result = run_nullity_test(
+        events,
+        horizon_minutes=5,
+        entry_percentile=80.0,
+        move_threshold_pct=0.002,
+        n_splits=1,
+        min_trades=1,
+        n_permutations=3,
+    )
+    assert result.p_value >= 1 / (result.n_permutations + 1)

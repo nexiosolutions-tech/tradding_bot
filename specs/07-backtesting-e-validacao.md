@@ -164,14 +164,38 @@ contra dois benchmarks triviais:
 
 A comparação é ajustada a risco, não só retorno bruto: `BacktestMetrics`
 ganhou os campos `total_return_pct`, `volatility_pct`,
-`return_over_drawdown` (razão tipo Calmar) e `return_over_volatility` (razão
+`return_over_drawdown` (razão tipo Calmar), `return_over_volatility` (razão
 tipo Sharpe sem taxa livre de risco — válida para comparar candidato vs.
-benchmark no mesmo período, não como número absoluto isolado). Os três
-(candidato, buy-and-hold, flat) passam pela mesma função `compute_metrics`,
-para que a comparação seja de fato maçã-com-maçã e não três fórmulas
-diferentes coincidentemente parecidas.
+benchmark no mesmo período, não como número absoluto isolado) e
+`exposure_pct` (fração do período com posição aberta). Os três (candidato,
+buy-and-hold, flat) passam pela mesma função `compute_metrics`, para que a
+comparação seja de fato maçã-com-maçã e não três fórmulas diferentes
+coincidentemente parecidas.
 
-## Teste de nulidade — labels embaralhados (2026-08-19)
+Duas ressalvas que `scripts/run_benchmark_comparison.py` imprime
+explicitamente no relatório (texto e JSON), em vez de deixar implícitas
+(2026-08-19):
+
+- **Assimetria de custo**: buy-and-hold entra e sai de graça nesta
+  comparação (um único mark-to-market, não uma ordem simulada); o candidato
+  paga taxa/slippage reais em cada trade (`backtesting/costs.py`). Isso
+  enviesa a comparação *contra* o candidato — o lado seguro — mas precisa
+  ficar visível, não silenciosamente favorecendo o buy-and-hold.
+- **Exposição**: buy-and-hold fica 100% exposto por definição, flat 0%, e o
+  candidato o que `exposure_pct` calcular (tipicamente bem abaixo de 100%)
+  — parte de qualquer diferença de retorno/risco entre eles se explica por
+  quanto tempo cada um esteve de fato no mercado, não só por habilidade da
+  estratégia.
+- `return_over_volatility` é calculado sobre volatilidade por barra (do
+  candle usado, ex. 1m), **não anualizada** — não é comparável a um Sharpe
+  publicado sem essa conversão. Rotulado explicitamente na saída do script
+  para não ser confundido com um número anualizado.
+
+`BacktestMetrics.equity_curve` também deixou de ser descartado — persistido
+no próprio campo, reaproveitado por `FoldSummary.equity_curve`
+(`model/evaluation.py`) abaixo.
+
+## Teste de nulidade — labels embaralhados, N permutações (2026-08-19)
 
 Complementa o benchmark acima numa direção diferente: em vez de perguntar
 "o candidato bate um benchmark ingênuo", pergunta "o harness em si vaza
@@ -181,17 +205,46 @@ pipeline (mesmos eventos, mesmos folds, mesmo treino/calibração/backtest),
 substituindo os labels reais (construídos por triple-barrier em
 `model/dataset.py`) por uma permutação de si mesmos, **depois** de
 calculados — preserva a taxa de label exata, só quebra a correspondência
-feature→label linha a linha. `scripts/run_nullity_test.py` expõe isso via
-CLI.
+feature→label linha a linha.
 
-**Resultado esperado: zero folds vencidos.** Sem correspondência real entre
-feature e label, não deveria existir edge para o modelo aprender. Se algum
-fold vencer mesmo assim, a leitura correta não é "sorte" — é evidência de
-vazamento no harness (provável violação do invariante anti-leakage de
-`03-motor-de-features.md`: alguma feature carregando informação do futuro
-além de `knowledge_ts`), e a investigação vai para o harness, não para a
-estratégia. O valor inteiro deste teste está em levar esse resultado a
-sério quando ele acontecer, não em rodá-lo como formalidade.
+**Uma semente só não é teste de nulidade — é um sorteio único.** Uma
+permutação isolada não distingue "harness limpo" de "essa permutação em
+particular calhou de parecer boa/ruim". `model/evaluation.py::run_nullity_test`
+roda a avaliação real uma vez e N permutações (`n_permutations`, sementes
+`base_seed..base_seed+N-1`), monta a distribuição nula de
+`mean_profit_factor` e reporta onde o resultado real cai nela como um
+**p-valor empírico**: `(nº de permutações que igualaram ou superaram o real
++ 1) / (N + 1)` — a correção `+1/+1` padrão de teste de permutação (Davison
+& Hinkley) evita declarar um p=0.0 exato só porque N é finito.
+`scripts/run_nullity_test.py` expõe isso via CLI (`--n-permutations`,
+default 30).
+
+Efeito colateral: essa distribuição nula é uma aproximação barata do que o
+Deflated Sharpe Ratio (DSR, item ainda pendente na fila estatística) vai
+responder depois — "quão bom é esse número comparado ao que o acaso produz
+neste pipeline, com estes dados, com este número de folds" — sem o custo de
+implementar o DSR ainda. Não o substitui, mas cobre parte da mesma pergunta
+sem custo adicional.
+
+**Resultado esperado: p-valor alto** — o resultado real não se distingue do
+que permutações aleatórias produzem no mesmo pipeline. Um p-valor baixo não
+é evidência de sorte — é evidência de vazamento no harness (provável
+violação do invariante anti-leakage de `03-motor-de-features.md`: alguma
+feature carregando informação do futuro além de `knowledge_ts`), e a
+investigação vai para o harness, não para a estratégia. O valor inteiro
+deste teste está em levar esse resultado a sério quando ele acontecer, não
+em rodá-lo como formalidade.
+
+## Série de retorno por fold, persistida (2026-08-19)
+
+`FoldSummary` (`model/evaluation.py`) ganhou `equity_curve` — a série
+(timestamp, equity) do fold, já computada internamente por `compute_metrics`
+para derivar `volatility_pct` e antes descartada assim que o escalar saía.
+Não é mudança de comportamento de nenhum critério de promoção — é parar de
+jogar fora um dado que já estava em memória. Motivação: DSR e PBO/CSCV
+(itens pendentes da fila estatística) precisam da série de retornos real por
+fold, não só do profit factor agregado — sem isso, implementá-los mais
+tarde exigiria re-rodar todo backtest de novo só para recuperar o dado.
 
 ## Relação com o dashboard e o motor de aprendizado
 

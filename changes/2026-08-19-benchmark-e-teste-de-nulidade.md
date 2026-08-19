@@ -73,6 +73,43 @@ achado é sobre o harness, e o valor do teste está em levá-lo a sério naquele
 `uv run pytest -q` — 334 passed (15 testes novos entre `test_metrics.py` e
 `test_evaluation.py`).
 
+## Segunda rodada: N permutações + p-valor, série de retorno persistida, exposição/custo no benchmark
+
+Três correções pedidas antes de rodar contra dado real (mais barato corrigir agora do que
+rodar tudo de novo depois):
+
+- **Teste de nulidade: uma semente não é um teste.** `evaluate_config(shuffle_labels=True)`
+  com uma única semente é um sorteio único — "0 folds vencidos" nessas condições é evidência
+  fraca, e o inverso também vale (um fold vencido não diz se é vazamento ou acaso normal de
+  amostra). `model/evaluation.py::run_nullity_test` (novo) roda a avaliação real uma vez e
+  N permutações (`n_permutations`, default 30, sementes `base_seed..base_seed+N-1`), monta a
+  distribuição nula de `mean_profit_factor`, e reporta um **p-valor empírico**:
+  `(permutações que igualaram/superaram o real + 1) / (N + 1)` — correção `+1/+1` padrão de
+  teste de permutação, evita declarar p=0.0 exato por N ser finito. `scripts/run_nullity_test.py`
+  reescrito para chamar `run_nullity_test` e imprimir a distribuição + p-valor.
+  Efeito colateral notado pelo usuário: essa distribuição nula aproxima, sem custo adicional,
+  parte da pergunta que o DSR (ainda pendente) vai responder depois.
+- **Item "quase de graça": série de retorno por fold parou de ser descartada.**
+  `compute_metrics` já recebia `equity_curve` para calcular `volatility_pct` e devolvia só o
+  escalar — `BacktestMetrics` ganhou o campo `equity_curve` (persiste o que já estava em
+  memória) e `FoldSummary` (`model/evaluation.py`) passou a carregar essa série também. Não
+  muda nenhum critério de promoção; destrava DSR/PBO mais tarde sem precisar re-rodar backtest
+  só para recuperar o dado.
+- **Benchmark: exposição e assimetria de custo, antes implícitas.** `BacktestMetrics` ganhou
+  `exposure_pct` (fração do período com posição aberta, via novo
+  `backtesting/metrics.py::exposure_pct`). `scripts/run_benchmark_comparison.py` agora
+  imprime exposição dos três (candidato via `exposure_pct`; buy&hold=100%, flat=0% por
+  definição, já que nenhum dos dois é construído a partir de `ClosedTrade`) e declara
+  explicitamente, em texto e no JSON salvo: buy-and-hold não paga taxa/slippage nesta
+  comparação (o candidato paga — viés do lado seguro, mas precisa ficar visível) e
+  `return_over_volatility` usa volatilidade por barra, não anualizada.
+
+## Suíte
+
+`uv run pytest -q` — 344 passed (10 testes novos nesta segunda rodada, sobre os 334 da
+primeira: `exposure_pct` em `test_metrics.py`; `run_nullity_test`/`NullityTestResult`/
+`FoldSummary.equity_curve` em `test_evaluation.py`).
+
 ## Pendente
 
 - Rodar `scripts/run_benchmark_comparison.py` e `scripts/run_nullity_test.py` contra dado
@@ -91,3 +128,8 @@ achado é sobre o harness, e o valor do teste está em levá-lo a sério naquele
   andamento nem da decisão de arquitetura (a) vs (b) — rodam sobre backtest/histórico já
   disponível, então adiá-los até a janela de 24h terminar seria perder tempo sem motivo
   técnico.
+- Segunda rodada aprovada por: Brian — "Push primeiro... Sobe, aplica as N sementes, e roda
+  os dois" (2026-08-19), com a justificativa explícita de que uma semente única não
+  constitui teste de nulidade (sorteio único, sem distribuição para comparar), e de que
+  `equity_curve`/`exposure_pct` eram "quase de graça" porque a série de retornos já estava
+  em memória dentro de `compute_metrics` antes de ser descartada.

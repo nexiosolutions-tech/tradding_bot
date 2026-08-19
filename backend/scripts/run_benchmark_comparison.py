@@ -12,6 +12,17 @@ Runs per fold, not on the aggregate period — an aggregate figure can hide a ca
 that's only ahead because of one regime (see promotion.py's own module docstring: "winning
 on average across folds is not enough").
 
+Two caveats the printed report states explicitly rather than leaving implicit, so a reader
+three months from now doesn't mistake either comparison for a fair one at face value:
+- **Cost asymmetry**: buy-and-hold enters/exits for free in this comparison (a single mark-
+  to-market, no simulated order); the candidate pays real fees/slippage on every trade
+  (backtesting/costs.py). This biases the comparison *against* the candidate, which is the
+  safe direction, but it must stay visible instead of silently favoring buy-and-hold.
+- **Exposure**: buy-and-hold is 100% exposed to price risk by definition, flat is 0%, and
+  the candidate is whatever BacktestMetrics.exposure_pct comes out to (usually well under
+  100%) — part of any return/risk gap between them is explained by how much of the period
+  each was even in the market, not by strategy skill alone.
+
 Usage:
     python scripts/run_benchmark_comparison.py --symbol BTCUSDT --interval 1m --days 45
 """
@@ -45,11 +56,12 @@ def _warmup_prefix(events, before_ts, n=WARMUP_PREFIX_BARS):
     return prior[-n:]
 
 
-def _fmt(m: BacktestMetrics) -> str:
+def _fmt(m: BacktestMetrics, exposure_override: float | None = None) -> str:
+    exposure = m.exposure_pct if exposure_override is None else exposure_override
     return (
         f"trades={m.num_trades} pf={m.profit_factor:.2f} return={m.total_return_pct:+.1%} "
-        f"dd={m.max_drawdown_pct:.1%} vol={m.volatility_pct:.2%} "
-        f"ret/dd={m.return_over_drawdown:.2f} ret/vol={m.return_over_volatility:.2f}"
+        f"exposure={exposure:.1%} dd={m.max_drawdown_pct:.1%} vol/barra={m.volatility_pct:.2%} "
+        f"ret/dd={m.return_over_drawdown:.2f} ret/vol_não_anualizado={m.return_over_volatility:.2f}"
     )
 
 
@@ -78,6 +90,13 @@ def main() -> None:
     if not events:
         print("No data returned — aborting.")
         return
+
+    print(
+        "\nNOTA: buy&hold não paga taxa/slippage nesta comparação (o candidato paga) — "
+        "viés a favor do buy&hold, do lado seguro, mas explícito para não ser lido como "
+        "comparação justa. ret/vol_não_anualizado usa volatilidade por barra do candle "
+        "usado (não anualizada) — não comparável a um Sharpe publicado sem converter.\n"
+    )
 
     target_config = TargetConfig(
         horizon_minutes=args.horizon_minutes,
@@ -126,15 +145,18 @@ def main() -> None:
 
         print(f"\nFold {fold_index}:")
         print(f"  candidate : {_fmt(candidate_metrics)}")
-        print(f"  buy&hold  : {_fmt(buy_hold_metrics)}")
-        print(f"  flat      : {_fmt(flat_metrics)}")
+        # buy-and-hold/flat aren't built from ClosedTrade objects, so exposure_pct as
+        # computed by compute_metrics would read 0.0 for both — overridden here with their
+        # true exposure by definition (always in market / never in market).
+        print(f"  buy&hold  : {_fmt(buy_hold_metrics, exposure_override=1.0)}")
+        print(f"  flat      : {_fmt(flat_metrics, exposure_override=0.0)}")
 
         fold_reports.append(
             {
                 "fold_index": fold_index,
                 "candidate": asdict(candidate_metrics),
-                "buy_and_hold": asdict(buy_hold_metrics),
-                "flat": asdict(flat_metrics),
+                "buy_and_hold": {**asdict(buy_hold_metrics), "exposure_pct": 1.0},
+                "flat": {**asdict(flat_metrics), "exposure_pct": 0.0},
             }
         )
 
@@ -150,9 +172,20 @@ def main() -> None:
     )
     print(f"\nCandidato supera buy&hold (ret/dd) e flat (retorno) em {beats_both}/{len(fold_reports)} folds.")
 
+    report = {
+        "caveats": {
+            "cost_asymmetry": "buy_and_hold pays no fees/slippage in this comparison; "
+            "the candidate pays real fees/slippage on every trade (backtesting/costs.py) "
+            "— biases the comparison against the candidate, the safe direction, but must "
+            "stay explicit.",
+            "return_over_volatility": "computed from bar-level (not annualized) "
+            "volatility — not comparable to a published annualized Sharpe ratio.",
+        },
+        "folds": fold_reports,
+    }
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     out_path = RESULTS_DIR / f"benchmark_comparison_{args.symbol}_{end_ms}.json"
-    out_path.write_text(json.dumps(fold_reports, indent=2, default=str))
+    out_path.write_text(json.dumps(report, indent=2, default=str))
     print(f"Relatório salvo em {out_path}")
 
 

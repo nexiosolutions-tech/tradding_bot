@@ -5,6 +5,7 @@ from tradingbot.ingestion.schema import EventType, MarketEvent
 from tradingbot.backtesting.metrics import (
     buy_and_hold_equity_curve,
     compute_metrics,
+    exposure_pct,
     flat_equity_curve,
     max_drawdown,
     profit_factor,
@@ -16,11 +17,11 @@ from tradingbot.backtesting.metrics import (
 )
 
 
-def _trade(pnl: float) -> ClosedTrade:
+def _trade(pnl: float, entry_ts: int = 0, exit_ts: int = 0) -> ClosedTrade:
     return ClosedTrade(
         symbol="BTCUSDT",
-        entry_ts=0,
-        exit_ts=0,
+        entry_ts=entry_ts,
+        exit_ts=exit_ts,
         entry_price=100,
         exit_price=100,
         size=1,
@@ -147,3 +148,36 @@ def test_compute_metrics_populates_risk_adjusted_fields_from_initial_capital():
     # Monotonically increasing equity -> zero drawdown with a positive return -> inf, same
     # convention as profit_factor's own no-losses case.
     assert metrics.return_over_drawdown == float("inf")
+
+
+def test_compute_metrics_persists_the_equity_curve_instead_of_discarding_it():
+    equity_curve = [(0, 1000.0), (1, 1100.0)]
+    metrics = compute_metrics([], equity_curve, initial_capital=1000.0)
+    assert metrics.equity_curve == equity_curve
+
+
+def test_exposure_pct_is_fraction_of_span_with_an_open_position():
+    equity_curve = [(0, 1000.0), (100, 1000.0)]  # 100ms total span
+    trades = [_trade(5, entry_ts=0, exit_ts=40)]  # 40ms in position
+    assert exposure_pct(trades, equity_curve) == pytest.approx(0.4)
+
+
+def test_exposure_pct_sums_multiple_non_overlapping_trades():
+    equity_curve = [(0, 1000.0), (100, 1000.0)]
+    trades = [_trade(5, entry_ts=0, exit_ts=20), _trade(3, entry_ts=50, exit_ts=70)]
+    assert exposure_pct(trades, equity_curve) == pytest.approx(0.4)
+
+
+def test_exposure_pct_is_zero_with_no_trades():
+    equity_curve = [(0, 1000.0), (100, 1000.0)]
+    assert exposure_pct([], equity_curve) == 0.0
+
+
+def test_exposure_pct_is_zero_with_no_equity_curve():
+    assert exposure_pct([_trade(5, entry_ts=0, exit_ts=40)], []) == 0.0
+
+
+def test_exposure_pct_is_capped_at_one():
+    equity_curve = [(0, 1000.0), (10, 1000.0)]
+    trades = [_trade(5, entry_ts=0, exit_ts=1000)]  # far exceeds the curve's own span
+    assert exposure_pct(trades, equity_curve) == pytest.approx(1.0)
