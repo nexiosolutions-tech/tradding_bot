@@ -6,11 +6,12 @@ a third copy of the same wiring.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import random
+from dataclasses import dataclass, replace
 
 from tradingbot.backtesting.strategy import RsiBollingerPlaceholderStrategy
 from tradingbot.ingestion.schema import MarketEvent
-from tradingbot.model.dataset import TargetConfig, build_dataset
+from tradingbot.model.dataset import DatasetRow, TargetConfig, build_dataset
 from tradingbot.model.promotion import PromotionCriteria, evaluate_fold
 from tradingbot.model.strategy import ModelStrategy, RegimeFilteredStrategy, choose_regime_threshold
 from tradingbot.model.training import ModelConfig, choose_thresholds, split_fit_calibration, train_model, walk_forward_splits
@@ -68,6 +69,17 @@ class ConfigEvaluation:
         return min((f.profit_factor for f in self.folds), default=0.0)
 
 
+def _with_shuffled_labels(rows: list[DatasetRow], seed: int) -> list[DatasetRow]:
+    """Permutes labels across rows — the multiset (and therefore label_rate) is unchanged,
+    only which row each label lands on. Used by the nullity test (specs/11,
+    statistical-rigor thread): if the harness has no leak, training on this should find no
+    real edge in any fold, since the label carries no information about that row's
+    features anymore."""
+    labels = [row.label for row in rows]
+    random.Random(seed).shuffle(labels)
+    return [replace(row, label=label) for row, label in zip(rows, labels)]
+
+
 def evaluate_config(
     events: list[MarketEvent],
     horizon_minutes: int,
@@ -83,6 +95,8 @@ def evaluate_config(
     risk_config: RiskConfig | None = None,
     feature_names: tuple[str, ...] | None = None,
     reference_symbol: str | None = None,
+    shuffle_labels: bool = False,
+    shuffle_seed: int = 0,
 ) -> ConfigEvaluation:
     """Walk-forward-evaluates one (horizon, entry_percentile, ...) configuration end to end
     — dataset build, per-fold train/calibrate/evaluate, exactly like train_model.py's exit
@@ -96,7 +110,11 @@ def evaluate_config(
     feature_names/reference_symbol default to None, preserving build_dataset's/train_model's
     own single-symbol defaults — pass feature_names=CROSS_ASSET_FEATURE_NAMES and
     reference_symbol="ETHUSDT" (with events merged from both symbols) for the cross-asset
-    comparison (spec 03, 14ª rodada)."""
+    comparison (spec 03, 14ª rodada). shuffle_labels=True (default False) runs this exact
+    same pipeline — same events, same folds, same training/calibration/backtest — with real
+    triple-barrier labels replaced by a permutation of themselves, for the nullity test
+    (specs/11): expected result is folds_won == 0; any fold won is evidence the harness is
+    leaking information, not evidence of a lucky model."""
     target_config = TargetConfig(
         horizon_minutes=horizon_minutes,
         candle_minutes=candle_minutes,
@@ -106,6 +124,8 @@ def evaluate_config(
     )
     dataset_kwargs = {} if feature_names is None else {"required_features": feature_names}
     rows = build_dataset(events, target_config, reference_symbol=reference_symbol, **dataset_kwargs)
+    if shuffle_labels:
+        rows = _with_shuffled_labels(rows, shuffle_seed)
     label_rate = sum(r.label for r in rows) / len(rows) if rows else 0.0
 
     model_config = ModelConfig()

@@ -144,6 +144,55 @@ para cobrir custo de round-trip real).
   limite mínimo de trades para considerar um resultado significativo é
   definido em `changes/`).
 
+## Comparação contra benchmarks triviais (2026-08-19)
+
+Superar `RsiBollingerPlaceholderStrategy` (o baseline usado em
+`decide_promotion`) é necessário mas não suficiente — esse baseline já foi
+encontrado estruturalmente fraco (ver limitação acima, 2026-07-31), então um
+candidato pode vencê-lo e ainda assim não ter edge real. `scripts/run_benchmark_comparison.py`
+roda a mesma pipeline walk-forward de `train_model.py` (mesmo modelo, mesmo
+filtro de regime, mesmos folds) e compara o candidato, fold a fold — não só
+no agregado, pela mesma razão de "Sinais de alerta de overfitting" acima —
+contra dois benchmarks triviais:
+
+- **Buy-and-hold**: `backtesting/metrics.py::buy_and_hold_equity_curve` —
+  mark-to-market de uma compra única no primeiro candle do fold, mantida até
+  o fim.
+- **Flat**: `backtesting/metrics.py::flat_equity_curve` — capital parado, a
+  régua de "não fazer nada" (nenhuma estratégia com custo de operação deveria
+  perder para simplesmente não operar).
+
+A comparação é ajustada a risco, não só retorno bruto: `BacktestMetrics`
+ganhou os campos `total_return_pct`, `volatility_pct`,
+`return_over_drawdown` (razão tipo Calmar) e `return_over_volatility` (razão
+tipo Sharpe sem taxa livre de risco — válida para comparar candidato vs.
+benchmark no mesmo período, não como número absoluto isolado). Os três
+(candidato, buy-and-hold, flat) passam pela mesma função `compute_metrics`,
+para que a comparação seja de fato maçã-com-maçã e não três fórmulas
+diferentes coincidentemente parecidas.
+
+## Teste de nulidade — labels embaralhados (2026-08-19)
+
+Complementa o benchmark acima numa direção diferente: em vez de perguntar
+"o candidato bate um benchmark ingênuo", pergunta "o harness em si vaza
+informação". `model/evaluation.py::evaluate_config` ganhou
+`shuffle_labels`/`shuffle_seed` — quando ativado, roda exatamente a mesma
+pipeline (mesmos eventos, mesmos folds, mesmo treino/calibração/backtest),
+substituindo os labels reais (construídos por triple-barrier em
+`model/dataset.py`) por uma permutação de si mesmos, **depois** de
+calculados — preserva a taxa de label exata, só quebra a correspondência
+feature→label linha a linha. `scripts/run_nullity_test.py` expõe isso via
+CLI.
+
+**Resultado esperado: zero folds vencidos.** Sem correspondência real entre
+feature e label, não deveria existir edge para o modelo aprender. Se algum
+fold vencer mesmo assim, a leitura correta não é "sorte" — é evidência de
+vazamento no harness (provável violação do invariante anti-leakage de
+`03-motor-de-features.md`: alguma feature carregando informação do futuro
+além de `knowledge_ts`), e a investigação vai para o harness, não para a
+estratégia. O valor inteiro deste teste está em levar esse resultado a
+sério quando ele acontecer, não em rodá-lo como formalidade.
+
 ## Relação com o dashboard e o motor de aprendizado
 
 - Todo relatório de backtest gerado (seja de validação de mudança, seja

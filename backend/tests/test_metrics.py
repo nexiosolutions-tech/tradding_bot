@@ -1,7 +1,19 @@
 import pytest
 
 from tradingbot.backtesting.engine import ClosedTrade
-from tradingbot.backtesting.metrics import max_drawdown, profit_factor, win_rate
+from tradingbot.ingestion.schema import EventType, MarketEvent
+from tradingbot.backtesting.metrics import (
+    buy_and_hold_equity_curve,
+    compute_metrics,
+    flat_equity_curve,
+    max_drawdown,
+    profit_factor,
+    return_over_drawdown,
+    return_over_volatility,
+    total_return_pct,
+    volatility_pct,
+    win_rate,
+)
 
 
 def _trade(pnl: float) -> ClosedTrade:
@@ -53,3 +65,85 @@ def test_max_drawdown_is_zero_for_monotonically_increasing_equity():
     equity_curve = [(0, 1000.0), (1, 1100.0), (2, 1200.0)]
     result = max_drawdown(equity_curve)
     assert result.max_drawdown_pct == 0.0
+
+
+def test_total_return_pct_measures_change_from_initial_capital():
+    equity_curve = [(0, 1000.0), (1, 1100.0), (2, 1250.0)]
+    assert total_return_pct(equity_curve, initial_capital=1000.0) == pytest.approx(0.25)
+
+
+def test_total_return_pct_is_zero_with_no_equity_curve():
+    assert total_return_pct([], initial_capital=1000.0) == 0.0
+
+
+def test_volatility_pct_is_zero_for_flat_equity():
+    equity_curve = [(0, 1000.0), (1, 1000.0), (2, 1000.0)]
+    assert volatility_pct(equity_curve) == 0.0
+
+
+def test_volatility_pct_is_positive_for_bumpy_equity():
+    equity_curve = [(0, 1000.0), (1, 1100.0), (2, 950.0), (3, 1080.0)]
+    assert volatility_pct(equity_curve) > 0.0
+
+
+def test_return_over_drawdown_is_calmar_like_ratio():
+    assert return_over_drawdown(total_return=0.20, max_dd_pct=0.10) == pytest.approx(2.0)
+
+
+def test_return_over_drawdown_is_infinite_with_no_drawdown_and_positive_return():
+    assert return_over_drawdown(total_return=0.20, max_dd_pct=0.0) == float("inf")
+
+
+def test_return_over_drawdown_is_zero_with_no_drawdown_and_no_return():
+    assert return_over_drawdown(total_return=0.0, max_dd_pct=0.0) == 0.0
+
+
+def test_return_over_volatility_is_sharpe_like_ratio():
+    assert return_over_volatility(total_return=0.10, vol_pct=0.05) == pytest.approx(2.0)
+
+
+def _kline(symbol: str, close: float, ts: int) -> MarketEvent:
+    return MarketEvent(
+        symbol=symbol,
+        event_type=EventType.KLINE,
+        exchange_ts=ts,
+        local_ts=ts,
+        sequence_id=ts,
+        payload={
+            "open_time": ts - 60_000,
+            "close_time": ts,
+            "interval": "1m",
+            "open": close,
+            "high": close,
+            "low": close,
+            "close": close,
+            "volume": 100.0,
+            "is_closed": True,
+        },
+    )
+
+
+def test_buy_and_hold_equity_curve_tracks_price_change_from_first_close():
+    events = [_kline("BTCUSDT", 100.0, 60_000), _kline("BTCUSDT", 110.0, 120_000)]
+    curve = buy_and_hold_equity_curve(events, initial_capital=1000.0)
+    assert curve == [(60_000, pytest.approx(1000.0)), (120_000, pytest.approx(1100.0))]
+
+
+def test_buy_and_hold_equity_curve_is_empty_with_no_kline_events():
+    assert buy_and_hold_equity_curve([], initial_capital=1000.0) == []
+
+
+def test_flat_equity_curve_holds_initial_capital_constant():
+    events = [_kline("BTCUSDT", 100.0, 60_000), _kline("BTCUSDT", 110.0, 120_000)]
+    curve = flat_equity_curve(events, initial_capital=1000.0)
+    assert curve == [(60_000, 1000.0), (120_000, 1000.0)]
+
+
+def test_compute_metrics_populates_risk_adjusted_fields_from_initial_capital():
+    equity_curve = [(0, 1000.0), (1, 1100.0), (2, 1250.0)]
+    metrics = compute_metrics([], equity_curve, initial_capital=1000.0)
+    assert metrics.total_return_pct == pytest.approx(0.25)
+    assert metrics.volatility_pct > 0.0
+    # Monotonically increasing equity -> zero drawdown with a positive return -> inf, same
+    # convention as profit_factor's own no-losses case.
+    assert metrics.return_over_drawdown == float("inf")

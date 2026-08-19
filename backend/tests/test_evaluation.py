@@ -1,7 +1,10 @@
 import random
 
+import pytest
+
 from tradingbot.ingestion.schema import EventType, MarketEvent
-from tradingbot.model.evaluation import evaluate_config
+from tradingbot.model.dataset import DatasetRow
+from tradingbot.model.evaluation import _with_shuffled_labels, evaluate_config
 
 
 def _closed_kline(symbol, close, ts, high=None, low=None):
@@ -83,3 +86,42 @@ def test_evaluate_config_without_regime_filter_still_produces_folds():
     )
     assert result.use_regime_filter is False
     assert result.folds_total >= 1
+
+
+def _dataset_row(label: int) -> DatasetRow:
+    return DatasetRow(symbol="BTCUSDT", knowledge_ts=0, close=100.0, features={}, label=label)
+
+
+def test_with_shuffled_labels_preserves_multiset_but_reorders():
+    rows = [_dataset_row(i % 2) for i in range(40)]
+    shuffled = _with_shuffled_labels(rows, seed=1)
+    assert sorted(r.label for r in shuffled) == sorted(r.label for r in rows)
+    assert [r.label for r in shuffled] != [r.label for r in rows]
+
+
+def test_with_shuffled_labels_is_deterministic_given_seed():
+    rows = [_dataset_row(i % 2) for i in range(40)]
+    a = _with_shuffled_labels(rows, seed=7)
+    b = _with_shuffled_labels(rows, seed=7)
+    assert [r.label for r in a] == [r.label for r in b]
+
+
+def test_evaluate_config_shuffle_labels_preserves_label_rate():
+    """The nullity test's validity rests on this: shuffling must only break the
+    feature-label correspondence, never the label rate itself — otherwise a fold losing
+    under shuffle_labels=True could just mean "fewer positive labels", not "no leakage"."""
+    events = _synthetic_events(n=900)
+    real = evaluate_config(
+        events, horizon_minutes=5, entry_percentile=80.0, move_threshold_pct=0.002, n_splits=1, min_trades=1
+    )
+    shuffled = evaluate_config(
+        events,
+        horizon_minutes=5,
+        entry_percentile=80.0,
+        move_threshold_pct=0.002,
+        n_splits=1,
+        min_trades=1,
+        shuffle_labels=True,
+        shuffle_seed=3,
+    )
+    assert shuffled.label_rate == pytest.approx(real.label_rate)

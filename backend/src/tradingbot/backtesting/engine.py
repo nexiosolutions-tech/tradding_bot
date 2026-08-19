@@ -63,6 +63,7 @@ class BacktestEngine:
         self.risk = RiskManager(risk_config)
         self.fee_model = fee_model
         self.slippage_model = slippage_model
+        self.initial_capital = initial_capital
         self.equity = initial_capital
         self._position: OpenPosition | None = None
         self._last_snapshot: FeatureSnapshot | None = None

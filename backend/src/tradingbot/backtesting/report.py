@@ -12,7 +12,7 @@ from tradingbot.backtesting.metrics import BacktestMetrics, compute_metrics
 
 
 def build_report(engine: BacktestEngine) -> tuple[BacktestMetrics, dict]:
-    metrics = compute_metrics(engine.trades, engine.equity_curve)
+    metrics = compute_metrics(engine.trades, engine.equity_curve, initial_capital=engine.initial_capital)
     raw = {
         "metrics": asdict(metrics),
         "trades": [asdict(t) for t in engine.trades],
@@ -36,6 +36,9 @@ def _render_markdown(run_name: str, metrics: BacktestMetrics, raw: dict) -> str:
         f"- P&L total: {metrics.total_pnl:.2f}",
         f"- Taxas pagas: {metrics.total_fees:.2f}",
         f"- Drawdown máximo: {metrics.max_drawdown_pct:.1%}",
+        f"- Retorno total: {metrics.total_return_pct:+.1%}",
+        f"- Retorno/drawdown: {metrics.return_over_drawdown:.2f}",
+        f"- Retorno/volatilidade: {metrics.return_over_volatility:.2f}",
         f"- Capital final: {raw['final_equity']:.2f}",
         f"- Sinais rejeitados (sem stop-loss): {len(raw['rejected_signals'])}",
         f"- Circuit breaker acionado: {raw['circuit_breaker_triggered']}",

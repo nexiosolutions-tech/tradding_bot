@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from tradingbot.backtesting.engine import ClosedTrade
+from tradingbot.ingestion.schema import EventType, MarketEvent
 
 
 @dataclass(frozen=True)
@@ -23,6 +24,14 @@ class BacktestMetrics:
     total_fees: float
     max_drawdown_pct: float
     max_drawdown_duration_ms: int
+    # Risk-adjusted fields (2026-08-19, statistical-rigor thread) — a raw return or profit
+    # factor can't be compared against a benchmark on its own; ret/dd and ret/vol let
+    # candidate, buy-and-hold and flat all be judged on the same footing instead of just
+    # "did it make more money" (see buy_and_hold_equity_curve/flat_equity_curve below).
+    total_return_pct: float = 0.0
+    volatility_pct: float = 0.0
+    return_over_drawdown: float = 0.0
+    return_over_volatility: float = 0.0
     pnl_by_hour: dict[int, float] = field(default_factory=dict)
     pnl_by_weekday: dict[int, float] = field(default_factory=dict)
 
@@ -79,8 +88,76 @@ def pnl_by_weekday(trades: list[ClosedTrade]) -> dict[int, float]:
     return result
 
 
-def compute_metrics(trades: list[ClosedTrade], equity_curve: list[tuple[int, float]]) -> BacktestMetrics:
+def total_return_pct(equity_curve: list[tuple[int, float]], initial_capital: float) -> float:
+    if not equity_curve or initial_capital <= 0:
+        return 0.0
+    return (equity_curve[-1][1] - initial_capital) / initial_capital
+
+
+def volatility_pct(equity_curve: list[tuple[int, float]]) -> float:
+    """Population stdev of bar-to-bar equity returns — how bumpy the path to
+    total_return_pct was, not just where it ended up."""
+    if len(equity_curve) < 2:
+        return 0.0
+    returns = [
+        (curr - prev) / prev
+        for (_, prev), (_, curr) in zip(equity_curve, equity_curve[1:])
+        if prev > 0
+    ]
+    if not returns:
+        return 0.0
+    mean = sum(returns) / len(returns)
+    variance = sum((r - mean) ** 2 for r in returns) / len(returns)
+    return variance**0.5
+
+
+def _ratio_or_inf(numerator: float, denominator: float) -> float:
+    if denominator == 0:
+        return float("inf") if numerator > 0 else 0.0
+    return numerator / denominator
+
+
+def return_over_drawdown(total_return: float, max_dd_pct: float) -> float:
+    """Calmar-like ratio — same inf/0 convention as profit_factor above for the
+    no-drawdown edge case."""
+    return _ratio_or_inf(total_return, max_dd_pct)
+
+
+def return_over_volatility(total_return: float, vol_pct: float) -> float:
+    """Sharpe-like ratio without a risk-free rate — valid for comparing candidate vs.
+    benchmarks over the identical period, not as a standalone absolute figure."""
+    return _ratio_or_inf(total_return, vol_pct)
+
+
+def buy_and_hold_equity_curve(
+    events: list[MarketEvent], initial_capital: float = 10_000.0
+) -> list[tuple[int, float]]:
+    """Mark-to-market of a single buy at the first close, held through the last — same
+    (ts, equity) shape as BacktestEngine.equity_curve, so it runs through the identical
+    compute_metrics math as any real strategy: apples-to-apples, not a separate formula."""
+    closes = [(e.exchange_ts, float(e.payload["close"])) for e in events if e.event_type is EventType.KLINE]
+    if not closes:
+        return []
+    entry_price = closes[0][1]
+    if entry_price <= 0:
+        return []
+    return [(ts, initial_capital * (close / entry_price)) for ts, close in closes]
+
+
+def flat_equity_curve(events: list[MarketEvent], initial_capital: float = 10_000.0) -> list[tuple[int, float]]:
+    """The trivial "do nothing" baseline — a candidate that can't beat holding cash net of
+    costs has no edge worth deploying, regardless of what it beats RsiBollingerPlaceholderStrategy by."""
+    return [(e.exchange_ts, initial_capital) for e in events if e.event_type is EventType.KLINE]
+
+
+def compute_metrics(
+    trades: list[ClosedTrade],
+    equity_curve: list[tuple[int, float]],
+    initial_capital: float = 10_000.0,
+) -> BacktestMetrics:
     dd = max_drawdown(equity_curve)
+    ret = total_return_pct(equity_curve, initial_capital)
+    vol = volatility_pct(equity_curve)
     return BacktestMetrics(
         num_trades=len(trades),
         win_rate=win_rate(trades),
@@ -89,6 +166,10 @@ def compute_metrics(trades: list[ClosedTrade], equity_curve: list[tuple[int, flo
         total_fees=sum(t.fees_paid for t in trades),
         max_drawdown_pct=dd.max_drawdown_pct,
         max_drawdown_duration_ms=dd.max_drawdown_duration_ms,
+        total_return_pct=ret,
+        volatility_pct=vol,
+        return_over_drawdown=return_over_drawdown(ret, dd.max_drawdown_pct),
+        return_over_volatility=return_over_volatility(ret, vol),
         pnl_by_hour=pnl_by_hour(trades),
         pnl_by_weekday=pnl_by_weekday(trades),
     )

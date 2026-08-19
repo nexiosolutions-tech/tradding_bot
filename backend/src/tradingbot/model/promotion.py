@@ -59,7 +59,7 @@ def run_backtest(
     if warmup_events:
         engine.warm_up(warmup_events)
     engine.run(events)
-    return compute_metrics(engine.trades, engine.equity_curve)
+    return compute_metrics(engine.trades, engine.equity_curve, initial_capital=engine.initial_capital)
 
 
 def evaluate_fold(
