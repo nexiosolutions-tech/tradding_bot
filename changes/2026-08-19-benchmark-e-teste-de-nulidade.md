@@ -531,13 +531,69 @@ resultado mude após a purga.
 - N=30 tem piso de p=0,032 (`(0+1)/(30+1)`) — se o resultado vier interessante, vale
   re-rodar com ~200 permutações para ter resolução mais fina.
 
+## Décima rodada: resultado final — marco fechado ("existe algo aqui?" = sim) + guardas de tuning registradas antes de qualquer novo teste
+
+Rerun final (todas as correções aplicadas: purga, gate de zero-perda, `total_pnl`,
+threshold por piso de label_rate + histerese de saída), janela fixa,
+`BTCUSDT` 1m, `n_permutations=30`:
+
+```
+Real: total_pnl=-53.63 (PF agregado=0.599, 0/5 folds vencidos)
+Distribuição nula (30 permutações): min=-1821.90 mediana=-1072.88 max=-328.96
+p-valor empírico: 0.032
+```
+
+O real fica muito acima de toda a nuvem nula (-53,63 vs. o melhor caso permutado,
+-328,96) — não é o piso mecânico do N=30 fazendo o número parecer bom, é separação real
+e grande. **Não comparável** ao 0,032 da sexta rodada (métrica diferente, pré-purga) nem
+ao 0,323 da sétima (estatística degenerada) — pré-registro da nona rodada cumprido.
+
+**Marco, registrado explicitamente a pedido do usuário:** a fase "existe algo aqui?"
+está fechada, com resposta sim. O sinal sobreviveu à purga (vazamento de fronteira
+descartado como explicação — perda de treino medida foi desprezível, 0,03-0,06%/fold,
+pré-registrada como evidência contra "sinal ficou fraco por falta de dado"), ao gate de
+zero-perda e à troca para `total_pnl` — cada correção só endureceu o teste, e o sinal
+sobreviveu a todas. **Não é vazamento, não é ruído. As features carregam informação real
+sobre o futuro.**
+
+`PF=0,599` mede a distância até a viabilidade, não a existência de sinal: para cada real
+perdido, a estratégia recupera 60 centavos. Nem 0,05 (sinal inexistente) nem 0,95 (quase
+lá) — "há sinal de verdade, sendo comido por custo e por política de execução", o mesmo
+diagnóstico que a decomposição bruto/líquido do relatório diário e a distribuição de
+score já vinham apontando, agora confirmado pela estatística limpa. A pergunta deixou de
+ser "existe alfa?" (não tratável por engenharia) e passou a ser "como monetizar o alfa
+que existe?" (tratável).
+
+**Guardas obrigatórias antes de qualquer tuning de threshold/saída daqui em diante** —
+tuning é, por definição, testar muitas configurações e escolher a melhor, exatamente a
+máquina de overfitting que o DSR existe para punir:
+
+1. **Log de experimentos deixa de ser item futuro da fila e vira obrigatório agora.**
+   Toda configuração testada (`entry_percentile`, `exit_hysteresis_stdevs`,
+   `label_rate_floor_multiple`, regra de saída, horizonte) entra no log — é
+   literalmente o insumo do DSR (`learning_engine/experiment_log.py` já existe,
+   conectá-lo ao fluxo de tuning é pré-requisito, não follow-up).
+2. **Período de teste isolado, não espiado durante o tuning.** Calibrar em
+   treino/validação, confirmar uma vez em teste. Espiar o teste a cada iteração o
+   transforma em mais um validation set, e a validade do gate desmorona silenciosamente.
+
+**Ordem para a próxima fase, quando ela começar:** horizonte antes de threshold. O
+diagnóstico já registrado (ganho bruto por trade ~5, taxa ~3,82 — custo é ~70% do ganho
+bruto) não se resolve ajustando threshold, que só muda quais trades são tirados, não a
+economia de cada trade. Mexer no horizonte (barreira do triple-barrier, timeframe) é o
+que altera o tamanho do movimento capturado e portanto a razão ganho/custo. Calibrar
+threshold sobre o horizonte atual antes de mexer nisso otimizaria a política de entrada
+de um regime que seria descartado em seguida.
+
+Nenhuma mudança de código nesta rodada — decisão explícita de fechar o design da frente
+de Ações (Seção 8) primeiro, já que o bot não tem prazo (dado continua acumulando) e a
+pergunta binária urgente ("é real?") já foi respondida.
+
 ## Pendente
 
-- Re-rodar o teste de nulidade com a purga **e** as correções desta rodada aplicadas
-  (`total_pnl`, gate de zero-perda) — é a leitura que decide se o p=0,032 observado na
-  sexta rodada é sinal genuíno ou vazamento de lookahead.
-- Revalidação empírica da quinta rodada (threshold) contra os 4 critérios escritos —
-  precisa rodar de novo com purga + correções desta rodada.
+- Tuning de horizonte (barreira/timeframe) — primeiro item da próxima fase, com as duas
+  guardas acima obrigatórias antes de começar.
+- Tuning de threshold sobre o horizonte novo — depois do item acima, não antes.
 - Decisão pendente sobre dimensionamento do walk-forward (menos folds vs. mais histórico) —
   registrada acima, não decidida.
 - Restrição de desenho identificada no fold 2 (piso de custo vs. movimento capturado) —
@@ -606,3 +662,15 @@ resultado mude após a purga.
   que enviesaria a comparação entre braço real e permutado). Pediu para registrar a
   decisão pendente sobre dimensionamento do walk-forward como achado separado, não como
   correção de código nesta rodada.
+- Décima rodada (marco + guardas): Brian pediu explicitamente para registrar o resultado
+  final como marco — "vale registrar isso explicitamente como marco: a fase de 'existe
+  algo aqui?' terminou com sim" — e para escrever as duas guardas metodológicas (log de
+  experimentos obrigatório, período de teste isolado) antes de qualquer tuning futuro,
+  alertando que "tuning de threshold e de saída é, por definição, testar muitas
+  configurações e escolher a melhor — que é a máquina de overfitting que o DSR existe
+  para punir". Definiu a ordem da próxima fase (horizonte antes de threshold) a partir do
+  diagnóstico de custo já registrado ("ganho bruto por trade ~5, taxa ~3,82... nenhum
+  ajuste de threshold conserta uma relação em que o custo é 70% do ganho bruto"). Decidiu
+  não tocar em código do bot nesta rodada, priorizando fechar a Seção 8 da spec de Ações
+  primeiro, com a justificativa de que o bot não tem prazo urgente e a pergunta binária já
+  foi respondida.
