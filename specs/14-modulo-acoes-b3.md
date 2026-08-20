@@ -49,8 +49,9 @@ Aplicam-se integralmente, e são o motivo de esta frente ser barata:
 
 ### 4.2 Mercado
 
-- **B3**: cotações, proventos, eventos corporativos, composição de índices.
-- **API de cotações** (candidatas: `brapi.dev`, `yfinance` com sufixo `.SA`): preço ajustado por proventos e desdobramentos.
+- **B3 — COTAHIST**: fonte primária de preço, confirmada (Seção 5.3). Preço bruto, não ajustado.
+- **`brapi.dev`**: fonte secundária/conveniência para proventos de tickers líquidos atuais e dado recente (Seção 5.3) — não para o histórico ponta a ponta.
+- **`yfinance`**: descartado (Seção 5.3) — o COTAHIST cobre tudo que ele cobriria, com menos risco de ToS e sem o problema de série pré-ajustada.
 
 ### 4.3 Macro
 
@@ -168,6 +169,65 @@ provar): usando o filing real do Banco do Brasil acima —
 consultar com `data_da_decisao = 2025-02-18` deve **não** retornar o exercício
 2024-12-31; consultar com `data_da_decisao = 2025-02-19` (ou depois) deve retornar. Sem
 dado sintético — o dado real já baixado prova o contrato.
+
+### 5.3 Fonte de preço confirmada — COTAHIST vira primária, `brapi`/`yfinance` rebaixadas (2026-08-19)
+
+Mesma disciplina da Seção 5.1: baixado o arquivo real
+(`https://bvmf.bmfbovespa.com.br/InstDados/SerHist/COTAHIST_A2024.ZIP`) e o layout oficial
+(`SeriesHistoricas_Layout.pdf`, B3), em vez de confiar em documentação de terceiro.
+Resultado do checklist rodado ponto a ponto:
+
+- **Ticker deslistado — o teste que mais importava.** `OGXP3` (OGX Petróleo, faliu)
+  aparece plenamente no arquivo de 2013 (ano em que era negociada) e está ausente do
+  arquivo de 2024 — cada arquivo anual é um snapshot imutável do que foi negociado
+  **naquele** ano, não uma lista de empresas atuais. Survivorship (Seção 5) resolvido na
+  origem. Testado o oposto em `brapi.dev`: `PETR4` (líquida, atual) responde sem token;
+  `OGXP3` e um ticker inválido (`XYZW9`) — mesmos parâmetros — devolvem
+  `"Token de autenticação não fornecido"`. Evidência forte de que o plano gratuito do
+  `brapi` é uma lista de tickers atuais/líquidos, inutilizável para backtest
+  survivorship-correto sem plano pago.
+- **Bruto vs. ajustado.** Confirmado bruto: o layout oficial não tem nenhum campo de
+  ajuste — `PREABE`/`PREMAX`/`PREMIN`/`PREMED`/`PREULT` são preços de negociação diretos;
+  documentação do produto declara explicitamente "sem ajuste para inflação ou
+  distribuições". Sem o problema do `adjusted close` do Yahoo (recalculado
+  retroativamente a cada provento, vazamento point-in-time análogo ao do `VERSAO` da
+  CVM). Regra de ingestão: preço bruto do COTAHIST + eventos corporativos numa tabela
+  separada, ajuste aplicado só na consulta — nunca ingerir série pré-ajustada de terceiro.
+- **Volume: em reais, campo próprio, separado de quantidade.** Layout confirma dois campos
+  distintos — `QUATOT` (posições 153-170, quantidade de títulos) e `VOLTOT` (171-188,
+  volume financeiro, formato `N(16)V99` = valor com 2 casas decimais). O filtro de
+  liquidez da Seção 6 usa `VOLTOT`.
+- **Retroatividade: 1986, bem além do necessário.** Confirmado por sondagem direta de URL
+  (`COTAHIST_A1986.ZIP` → HTTP 200). O histórico conjunto (preço + fundamento) fica de
+  qualquer forma limitado pelo piso da CVM (2010, Seção 5.1) — preço não é o fator
+  limitante.
+- **Cobertura: tudo que negociou, não só líquidos.** O mesmo teste do item 1 (`OGXP3`,
+  uma ação em colapso, presente no arquivo) já é evidência disso. Arquivo mistura ações,
+  fundos, opções, termo, leilões etc. — campos `CODBDI` (02 = lote padrão, o filtro certo
+  pra ação regular; ver tabela completa no layout), `TPMERC` (010 = mercado à vista) e
+  `ESPECI` (ON/PN/PNA-H/UNT/BDR/...) isolam o universo de ações do resto.
+- **Limites e ToS.** Arquivo estático, servido pela própria infraestrutura da B3
+  (`bvmf.bmfbovespa.com.br`), sem token, sem rate limit encontrado — perfil de risco bem
+  mais baixo que o plano gratuito do `brapi` (allowlist + cota, como o item 1 sugere) ou
+  o `yfinance` (scraping não oficial do Yahoo). ToS ainda não lido linha a linha
+  (mesma ressalva da Seção 5.1 para a CVM) — mas o sinal operacional já é forte.
+- **Formato**: texto de largura fixa (245 bytes/registro), não CSV — layout com posição
+  exata de cada campo, oficial e estável (revisão de 2005, mesma desde então). Um parser
+  por slice de posição é direto e não ambíguo, dado o layout documentado.
+- **O que falta**: **não existe arquivo bulk oficial e gratuito da B3 para proventos
+  (dividendos/JCP/desdobramentos)** equivalente ao COTAHIST — só produtos de API,
+  pagos ou de terceiro. `brapi.dev` devolve `dividendsData.cashDividends` (com `paymentDate`,
+  `approvedOn`, `rate`, `label`) para tickers líquidos atuais sem token — usável como
+  fonte de proventos **recentes de nomes líquidos**, mas sujeita à mesma limitação de
+  allowlist do item 1 para o histórico completo, inclusive de empresas hoje deslistadas.
+  Este é o item mais aberto da camada de preço — decisão de como preencher proventos
+  históricos de nomes não cobertos pelo `brapi` fica pendente para quando a Fase 1
+  (cotação) estiver perto de começar.
+
+**Veredito**: COTAHIST vira fonte primária de preço (bruto + volume + universo completo,
+survivorship resolvido). `brapi.dev` fica como conveniência para proventos recentes de
+tickers líquidos, não como fonte primária. `yfinance` descartado — o COTAHIST cobre tudo
+que ele cobriria, com menos risco de ToS e sem o problema de série pré-ajustada.
 
 ## 6. Universo elegível
 
