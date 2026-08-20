@@ -858,7 +858,7 @@ seletor de moedas — mas sem implementar nada além da B3 agora.
 
 | Fase | Entrega | Critério de conclusão |
 |---|---|---|
-| 1 | Ingestão CVM + cotações, com camada point-in-time | consulta histórica em qualquer data retorna só o que era público naquela data, com teste automatizado provando |
+| 1 | Ingestão CVM + cotações, com camada point-in-time | consulta histórica em qualquer data retorna só o que era público naquela data, com teste automatizado provando — **índice mestre + consulta as-of implementados e testados contra dado real, 2026-08-20** (`backend/src/tradingbot/acoes/`); ingestão de cotação (COTAHIST) e de itens financeiros genéricos (todos os tipos de demonstração, todas as empresas) seguem pendentes |
 | 2 | Universo elegível + eventos corporativos + survivorship | universo reconstruído corretamente para datas passadas |
 | 3 | Cálculo de fatores + percentis setoriais | ficha do ativo funcional; camada de evidência já entrega valor |
 | 4 | Backtest + benchmarks + teste de nulidade | régua honesta operando |
@@ -933,7 +933,7 @@ Uma carteira de fatores bem construída historicamente entrega **alguns pontos p
 
 ## 15. Critérios de aceite
 
-- [ ] Toda consulta histórica respeita `data_publicacao`, com teste automatizado
+- [x] Toda consulta histórica respeita `data_publicacao`, com teste automatizado — provado para o índice mestre de filings CVM (`get_filing_as_of`/`get_line_items_as_of`, 6 testes contra dado real do Banco do Brasil e do BRB, 2026-08-20); mesma disciplina a estender para cotação (COTAHIST) e itens financeiros genéricos quando ingeridos
 - [ ] Universo histórico inclui empresas deslistadas
 - [ ] Preços ajustados por todos os eventos corporativos
 - [ ] Backtest com janela fixa e reprodutível entre execuções
