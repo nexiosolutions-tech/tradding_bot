@@ -222,21 +222,53 @@ Resultado do checklist rodado ponto a ponto:
   allowlist do item 1 para o histórico completo, inclusive de empresas hoje deslistadas.
   Este é o item mais aberto da camada de preço — decisão de como preencher proventos
   históricos de nomes não cobertos pelo `brapi` fica pendente para quando a Fase 1
-  (cotação) estiver perto de começar.
+  (cotação) estiver perto de começar. Enquanto isso não for resolvido, a regra de
+  consistência abaixo evita que o gap vire erro silencioso.
 
 **Veredito**: COTAHIST vira fonte primária de preço (bruto + volume + universo completo,
 survivorship resolvido). `brapi.dev` fica como conveniência para proventos recentes de
 tickers líquidos, não como fonte primária. `yfinance` descartado — o COTAHIST cobre tudo
 que ele cobriria, com menos risco de ToS e sem o problema de série pré-ajustada.
 
+**Regra de consistência (price-only vs. total-return): nunca misturar.** Ter provento dos
+sobreviventes e não dos deslistados faria o retorno total ser medido de formas diferentes
+em dois subgrupos do mesmo universo — erro concentrado exatamente na população que existe
+para corrigir survivorship, pior que um erro uniforme. Enquanto não houver fonte de
+proventos com a mesma cobertura do COTAHIST (todo ticker que já negociou, não só líquidos
+atuais), o backtest roda **price-only para todo o universo**. Total-return só é permitido
+quando houver provento coberto para 100% dos nomes elegíveis naquela data de decisão —
+nunca parcial. Consequência direta para a Seção 7: a família de dividendos fica **marcada
+como não utilizável em fator validado por backtest** até a fonte existir; pode aparecer na
+camada de evidência do mês corrente (dado do `brapi` para nomes líquidos), mas não entra
+no score.
+
 ## 6. Universo elegível
 
-Filtros aplicados em cada data de decisão, todos configuráveis e versionados:
+Filtros aplicados em cada data de decisão, todos configuráveis, versionados e
+**materializados em tabela na própria data de decisão** — nunca recalculados
+retroativamente a cada execução, mesmo princípio da janela fixa do bot
+(`specs/07-backtesting-e-validacao.md`): reprodutibilidade exige que o universo de uma
+data passada não mude porque a lógica do filtro mudou depois.
 
-- Liquidez mínima (volume financeiro médio diário em janela fixa) — sem isso o backtest promete execução impossível.
-- Exclusão de empresas em recuperação judicial e de tickers com histórico insuficiente.
-- Uma classe por empresa (regra explícita para ON/PN), evitando dupla contagem.
-- Registro do universo resultante por data, para reprodutibilidade.
+- **Liquidez mínima: mediana de `VOLTOT` (volume financeiro em R$) em janela móvel, não
+  média.** Média é dominada por dias de pico (IPO, notícia, rebalanceamento de índice) e
+  superestima liquidez sustentável — exatamente o tipo de nome que o backtest promete
+  conseguir executar e a operação real não consegue. `VOLTOT` vem pronto da COTAHIST
+  (Seção 4.2/5.3), não precisa ser derivado de quantidade × preço.
+- **Uma classe por empresa.** Regra: a classe (ON/PN/UNIT) mais líquida (por `VOLTOT`) na
+  data de decisão, **registrada por data** — não fixa para sempre. Uma empresa pode trocar
+  de classe mais líquida ao longo do histórico (ex. migração de UNIT); gravar a escolha
+  por data evita trocar de classe no meio da série sem rastro, e mantém o critério auditável
+  (por que esta classe, nesta data).
+- **Exclusões declaradas**: BDR e ETF/FII (via `ESPECI`/`TPMERC` da COTAHIST — não são
+  ações de empresa, não passam pelos fatores da Seção 7); empresas em recuperação
+  judicial (flag da CVM); histórico mínimo insuficiente para calcular todos os fatores da
+  Seção 7 (sem dado suficiente, não entra no ranking daquele mês — não é penalizado, é
+  omitido).
+- **Assertiva de tamanho mínimo**, ligada diretamente ao critério transversal do gate de
+  promoção (Seção 10): se o universo elegível em uma data cai abaixo do piso que a Seção
+  10 assume para a margem de comparação, a geração do universo falha explicitamente
+  naquela data em vez de produzir um ranking sobre amostra pequena demais silenciosamente.
 
 ## 7. Fatores
 
@@ -244,15 +276,46 @@ Nenhum fator inventado. Cada um precisa de referência na literatura e de justif
 
 | Família | Exemplos de métrica | Fonte |
 |---|---|---|
-| Valor | P/L, P/VP, EV/EBITDA, FCF yield | CVM + preço |
+| Valor | P/L (earnings yield), P/VP, EV/EBITDA, FCF yield | CVM + preço |
 | Qualidade | ROIC, ROE, margem, estabilidade de margem | CVM |
 | Saúde financeira | dívida líquida/EBITDA, cobertura de juros, liquidez corrente | CVM |
 | Crescimento | CAGR de receita e de lucro, consistência | CVM |
 | Momentum | retorno 6–12 meses excluindo o mês mais recente | preço |
-| Dividendos | dividend yield, payout, consistência plurianual | proventos |
+| Dividendos | dividend yield, payout, consistência plurianual | proventos — **não utilizável em fator validado por backtest** até a fonte de proventos ter a mesma cobertura do COTAHIST (Seção 5.3); pode aparecer na camada de evidência do mês corrente |
 | Tamanho | valor de mercado | preço + capital social |
 
 **Normalização:** cada métrica vira percentil **dentro do setor** na data de decisão, não valor absoluto. Comparar P/L de banco com o de mineradora é ruído. Setorização via classificação B3, versionada.
+
+**Matriz de aplicabilidade de fator por setor.** Banco não tem EV/EBITDA, dívida líquida
+nem capital de giro no sentido usual das demais empresas — o balanço de uma instituição
+financeira não segue a mesma estrutura contábil (ativo é majoritariamente crédito
+concedido, não capital fixo). A B3 é pesada em bancos: excluí-los perde um terço do
+mercado, mas calcular EV/EBITDA de banco produz número sem significado econômico e o
+score fica errado por construção, não por ruído. Requisito: tabela explícita declarando,
+por família de fator, em quais setores ela se aplica (ex.: Saúde financeira usa índice de
+Basileia + inadimplência para bancos, dívida líquida/EBITDA para o resto). Setor sem
+fator aplicável não pontua naquela família — não recebe zero nem é excluído do universo,
+fica ausente do score composto daquela família especificamente.
+
+**Lucro negativo: earnings yield, não P/L bruto.** P/L de empresa deficitária é negativo
+e, num ranking ingênuo por P/L cru, aparece como "a mais barata" — sinal invertido, erro
+clássico de fator de valor. Métrica de valor baseada em lucro usa earnings yield
+(lucro/preço, o inverso do P/L): deficitárias ficam corretamente no fundo do ranking, sem
+precisar de tratamento especial.
+
+**Dado faltante: regra declarada, não implícita.** Quando uma empresa não tem o campo
+para um fator (demonstração incompleta, métrica não aplicável), duas opções — excluir a
+empresa daquele fator (risco: viés de seleção, sistematicamente afasta setores/empresas
+com reporte mais fraco) ou imputar a mediana do grupo (risco: número falso que não reflete
+a empresa real). Não existe resposta certa; existe resposta **declarada por fator na
+spec e idêntica no backtest e em produção** — a regra escolhida não pode divergir entre
+os dois ambientes, senão o backtest valida um comportamento que produção não reproduz.
+
+**Percentil setorial exige população mínima.** Setor com 3 empresas não tem percentil com
+significado estatístico. Definir um mínimo de empresas por setor (ex. 6) abaixo do qual o
+setor é agregado a uma classificação mais ampla (ex. sub-setor → setor B3) para aquele
+fator, ou o fator simplesmente não pontua ali — mesma lógica da "ausência de fator
+aplicável" acima, mesmo tratamento no score composto.
 
 **Score composto:** média ponderada dos percentis de fator, com pesos explícitos, versionados e justificados. Pesos não são otimizados livremente sobre o histórico — cada configuração testada é registrada no log de experimentos, porque **cada tentativa é insumo do DSR**, exatamente como no bot.
 
@@ -277,7 +340,7 @@ Saídas:
 
 Mesmo rigor do bot, com as adaptações do domínio.
 
-**Simulação:** rebalanceamento mensal, custo de corretagem e emolumentos B3 parametrizados, slippage por faixa de liquidez, dividendos reinvestidos ou não (configurável).
+**Simulação:** rebalanceamento mensal, custo de corretagem e emolumentos B3 parametrizados, slippage por faixa de liquidez. Dividendos reinvestidos **só quando houver cobertura de proventos para 100% do universo elegível na data** (regra de consistência da Seção 5.3/6) — do contrário a simulação roda price-only, nunca com reinvestimento parcial.
 
 **Validação:** walk-forward com janela fixa; purga entre treino e teste dimensionada pelo horizonte de avaliação; nenhuma decisão usa dado com `data_publicacao` posterior à data da decisão.
 
