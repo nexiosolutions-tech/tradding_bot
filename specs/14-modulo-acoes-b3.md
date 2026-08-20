@@ -131,22 +131,20 @@ confirmado o mesmo padrão para `ITR`) e inspecionados os CSVs reais:
   promoção já assume (Seção 10, critério 1: mínimo de 8 folds) — não uma garantia de que
   vai passar no gate, mas confirma que o desenho do gate não está pedindo mais folds do
   que o histórico permite entregar.
-- **Peça que faltava no contrato — e que subiu de prioridade: mapeamento CNPJ↔ticker.**
+- **Peça que faltava no contrato — fonte real encontrada e verificada, ver Seção 5.4.**
   CVM identifica empresa por `CNPJ_CIA`; cotação (Seção 4.2) vem por ticker B3. Uma
   empresa pode ter múltiplas classes de ação (ON, PN, UNIT) mapeando pro mesmo CNPJ, e
   tickers mudam com incorporação/fusão/troca de nome — justamente os casos mais
   interessantes para o universo elegível (Seção 6) e para eventos corporativos (Seção 5).
-  Sem uma tabela de mapeamento com vigência por data (`cnpj_ticker_map`: `cnpj_cia`,
-  `ticker`, `data_inicio`, `data_fim`), o join histórico entre fundamento (CNPJ) e preço
-  (ticker) erra silenciosamente exatamente nas empresas que passaram por evento
-  societário. **Deixou de ser só peça do join de preço**: a medição de piso setorial
-  (Seção 7) mostrou que o casamento por nome (73%, usado como substituto na ausência
-  deste mapeamento) não é aleatório — falha mais em empresa que trocou de nome, foi
-  incorporada ou é pequena e antiga, viesando exatamente a medição de setor de forma
-  desconhecida. Sem este mapeamento, a atribuição setorial que todo o score da Seção 7
-  depende também erra silenciosamente, não só o join de preço. Precisa existir antes da
-  Fase 2 (universo elegível + eventos corporativos), não antes da Fase 1 — mas registrado
-  aqui porque é a mesma disciplina point-in-time desta seção, não uma preocupação nova.
+  A atribuição setorial de que todo o score da Seção 7 depende também dependia deste
+  mapeamento — o casamento por nome usado como substituto (73%) não falha
+  aleatoriamente, vieses exatamente o tipo de empresa que mais precisa do mapa (trocou de
+  nome, foi incorporada, é pequena/antiga). **Fonte confirmada**: FCA da CVM
+  (`fca_cia_aberta_valor_mobiliario`) dá a identidade CNPJ↔ticker; COTAHIST dá a vigência
+  real (o FCA tem campos de data que pareciam servir mas medem outra coisa — ver Seção
+  5.4). Precisa existir antes da Fase 2 (universo elegível + eventos corporativos), não
+  antes da Fase 1 — mas registrado aqui porque é a mesma disciplina point-in-time desta
+  seção, não uma preocupação nova.
 - **Ainda não verificado nesta rodada**: formato do FRE (Formulário de Referência, Seção
   4.1); e o ToS explícito do portal (dados.gov.br costuma ser aberto, mas não foi lido
   linha a linha).
@@ -246,6 +244,89 @@ nunca parcial. Consequência direta para a Seção 7: a família de dividendos f
 como não utilizável em fator validado por backtest** até a fonte existir; pode aparecer na
 camada de evidência do mês corrente (dado do `brapi` para nomes líquidos), mas não entra
 no score.
+
+### 5.4 `cnpj_ticker_map` — fonte real encontrada, schema derivado do que ela realmente oferece (2026-08-19)
+
+Mesma disciplina: baixar candidatos reais em vez de assumir. Verificados dois arquivos de
+`dados.cvm.gov.br` além do já conhecido `cad_cia_aberta.csv` (que só tem CNPJ + nome, sem
+ticker) — o Formulário Cadastral (FCA) tem um sub-arquivo dedicado a valores mobiliários:
+
+```
+https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/FCA/DADOS/fca_cia_aberta_AAAA.zip
+  → fca_cia_aberta_valor_mobiliario_AAAA.csv
+```
+
+**A ponte existe**: colunas `CNPJ_Companhia` e `Codigo_Negociacao` (ticker) na mesma
+linha, mais `Data_Inicio_Negociacao`/`Data_Fim_Negociacao` — parecia resolver vigência de
+graça. Baixados os arquivos de 2018 a 2022 e 2024 para testar contra casos reais
+conhecidos.
+
+**Três testes de aceite, rodados contra dado real:**
+
+1. **Multi-classe — confirmado.** CNPJ `33.000.167/0001-01` (Petrobras) resolve para
+   `PETR3` (Ações Ordinárias) e `PETR4` (Ações Preferenciais) na mesma linha de filing
+   (`fca_cia_aberta_valor_mobiliario_2024.csv`).
+2. **Troca de ticker por evento societário — confirmado, mas não pela fonte que se
+   esperava.** CNPJ `02.800.026/0001-40`: FCA mostra `Nome_Empresarial`=KROTON
+   EDUCACIONAL S.A. no filing de 2018 (`Data_Referencia=2018-01-01`) com
+   `Codigo_Negociacao` **vazio**, e COGNA EDUCAÇÃO S.A. com `Codigo_Negociacao=COGN3` a
+   partir do filing de 2019. A data exata da troca **não veio do FCA** — veio de baixar
+   `COTAHIST_A2019.ZIP` e medir direto: `KROT3` negociou até `2019-10-10`, `COGN3` estreou
+   em `2019-10-11`, mesmo CNPJ nos dois lados. `Data_Inicio_Negociacao` do FCA para esta
+   linha é `2012-11-30` — a data de admissão da **classe de ação** à negociação, não a
+   data de início do **código atual**. Usar esse campo como vigência do ticker teria
+   atribuído `COGN3` a datas em que o código real ainda era `KROT3` — o mesmo tipo de erro
+   silencioso que o `VERSAO`/`ORDEM_EXERC` da CVM (Seção 5.1) já tinha ensinado a evitar,
+   só que numa fonte diferente.
+3. **Reatribuição de ticker — não encontrada, registrada como risco não coberto.**
+   Varridos tickers de ação regular (lote padrão, mercado à vista) nos 10 anos de COTAHIST
+   já baixados (2010–2025, amostra bienal + 2019), procurando um código ausente por um
+   ano amostrado e depois reaparecendo sob empresa claramente distinta. Nenhum caso
+   encontrado — consistente com a prática observável da B3 de não reciclar código de
+   empresa deslistada, mas **não é prova de que nunca acontece**, só que não apareceu na
+   amostra. Registrado como risco não coberto pelo teste de aceite, não como "testado e
+   aprovado".
+
+**Achado adicional, não previsto: taxa real de `Codigo_Negociacao` vazio entre linhas de
+ação (ON/PN/Units) no FCA — 9,4% a 19,1% conforme o ano** (pior em 2018, melhor em 2024).
+Não é ruído de junção — o campo vem vazio na própria fonte. Kroton-2018 é um caso desse
+gap, não uma exceção.
+
+**Veredito, schema corrigido pelo que a fonte realmente permite** — não é uma fonte única
+derivável, é duas fontes combinadas, cada uma no que faz bem:
+
+- **Identidade (quem é o CNPJ de um ticker)** vem do FCA — mas cobre ~81–91% das linhas de
+  ação por ano; o resto precisa do casamento por nome já usado na Seção 7 (mesma
+  ressalva de viés: falha mais em empresa pequena/renomeada/incorporada), com essas
+  entradas marcadas com `fonte='reconciliacao_nome'` em vez de `fonte='FCA'` —
+  reconciliação manual auditada para a fração que não casa automaticamente, exatamente
+  como antecipado antes de rodar o teste.
+- **Vigência (desde quando um código específico é válido) vem do COTAHIST**, não do FCA —
+  primeira e última data de pregão de cada ticker no arquivo anual são a fonte
+  autoritativa de `data_inicio_vigencia`/`data_fim_vigencia`, não os campos de data do
+  FCA (que medem admissão da classe de ação, não do código atual).
+
+```
+cnpj_ticker_map:
+  cnpj                    -- FCA.CNPJ_Companhia (ou reconciliação por nome)
+  ticker                  -- FCA.Codigo_Negociacao (ou reconciliação por nome)
+  tipo                    -- ON/PN/UNIT, de FCA.Valor_Mobiliario/Sigla_Classe_Acao_Preferencial
+  data_inicio_vigencia    -- COTAHIST: primeira data de pregão deste ticker
+  data_fim_vigencia       -- COTAHIST: última data de pregão (NULL = ainda negocia)
+  fonte                   -- 'FCA' | 'reconciliacao_nome'
+  data_coleta
+```
+
+Consulta as-of (inalterada da proposta original): `ticker = X AND data_inicio_vigencia <=
+data_decisao AND (data_fim_vigencia IS NULL OR data_fim_vigencia > data_decisao)` — devolve
+o CNPJ dono do ticker naquela data. Append-only: reatribuição ou troca de código fecha a
+vigência antiga (`UPDATE` só em `data_fim_vigencia`, nunca substitui a linha) e abre uma
+nova.
+
+**Decisão de saída, declarada**: CNPJ sem nenhum ticker mapeado (FCA vazio e sem casamento
+por nome) não entra no universo elegível nem no scoring — mesmo tratamento já usado para
+histórico insuficiente (Seção 6) e dado faltante de fator (Seção 7): omitido e registrado,
+nunca descartado sem rastro.
 
 ## 6. Universo elegível
 
