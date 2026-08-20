@@ -410,31 +410,95 @@ elegíveis: **precisão real ≈ 65%, não 73%** — e o erro fica **invisível*
 (`fonte='reconciliacao_nome'` não distingue match certo de errado), diferente do
 não-match, que pelo menos é visível e contado pela decisão de saída da Seção 5.4.
 
-**Conclusão, direta**: a era 2010–2017 não tem, hoje, um mecanismo de identidade confiável
-o suficiente para contar como evidência de promoção. Não é "melhorar a reconciliação" —
-é reconhecer que o histórico se divide em duas eras de qualidade diferente:
+**Conclusão da primeira rodada**: a era 2010–2017 não tem, com reconciliação por nome,
+identidade confiável o suficiente para contar como evidência de promoção — a decisão
+inicial foi cortar o histórico avaliável em 2018. A Seção 5.6 revisita essa decisão com
+um método melhor e um critério de dois pisos, e a conclusão muda de forma para alguns anos.
 
-- **Era confiável (2018 em diante)**: FCA popula ticker, cobertura 78–95% crescente
-  (Seção 5.4), identidade majoritariamente direta.
-- **Era degradada (2010–2017)**: cobertura 0% via FCA, reconciliação por nome como único
-  mecanismo, com ~65% de precisão real medida (não 73%) e erros que hoje não são
-  distinguíveis dos acertos no schema.
+### 5.6 Propagação por CNPJ (era confiável → era antiga) e o critério de dois pisos
 
-**Decisão: o histórico avaliável para o gate de promoção (Seção 10) começa em 2018.**
-2010–2017 permanece na base como **dado de contexto** — lookback para médias móveis e
-momentum que precisam de janela anterior à data de decisão — mas **nenhum fold cujo
-período cai inteiramente antes de 2018 conta para o critério de vitórias da Seção 10**.
-Vitória num fold cuja identidade setorial é ~35% adivinhada (65% de precisão real) não é
-evidência.
+A reconciliação por nome não é o único jeito de resolver identidade pré-2018. A partir de
+2018 o FCA já resolve CNPJ↔ticker diretamente (Seção 5.4); boa parte das empresas que
+negociavam antes de 2018 continuou negociando depois, sob o **mesmo código de ticker** —
+então dá para propagar essa identidade **para trás no tempo pelo próprio CNPJ**, sem
+reconciliar nome nenhum. Zero adivinhação: é dado já verificado da era confiável aplicado
+a um ticker que não mudou.
 
-**Tensão em aberto, não resolvida aqui**: isso reduz a amostra de folds temporais
-disponível para contagem de promoção de ~16 anos (Seção 5.1, ~8-10 folds de ~6 trimestres)
-para ~8-9 anos (2018 a 2026) — na mesma ordem de grandeza do piso mínimo de 8 folds que a
-Seção 10 já exige, possivelmente abaixo dele dependendo da duração exata do fold. Volta a
-ser o mesmo problema de amostra pequena já registrado na Seção 13, agora também no eixo
-temporal, não só no transversal — decisão de dimensionamento (folds mais curtos vs. exigir
-mais anos de história confiável antes do gate operar) fica pendente para quando a Fase 3
-(gate) for desenhada em detalhe.
+**Método**: dicionário `ticker → CNPJ` construído a partir de `Codigo_Negociacao` em
+qualquer ano FCA 2018–2025 (763 tickers distintos). Aplicado diretamente aos tickers
+elegíveis de 2010–2016 (Seção 6). Estendido com propagação por **raiz de 4 letras** do
+ticker (mesma raiz = mesma empresa, classes de ação diferentes — ex. `VALE5`/`VALE3`,
+`SUZB5`/`SUZB3` — sem misturar empresas distintas: `GOAU4`/`GGBR4`, raízes diferentes,
+seguem separadas corretamente).
+
+Tentativa adicional considerada e descartada por não agregar nada: usar um "código
+interno" que o próprio FCA às vezes reporta em vez do ticker real (ex. CSN aparece como
+`Codigo_Negociacao="4030"` em **todo** ano 2018–2025, nunca como `CSNA3`) como segunda
+chave de junção, derivando o de-para de dentro do próprio FCA quando o mesmo CNPJ mostra
+as duas formas em anos diferentes. Achado: os únicos 5 pares assim derivados
+(`9989→RPMG3`, `90212→MLAS3`, `0000→MTRE3`, `21130→TRIS3`, `23574→MEAL3`) já eram
+resolvidos pela propagação direta — resultado nulo, não um bug. Para CSN e outros casos
+onde o código interno é persistente (nunca coexiste com o ticker real em nenhum ano
+observado), não há de-para derivável sem conhecimento externo — ficam de fora, por
+desenho (nenhuma adivinhação).
+
+**Resultado da propagação, cobertura por ano:**
+
+| Ano | Cobertura (antes, Seção 5.4) | Cobertura (pós-propagação) |
+|---|---|---|
+| 2010 | 0,0% | 69,8% |
+| 2012 | 0,0% | 79,9% |
+| 2014 | 0,0% | 83,1% |
+| 2016 | 0,0% | 90,7% |
+
+**Auditoria de precisão (não só cobertura) nos quatro anos — 469 identificações
+inspecionadas manualmente, zero erros encontrados em todas.** Diferente da reconciliação
+por nome (Seção 5.5, ~65% de precisão real), propagação por identidade verificada não tem
+o mecanismo de colisão em token genérico — corrigiu inclusive vários dos falsos positivos
+da rodada anterior (`ESTC3→YDUQS`, não mais Cyrela; `QGEP3→Enauta`; `TIMP3→TIM
+Participações`).
+
+**O piso original (95% de cobertura, um número só) media a coisa errada.** Ele foi
+pré-registrado para proteger contra o risco real — identidade **errada**, que corrompe o
+demeaning setorial (Seção 7) em silêncio. A auditoria mostrou que esse risco zerou com
+propagação; o que sobra é ausência **contável**, natureza completamente diferente (a
+mesma exclusão declarada já usada em toda a spec — Seção 6, 7, 8). Substituído por dois
+critérios, cada um controlando o erro certo:
+
+1. **Precisão de identidade ≥ 98%**, auditada manualmente sobre o universo líquido do ano
+   — gate rígido, sem negociação, porque é o erro que não deixa rastro.
+2. **Cobertura ≥ 85%** sobre o universo líquido do ano — gate de amostra, mais frouxo,
+   porque ticker não resolvido vira exclusão contável (Seção 8), não contaminação.
+
+Um ano só é avaliável (conta fold no gate de promoção, Seção 10) se passar **nos dois**.
+
+**Resultado, aplicando o critério aos quatro anos medidos:**
+
+| Ano | Cobertura | Precisão | ≥85% cobertura? | ≥98% precisão? | Avaliável? |
+|---|---|---|---|---|---|
+| 2010 | 69,8% | 100% (0/111) | Não | Sim | **Não** |
+| 2012 | 79,9% | 100% (0/123) | Não | Sim | **Não** |
+| 2014 | 83,1% | 100% (0/118) | Não (perto) | Sim | **Não** |
+| 2016 | 90,7% | 100% (0/117) | Sim | Sim | **Sim** |
+
+**2016 entra como ano avaliável, junto com 2018 em diante.** 2010, 2012 e 2014 ficam de
+fora — não por identidade ruim (a precisão foi 100% nos quatro anos), só por cobertura
+insuficiente. A régua de precisão não cedeu em nenhum caso; a de cobertura reprovou três
+anos e aprovou um, exatamente a "fronteira móvel por ano" prevista antes de medir, não um
+corte único.
+
+**Não medido nesta rodada, item aberto**: 2011, 2013, 2015 e 2017 (anos ímpares da
+amostra bienal) não têm COTAHIST baixado nem cobertura/precisão medida. A tendência
+observada (69,8% → 79,9% → 83,1% → 90,7%, crescente) sugere que a fronteira real de
+"cobertura ≥ 85%" provavelmente fica entre 2014 e 2016 — possivelmente incluindo 2015
+e/ou 2017 — mas isso não foi confirmado. Medir os anos ímpares é o próximo passo natural,
+não feito aqui por teto de esforço explícito.
+
+**Consequência para a tensão de amostra (Seção 10/13)**: mesmo sem os anos ímpares, 2016
+recupera um fold para a era avaliável que antes não contava. Se 2015 e/ou 2017 também
+passarem quando medidos, a amostra de folds temporais para o gate de promoção cresce mais
+ainda, relaxando a tensão contra o piso de 8 folds. Rigor de identidade e amostra de fold
+deixam de estar em conflito — desde que o piso de precisão continue dele mesmo, sem ceder.
 
 ## 6. Universo elegível
 
@@ -673,14 +737,16 @@ Um conjunto de fatores só vai a produção se, simultaneamente:
    fold inteiro num vale de liquidez não entra na contagem de 70%, em vez de contar como
    evidência equivalente a um fold de pico. Fecha a lacuna registrada na Seção 13
    (folds de períodos diferentes não têm o mesmo poder estatístico) com um critério
-   verificável em vez de ponderação nova. **Folds contam apenas se caírem inteiramente na
-   era confiável de identidade (2018 em diante, Seção 5.5)** — antes disso, a atribuição
-   de CNPJ/setor depende de reconciliação por nome com ~65% de precisão real medida
-   (auditoria da Seção 5.5), e vitória construída sobre isso não é evidência. Folds
-   2010-2017 podem ser computados e exibidos como contexto, nunca contados no numerador
-   ou denominador dos 70%. **Isso pode reduzir os folds contáveis abaixo do piso de 8**
-   (~8-9 anos de era confiável vs. os ~16 anos que sustentavam o piso original, Seção 5.1)
-   — tensão em aberto, não resolvida aqui (ver Seção 5.5 e Seção 13).
+   verificável em vez de ponderação nova. **Folds contam apenas se caírem inteiramente num
+   ano avaliável — precisão de identidade ≥98% e cobertura ≥85%, auditado por ano (Seção
+   5.6), não um corte único em 2018.** Medido até aqui: 2018 em diante avaliável (Seção
+   5.4), mais **2016** (Seção 5.6 — 100% de precisão auditada, 90,7% de cobertura). 2010,
+   2012 e 2014 ficam de fora por cobertura insuficiente (precisão foi 100% nos quatro
+   anos medidos — não é problema de identidade errada, é ausência contável). 2011, 2013,
+   2015 e 2017 ainda não foram medidos. Folds fora da era avaliável podem ser computados e
+   exibidos como contexto, nunca contados no numerador ou denominador dos 70%. **Isso pode
+   reduzir os folds contáveis abaixo do piso de 8** — tensão que relaxa conforme mais anos
+   (2015, 2017 candidatos) forem medidos e passarem nos dois pisos (ver Seção 5.6 e Seção 13).
 2. Universo elegível com mínimo de **N = 100 empresas** em toda data de decisão, e margem
    exigida sobre o equal-weight escalada inversamente ao tamanho do corte transversal
    naquela data — quanto menor o universo elegível, maior a margem necessária para
@@ -800,18 +866,19 @@ As fases 1–3 entregam valor mesmo que nenhum score jamais passe no gate. Isso 
   liquida a posição com slippage compatível com a iliquidez, nunca a remove do sample sem
   registrar o resultado).
 - **Amostra pequena** — a B3 tem poucas centenas de empresas líquidas, contra milhares nos EUA. O corte transversal é estreito e a significância estatística é mais difícil. Consequência: exigir margem maior na comparação transversal (Seção 10, critério 2), não no número de folds temporais — os dois eixos de amostra são independentes e não devem ser confundidos. No eixo temporal, o histórico CVM confirmado (Seção 5.1: DFP desde 2010, ITR desde 2011, ~16 anos/~60 trimestres) sustentava o piso de 8 folds que o gate assume — **mas isso pressupunha os 16 anos inteiros como igualmente utilizáveis, o que o achado de duas eras abaixo corrige.**
-- **Duas eras de qualidade de identidade, não um histórico uniforme.** Auditoria da
-  reconciliação por nome (Seção 5.5) contra o universo elegível de 2016 achou os 27% sem
-  match incluindo os nomes mais líquidos do universo (Itaú Unibanco, Banco do Brasil, a
-  própria bolsa) — não cauda ilíquida — e 53% dos matches de baixa confiança apontando
-  para a empresa errada (precisão real ≈ 65%, não os 73% de cobertura bruta). Antes de
-  2018 o FCA não populava ticker algum (0% de cobertura, nenhuma empresa, nem a mais
-  líquida do mercado). Consequência: o histórico avaliável para o gate de promoção
-  (Seção 10, critério 1) começa em 2018, não em 2010 — reduzindo a amostra de folds
-  temporais de ~16 para ~8-9 anos, possivelmente abaixo do piso de 8 folds que o gate já
-  assume. 2010-2017 vira dado de contexto (lookback de médias móveis/momentum), nunca
-  evidência de promoção. Tensão de amostra ainda maior do que a linha acima já registrava
-  — dimensionamento final (folds mais curtos vs. esperar mais anos de era confiável) fica
+- **Qualidade de identidade varia por ano, não é um corte único em 2018.** Reconciliação
+  por nome (Seção 5.5) tinha precisão real ≈65% (27% sem match, incluindo os nomes mais
+  líquidos do universo — Itaú Unibanco, Banco do Brasil, a própria bolsa — e 53% dos
+  matches de baixa confiança errados). Propagação por CNPJ da era confiável (Seção 5.6)
+  resolveu esse risco — **100% de precisão auditada em 469 identificações, 2010 a 2016,
+  zero erros** — restando só um problema de cobertura, não de identidade errada.
+  Aplicando os dois pisos declarados (precisão ≥98%, cobertura ≥85%, por ano): **2016
+  entra como ano avaliável**, junto com 2018 em diante; 2010, 2012 e 2014 ficam de fora só
+  por cobertura (69,8%/79,9%/83,1%, todos com 100% de precisão); 2011/2013/2015/2017 não
+  medidos ainda. Isso ainda reduz a amostra de folds temporais do gate de promoção (Seção
+  10, critério 1) em relação aos ~16 anos originais — mas menos do que um corte fixo em
+  2018 sozinho, e a tensão relaxa mais se 2015/2017 também passarem quando medidos.
+  Dimensionamento final (folds mais curtos vs. esperar mais anos avaliáveis) segue
   pendente para o desenho detalhado da Fase 3.
 - **Universo elegível não cresce de forma monotônica — é cíclico, sensível a recessão.**
   Medição direta contra COTAHIST (9 anos amostrados, 2010–2025, ver Seção 10 critério 2 e
