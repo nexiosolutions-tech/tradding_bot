@@ -7,7 +7,20 @@ executando, mesmo sem o operador intervir diretamente em cada trade. O
 dashboard é a interface de confiança do usuário no sistema — se algo não é
 visível aqui, é como se não estivesse acontecendo.
 
-## Views
+## Seletor de módulo (Cripto / Ações)
+
+O `CoinSelector` existente (ver "Redesign para tema de exchange cripto" abaixo) escolhe
+um **par dentro do módulo cripto** — não serve para o módulo de Ações
+(`14-modulo-acoes-b3.md`), que é um módulo inteiro diferente, com seu próprio conjunto de
+telas e seu próprio dado (`specs/00`, disclaimer de independência: os dois módulos
+compartilham fundação de engenharia — este mesmo shell de dashboard — mas nunca estado,
+dado, modelo ou runtime). Precisa de um seletor de nível acima do `CoinSelector`, que troca
+o conteúdo inteiro da sidebar: as 4 views abaixo quando em modo Cripto, as 5 telas de `14-modulo-acoes-b3.md` (Seção 11) quando em modo Ações. Mesmo espírito do
+`CoinSelector` quando foi introduzido — placeholder estrutural primeiro, sem lógica de
+troca real até o módulo de Ações ter dado pra mostrar (Fase 1-3 de `14-modulo-acoes-b3.md`
+antes de qualquer tela de Ações ficar funcional).
+
+## Views (módulo Cripto)
 
 ### 1. Live (operação em tempo real)
 

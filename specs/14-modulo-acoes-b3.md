@@ -268,18 +268,75 @@ Enquanto nenhum conjunto passar, o sistema entrega apenas a **camada de evidênc
 ## 11. Interface — menu Ações
 
 Estende o mesmo dashboard descrito em `08-dashboard-e-visualizacao.md` — não é uma
-aplicação separada. O "menu Ações" é uma nova seção nesse app, seguindo o mesmo padrão
-de seletor de mercado já usado para escolher entre pares de cripto.
+aplicação separada, mesmo backend FastAPI + frontend React/Vite/TypeScript. Mas não é o
+mesmo padrão do `CoinSelector` existente: aquele seleciona um **par dentro do módulo
+cripto** (BTC/USDT vs. ETH/USDT); Ações é um **módulo inteiro diferente**, com seu próprio
+conjunto de telas e dado próprio (specs/00, disclaimer de independência). Precisa de um
+seletor de nível acima — módulo (Cripto | Ações), não par — que troca o conjunto de itens
+da sidebar inteiro. Ver `08-dashboard-e-visualizacao.md`, nova seção sobre isso.
 
-Cada tela responde a uma pergunta do fluxo de aporte:
+Todas as 5 telas abaixo carregam o disclaimer de `specs/00`/`CLAUDE.md` — "o sistema
+ordena e evidencia, quem decide o aporte é o usuário", nunca recomendação — com destaque
+visual próprio na tela 1 (Painel do aporte), que é a mais decision-facing das cinco.
 
-1. **Painel do aporte do mês** — ranking, decomposição por fator, impacto na carteira. Tela principal.
-2. **Ficha do ativo** — série de fundamentos com data de publicação visível, histórico de proventos, posição do ativo em cada fator ao longo do tempo.
-3. **Minha carteira** — composição, exposição setorial, concentração, evolução vs. benchmarks.
-4. **Transparência** — quais fontes, quando coletadas, quais falharam, qual a idade de cada dado. Herda a asserção de frescor.
-5. **Histórico de decisões** — o que o sistema apontou em cada mês e o que aconteceu depois. Sem isso não há aprendizado, e é o que permite auditar o próprio sistema com o tempo.
+### 11.1 Painel do aporte do mês (tela principal)
 
-Preparar a estrutura para múltiplos mercados desde o início, como já foi feito com o seletor de moedas — mas sem implementar nada além da B3 agora.
+- Input do usuário: valor do aporte do mês (a carteira atual vem da tela "Minha carteira",
+  não é redigitada aqui).
+- Ranking do universo elegível (Seção 6): ticker, empresa, setor, score composto,
+  variação do score desde o mês anterior.
+- **Decomposição por fator** por linha do ranking (Seção 7): um indicador visual por
+  família (Valor/Qualidade/Saúde financeira/Crescimento/Momentum/Dividendos/Tamanho) —
+  responde "por que subiu, por que caiu", não só o número final.
+- Para os candidatos no topo: exposição setorial resultante da carteira **se comprado**
+  (antes/depois lado a lado), e o alerta de concentração da Seção 8 quando aplicável —
+  evidência de tensão, não bloqueio (o usuário decide mesmo assim, se quiser).
+- Sugestão de aporte respeitando tetos por ativo/setor (Seção 8) — quanto de cada
+  candidato, não só a ordem do ranking.
+- Nota fiscal-tributária informativa (Seção 8) — lembrete das regras vigentes, rodapé ou
+  tooltip, nunca um cálculo de imposto devido.
+
+### 11.2 Ficha do ativo
+
+- Cabeçalho: ticker, razão social, CNPJ, classe (ON/PN/UNIT via `cnpj_ticker_map`,
+  Seção 5.1), setor (classificação B3, Seção 7).
+- Série de fundamentos com **`data_publicacao` visível ao lado de cada número, não só o
+  valor** — a garantia point-in-time da Seção 5 precisa ser legível pelo usuário, não só
+  correta internamente.
+- Histórico de proventos (dividendos/JCP).
+- Posição do ativo em cada fator ao longo do tempo — série temporal do percentil setorial
+  por família de fator (Seção 7), não só o valor do mês corrente.
+- Preço ajustado por eventos corporativos (Seção 5) — mesmo componente de chart do módulo
+  cripto (`lightweight-charts` já é dependência do frontend, spec 08) é infraestrutura de
+  UI compartilhada; o dado por trás não é.
+
+### 11.3 Minha carteira
+
+- Composição: ticker, quantidade, preço médio, valor atual, peso — **entrada manual**, não
+  há corretora integrada (o sistema não custodia nem executa, Seção 2).
+- Exposição setorial e concentração (peso do maior ativo, dos 5 maiores, índice de
+  concentração — Seção 8).
+- Evolução vs. os 4 benchmarks obrigatórios (Seção 9: IBOV, IBrX-100, SMLL, CDI) — mesma
+  régua honesta usada na validação, agora sobre a carteira real do usuário.
+
+### 11.4 Transparência
+
+- Fontes (CVM/preço/macro), timestamp da última coleta, idade de cada dado — herda a
+  asserção de frescor do bot (`run_daily_learning.py`, padrão já existente).
+- Falhas de coleta recentes. Equivalente funcional da view "Aprendizado" do bot (spec 08),
+  mas sobre proveniência de dado em vez de aprendizado de modelo.
+
+### 11.5 Histórico de decisões
+
+- Snapshot congelado do ranking + sugestão de cada mês (precisa ser persistido no momento
+  da geração — não é recalculável depois, porque o universo elegível e os fundamentos
+  point-in-time de hoje não são os mesmos de um mês atrás).
+- Retorno realizado do que foi sugerido vs. do que não foi, comparado ao mês seguinte.
+- Sem isso não há como auditar o próprio sistema com o tempo — é o que torna a Seção 14
+  ("expectativa calibrada") verificável, não só uma afirmação de propósito.
+
+Preparar a estrutura para múltiplos mercados desde o início, como já foi feito com o
+seletor de moedas — mas sem implementar nada além da B3 agora.
 
 ## 12. Fases de entrega
 
