@@ -53,11 +53,36 @@ point-in-time com SQL de exemplo + o teste de aceite exato, usando o dado real d
 do Brasil: consulta em 2025-02-18 não deve ver o exercício 2024-12-31, consulta em
 2025-02-19 deve ver).
 
+## Segunda rodada: três implicações + range histórico confirmado
+
+Usuário revisou o achado inicial e puxou três consequências que a primeira passada não
+tinha capturado, mais a checagem do item mais decisivo da lista de pendências:
+
+1. **`VERSAO` obriga armazenamento append-only.** Já que a consulta point-in-time pega a
+   maior `VERSAO` publicada até a data da decisão, um `UPDATE` in place na retificação
+   apagaria a versão anterior e a garantia point-in-time quebraria silenciosamente
+   (a consulta continuaria rodando, só devolveria o valor errado para datas anteriores à
+   retificação). Registrado como requisito estrutural: chave é
+   `(CNPJ_CIA, DT_REFER, VERSAO)`, pipeline só faz `INSERT`.
+2. **Refinamento de `ORDEM_EXERC`.** Se o comparativo (`PENÚLTIMO`) for usado (detecção de
+   reapresentação/auditoria), tem que ser carimbado com o `DT_RECEB` do filing que o
+   contém — nunca com a `DT_REFER` do próprio exercício, senão injeta o valor
+   reapresentado como se fosse conhecido desde a data original.
+3. **Faltava o mapeamento CNPJ↔ticker no contrato.** CVM identifica por CNPJ, cotação por
+   ticker B3; uma empresa tem múltiplas classes (ON/PN/UNIT) e tickers mudam com evento
+   societário — exatamente os casos mais interessantes para universo elegível e eventos
+   corporativos. Precisa de `cnpj_ticker_map` com vigência por data, antes da Fase 2.
+
+**Range histórico confirmado por sondagem direta de URL** (item que já estava na lista de
+pendências, verificado agora): DFP disponível de 2010 a 2026 (`_2009.zip` → 404, `_2010.zip`
+→ 200); ITR de 2011 a 2026 (`_2010.zip` → 404, `_2011.zip` → 200). ~16 anos de dado anual,
+~60 trimestres — sustenta o piso de 8 folds que o gate de promoção (`specs/14`, Seção 10)
+já assume, sem forçar uma revisão desse número.
+
+Todos os quatro pontos incorporados em `specs/14-modulo-acoes-b3.md`, Seções 5.1 e 13.
+
 ## Pendente, não verificado nesta rodada
 
-- Até quando os arquivos anuais existem retroativamente (só 2024 foi baixado; o portal
-  menciona "últimos 5 anos" para a descrição do dataset atual, mas isso pode não refletir
-  quantos anos de arquivo `_AAAA.zip` realmente existem).
 - Formato do FRE (Formulário de Referência).
 - ToS do portal lido linha a linha (dados.gov.br costuma ser aberto, mas não confirmado
   explicitamente).
@@ -73,3 +98,7 @@ segue "proposta inicial, não implementada".
 - Justificativa: trabalho independente do bot, sem custo de esperar o teste de nulidade
   terminar; verificar a fonte por acesso direto (não pela documentação do portal) segue a
   mesma disciplina de "medir antes de declarar" do resto da sessão.
+- Segunda rodada aprovada por: Brian, a partir da leitura do achado inicial — apontou as
+  três implicações (append-only, carimbo do comparativo, mapeamento CNPJ↔ticker) e pediu
+  a checagem do range histórico "cedo... é o número que decide a viabilidade estatística
+  da frente inteira".

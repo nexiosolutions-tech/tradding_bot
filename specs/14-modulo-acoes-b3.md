@@ -101,16 +101,49 @@ confirmado o mesmo padrão para `ITR`) e inspecionados os CSVs reais:
   para cada `(CNPJ_CIA, DT_REFER)`, usar a versão de maior `VERSAO` cuja `DT_RECEB <=
   data_da_decisão` — nunca a versão mais recente publicada até hoje, cujo `DT_RECEB` pode
   ser posterior à data da decisão sendo consultada.
+  - **Consequência estrutural para o armazenamento (2026-08-19)**: isso obriga a tabela de
+    filings a ser **append-only**. Uma retificação chega como uma linha nova
+    `(CNPJ_CIA, DT_REFER, VERSAO+1, DT_RECEB_nova)`, nunca sobrescrevendo a linha da
+    versão anterior — se a ingestão fizer `UPDATE` in place, a versão antiga desaparece e
+    a consulta point-in-time para uma data anterior à retificação passa a devolver o valor
+    retificado, quebrando a garantia point-in-time silenciosamente (a consulta continua
+    rodando sem erro, só devolve o número errado). Chave primária de fato é
+    `(CNPJ_CIA, DT_REFER, VERSAO)`, e o pipeline de ingestão só faz `INSERT`.
+- **Refinamento da regra de `ORDEM_EXERC` (2026-08-19)**: se `PENÚLTIMO` for usado algum
+  dia (detecção de reapresentação, auditoria), ele precisa ser carimbado com o `DT_RECEB`
+  do filing que o **contém** (o filing do ano seguinte, que é quando esse número
+  reapresentado ficou público), nunca com a `DT_REFER` do próprio exercício a que se
+  refere — carimbar com a data do exercício injetaria, na prática, informação do futuro
+  (o valor reapresentado, disponível só depois, aparecendo como se fosse conhecido desde
+  a data original).
 - Arquivos são CSV `;`-delimitado, **latin-1** (não UTF-8) — confirmado por erro de
   decodificação direto. Escala: ~870 filings/ano no índice DFP, ~33k linhas de item por
   arquivo de demonstração (`DRE_con`, por exemplo) — tamanho trivial para armazenamento
   relacional local.
-- **Ainda não verificado nesta rodada**: até quando os arquivos anuais (`_AAAA.zip`)
-  existem retroativamente (só 2024 foi baixado e confirmado; o portal menciona "últimos 5
-  anos" para o dataset atual, mas isso pode ser sobre o que o dataset *descreve*, não
-  sobre até onde os arquivos por ano vão); formato do FRE (Formulário de Referência,
-  Seção 4.1); e o ToS explícito do portal (dados.gov.br costuma ser aberto, mas não foi
-  lido linha a linha).
+- **Cobertura histórica, verificada por sondagem direta de URL (2026-08-19)**: DFP
+  disponível de **2010** a 2026 (`dfp_cia_aberta_2009.zip` → HTTP 404,
+  `dfp_cia_aberta_2010.zip` → HTTP 200); ITR disponível de **2011** a 2026
+  (`itr_cia_aberta_2010.zip` → 404, `itr_cia_aberta_2011.zip` → 200). ~16 anos de dado
+  anual, ~60 trimestres de dado trimestral — número que decide a viabilidade estatística
+  da frente inteira (Seção 13, "amostra pequena"): dá para sustentar algo como 8-10 folds
+  de walk-forward com ~6 trimestres cada, na mesma ordem de grandeza do piso que o gate de
+  promoção já assume (Seção 10, critério 1: mínimo de 8 folds) — não uma garantia de que
+  vai passar no gate, mas confirma que o desenho do gate não está pedindo mais folds do
+  que o histórico permite entregar.
+- **Peça que faltava no contrato: mapeamento CNPJ↔ticker.** CVM identifica empresa por
+  `CNPJ_CIA`; cotação (Seção 4.2) vem por ticker B3. Uma empresa pode ter múltiplas
+  classes de ação (ON, PN, UNIT) mapeando pro mesmo CNPJ, e tickers mudam com
+  incorporação/fusão/troca de nome — justamente os casos mais interessantes para o
+  universo elegível (Seção 6) e para eventos corporativos (Seção 5). Sem uma tabela de
+  mapeamento com vigência por data (`cnpj_ticker_map`: `cnpj_cia`, `ticker`,
+  `data_inicio`, `data_fim`), o join histórico entre fundamento (CNPJ) e preço (ticker)
+  erra silenciosamente exatamente nas empresas que passaram por evento societário. Precisa
+  existir antes da Fase 2 (universo elegível + eventos corporativos), não antes da Fase 1
+  — mas registrado aqui porque é a mesma disciplina point-in-time desta seção, não uma
+  preocupação nova.
+- **Ainda não verificado nesta rodada**: formato do FRE (Formulário de Referência, Seção
+  4.1); e o ToS explícito do portal (dados.gov.br costuma ser aberto, mas não foi lido
+  linha a linha).
 
 ### 5.2 Contrato de consulta point-in-time (Fase 1, critério de aceite)
 
@@ -265,7 +298,7 @@ As fases 1–3 entregam valor mesmo que nenhum score jamais passe no gate. Isso 
 
 - **Vazamento por data de publicação** — mitigado pela seção 5; é o risco número um.
 - **Survivorship bias** — mitigado pelo universo com data de saída.
-- **Amostra pequena** — a B3 tem poucas centenas de empresas líquidas, contra milhares nos EUA. O corte transversal é estreito e a significância estatística é mais difícil. Consequência: exigir margem maior na comparação transversal (Seção 10, critério 2), não no número de folds temporais — os dois eixos de amostra são independentes e não devem ser confundidos.
+- **Amostra pequena** — a B3 tem poucas centenas de empresas líquidas, contra milhares nos EUA. O corte transversal é estreito e a significância estatística é mais difícil. Consequência: exigir margem maior na comparação transversal (Seção 10, critério 2), não no número de folds temporais — os dois eixos de amostra são independentes e não devem ser confundidos. No eixo temporal, o histórico CVM confirmado (Seção 5.1: DFP desde 2010, ITR desde 2011, ~16 anos/~60 trimestres) sustenta o piso de 8 folds que o gate já assume — sem essa confirmação, o gate estaria pedindo um número de folds que o histórico talvez não entregasse.
 - **Concentração do mercado** — o índice brasileiro é pesado em commodities e bancos. Um fator pode parecer funcionar quando na verdade está apostando em um setor.
 - **Regimes longos** — fatores passam anos sem funcionar. Um resultado ruim em 12 meses não invalida, e um bom não valida.
 - **Mudança regulatória e tributária** — regras de tributação de proventos e ganho de capital mudam. O sistema informa, não calcula obrigação fiscal.
