@@ -131,17 +131,22 @@ confirmado o mesmo padrão para `ITR`) e inspecionados os CSVs reais:
   promoção já assume (Seção 10, critério 1: mínimo de 8 folds) — não uma garantia de que
   vai passar no gate, mas confirma que o desenho do gate não está pedindo mais folds do
   que o histórico permite entregar.
-- **Peça que faltava no contrato: mapeamento CNPJ↔ticker.** CVM identifica empresa por
-  `CNPJ_CIA`; cotação (Seção 4.2) vem por ticker B3. Uma empresa pode ter múltiplas
-  classes de ação (ON, PN, UNIT) mapeando pro mesmo CNPJ, e tickers mudam com
-  incorporação/fusão/troca de nome — justamente os casos mais interessantes para o
-  universo elegível (Seção 6) e para eventos corporativos (Seção 5). Sem uma tabela de
-  mapeamento com vigência por data (`cnpj_ticker_map`: `cnpj_cia`, `ticker`,
-  `data_inicio`, `data_fim`), o join histórico entre fundamento (CNPJ) e preço (ticker)
-  erra silenciosamente exatamente nas empresas que passaram por evento societário. Precisa
-  existir antes da Fase 2 (universo elegível + eventos corporativos), não antes da Fase 1
-  — mas registrado aqui porque é a mesma disciplina point-in-time desta seção, não uma
-  preocupação nova.
+- **Peça que faltava no contrato — e que subiu de prioridade: mapeamento CNPJ↔ticker.**
+  CVM identifica empresa por `CNPJ_CIA`; cotação (Seção 4.2) vem por ticker B3. Uma
+  empresa pode ter múltiplas classes de ação (ON, PN, UNIT) mapeando pro mesmo CNPJ, e
+  tickers mudam com incorporação/fusão/troca de nome — justamente os casos mais
+  interessantes para o universo elegível (Seção 6) e para eventos corporativos (Seção 5).
+  Sem uma tabela de mapeamento com vigência por data (`cnpj_ticker_map`: `cnpj_cia`,
+  `ticker`, `data_inicio`, `data_fim`), o join histórico entre fundamento (CNPJ) e preço
+  (ticker) erra silenciosamente exatamente nas empresas que passaram por evento
+  societário. **Deixou de ser só peça do join de preço**: a medição de piso setorial
+  (Seção 7) mostrou que o casamento por nome (73%, usado como substituto na ausência
+  deste mapeamento) não é aleatório — falha mais em empresa que trocou de nome, foi
+  incorporada ou é pequena e antiga, viesando exatamente a medição de setor de forma
+  desconhecida. Sem este mapeamento, a atribuição setorial que todo o score da Seção 7
+  depende também erra silenciosamente, não só o join de preço. Precisa existir antes da
+  Fase 2 (universo elegível + eventos corporativos), não antes da Fase 1 — mas registrado
+  aqui porque é a mesma disciplina point-in-time desta seção, não uma preocupação nova.
 - **Ainda não verificado nesta rodada**: formato do FRE (Formulário de Referência, Seção
   4.1); e o ToS explícito do portal (dados.gov.br costuma ser aberto, mas não foi lido
   linha a linha).
@@ -292,7 +297,20 @@ Nenhum fator inventado. Cada um precisa de referência na literatura e de justif
 | Dividendos | dividend yield, payout, consistência plurianual | proventos — **não utilizável em fator validado por backtest** até a fonte de proventos ter a mesma cobertura do COTAHIST (Seção 5.3); pode aparecer na camada de evidência do mês corrente |
 | Tamanho | valor de mercado | preço + capital social |
 
-**Normalização:** cada métrica vira percentil **dentro do setor** na data de decisão, não valor absoluto. Comparar P/L de banco com o de mineradora é ruído. Setorização via classificação B3, versionada.
+**Normalização: percentil no universo inteiro, com neutralização (demeaning) setorial —
+não percentil dentro do setor.** Percentil-dentro-do-setor degrada catastroficamente com
+bucket pequeno (percentil sobre 4 empresas não é estatística, é ordenação de quatro
+pontos) — e o achado da subseção abaixo mostra que bucket pequeno não é caso raro na B3,
+é comum. A correção padrão em quant: para cada métrica, calcular o valor **demeaned**
+(valor da empresa menos a média do setor de nível 1 B3 na data), depois tomar o percentil
+dessa série demeaned sobre o **universo elegível inteiro**, não sobre o setor. A diferença
+é o que cada forma precisa estimar — demeaning só precisa da **média** do setor
+(razoável com 3–4 nomes), percentil-dentro-do-setor precisa da **distribuição inteira**
+(não razoável com poucos nomes). Isso mantém o objetivo original — não comparar P/L de
+banco com o de mineradora — sem exigir a população que a B3 não tem. Setor com pelo menos
+3 empresas estima a própria média; abaixo disso, a empresa entra num bucket "outros" (sem
+neutralização setorial específica) em vez de ser descartada. Setorização via
+classificação B3, versionada.
 
 **Matriz de aplicabilidade de fator por setor.** Banco não tem EV/EBITDA, dívida líquida
 nem capital de giro no sentido usual das demais empresas — o balanço de uma instituição
@@ -319,20 +337,26 @@ a empresa real). Não existe resposta certa; existe resposta **declarada por fat
 spec e idêntica no backtest e em produção** — a regra escolhida não pode divergir entre
 os dois ambientes, senão o backtest valida um comportamento que produção não reproduz.
 
-**Percentil setorial exige população mínima — e é este piso, não o total do universo, que
-morde.** Medido contra dado real (`changes/2026-08-19-modulo-acoes-b3-secao-8-e-piso-setorial.md`):
-no vale de 2016 (113 empresas passando o filtro de liquidez da Seção 6), agrupando por
-setor via `SETOR_ATIV` da CVM (classificação mais granular que a da B3, casada por nome —
-73% de taxa de casamento, sem `cnpj_ticker_map` ainda) e mesmo depois de colapsar
-holdings ("Emp. Adm. Part. - X") no setor-base, uma aproximação mais próxima da
-classificação B3: **22 de 27 setores ficaram abaixo do mínimo de 6** — só Bancos,
-Metalurgia, Energia Elétrica, Construção Civil e Comércio sobreviveram. O total de 113
-escondia essa fragmentação por completo. Definir um mínimo de empresas por setor (ex. 6)
-abaixo do qual o setor é agregado a uma classificação mais ampla (ex. sub-setor → setor
-B3) para aquele fator, ou o fator simplesmente não pontua ali — mesma lógica da "ausência
-de fator aplicável" acima, mesmo tratamento no score composto. **Consequência de desenho:
-o fallback de agregação não é caso de borda — em período de estresse, é o caminho comum**,
-e precisa ser testado como tal, não como exceção rara.
+**Por que a normalização acima existe: o piso setorial é achado real, não hipotético —
+mas dois números distintos, não confundir.** Medido contra dado real
+(`changes/2026-08-19-modulo-acoes-b3-secao-8-e-piso-setorial.md`): no vale de 2016 (113
+empresas passando o filtro de liquidez da Seção 6), agrupando por setor via `SETOR_ATIV`
+da CVM e mesmo depois de colapsar holdings no setor-base (aproximação da classificação
+B3), 22 de 27 setores ficaram abaixo de uma população de 6 — só Bancos, Metalurgia,
+Energia Elétrica, Construção Civil e Comércio sobreviveram.
+
+- **O que esse número decide:** a direção e a magnitude qualitativa — setor pequeno é
+  comum, não exceção, na B3. Isso justifica a mudança de arquitetura acima
+  (percentil-no-universo + demeaning em vez de percentil-dentro-do-setor), que degrada
+  suavemente com setor pequeno em vez de quebrar.
+- **O que esse número NÃO decide:** nenhum piso calibrado. `SETOR_ATIV` da CVM é mais
+  granular que a classificação B3 real que a spec assume para produção — o 22/27 usa a
+  taxonomia errada. E o casamento por nome (73%, sem `cnpj_ticker_map`) não é uma falha
+  aleatória: empresa que trocou de nome, foi incorporada ou é pequena e antiga tem mais
+  chance de não casar — exatamente o perfil que preenche setor pequeno. O 22/27 pode estar
+  sub ou superestimado, e a direção do viés não é conhecida. O piso de 3 nomes para
+  estimar média (acima) é escolha de desenho independente deste número, não calibrada por
+  ele — revisar quando a classificação B3 real e o `cnpj_ticker_map` existirem.
 
 **Score composto:** média ponderada dos percentis de fator, com pesos explícitos, versionados e justificados. Pesos não são otimizados livremente sobre o histórico — cada configuração testada é registrada no log de experimentos, porque **cada tentativa é insumo do DSR**, exatamente como no bot.
 
@@ -394,7 +418,7 @@ Mesmo rigor do bot, com as adaptações do domínio.
 3. Carteira aleatória do universo elegível (N sorteios) — a nuvem nula
 4. CDI — o custo de oportunidade real no Brasil
 
-**Métricas:** retorno total, volatilidade, drawdown máximo, retorno/volatilidade, retorno/drawdown, turnover (proxy direto de custo), exposição setorial média.
+**Métricas:** retorno total, volatilidade, drawdown máximo, retorno/volatilidade, retorno/drawdown, turnover (proxy direto de custo), exposição setorial média. **Cada fold reporta também o tamanho do universo elegível (N transversal, mínimo/mediano/máximo no período do fold)** — sem isso não dá para o gate (Seção 10) distinguir um fold com poder estatístico real de um fold num vale de liquidez.
 
 **Teste de nulidade:** permutar a associação entre score e retorno futuro, N ≥ 100. O score real precisa ficar fora da nuvem nula. Se não ficar, o conjunto de fatores não passa — independentemente de quão bem o backtest tenha ido.
 
@@ -418,7 +442,12 @@ Um conjunto de fatores só vai a produção se, simultaneamente:
 1. Supera o equal-weight do universo em risco-ajustado em pelo menos 70% dos folds, com
    mínimo de 8 folds, e nenhum fold com degradação de drawdown além do limite definido —
    espelha a checagem de degradação que `promotion.py` já faz no bot, como teste de
-   robustez, não como régua de unanimidade.
+   robustez, não como régua de unanimidade. **Folds contam apenas se o N transversal
+   mediano do período (Seção 9) atingir o mínimo definido (mesmo piso do critério 2)** —
+   fold inteiro num vale de liquidez não entra na contagem de 70%, em vez de contar como
+   evidência equivalente a um fold de pico. Fecha a lacuna registrada na Seção 13
+   (folds de períodos diferentes não têm o mesmo poder estatístico) com um critério
+   verificável em vez de ponderação nova.
 2. Universo elegível com mínimo de **N = 100 empresas** em toda data de decisão, e margem
    exigida sobre o equal-weight escalada inversamente ao tamanho do corte transversal
    naquela data — quanto menor o universo elegível, maior a margem necessária para
@@ -438,14 +467,6 @@ Um conjunto de fatores só vai a produção se, simultaneamente:
 4. Tem DSR positivo, contabilizando **todas** as configurações de peso testadas.
 5. Não concentra a vantagem inteira em um único setor ou em um único período — segmentação com piso de amostra mínima. Ver nota do critério 2: este é o critério com poder real de reprovação nesta frente, não o 2.
 6. Turnover compatível com o orçamento de custo definido.
-
-**Folds de períodos diferentes não são evidência equivalente.** A largura do corte
-transversal variou de ~113 a ~235 empresas ao longo do histórico medido (Seção 13) — um
-fold cujo período caiu num vale de liquidez tem menos poder estatístico que um fold num
-pico, mesmo com o mesmo número de folds contado no critério 1. O critério 1 conta folds
-igualmente; nenhum critério aqui pondera por largura transversal do período. Registrado
-como lacuna conhecida do gate, não resolvida nesta rodada — ponderar por N transversal do
-fold (em vez de contagem simples) é candidato a entrar quando o gate for implementado.
 
 Enquanto nenhum conjunto passar, o sistema entrega apenas a **camada de evidência** (dados consolidados, rastreáveis, decompostos) — que já é útil por si e não depende de nenhum modelo funcionar.
 
@@ -554,17 +575,24 @@ As fases 1–3 entregam valor mesmo que nenhum score jamais passe no gate. Isso 
   de 16 anos. Consequência: folds temporais em anos de recessão têm corte transversal mais
   estreito que a média, não só os anos mais antigos — o piso de N=100 empresas (critério 2)
   precisa sobreviver ao pior ano observado, não ao ano médio.
-- **O piso que morde é o setorial, não o total do universo.** Desagregando o vale de 2016
-  por setor (`changes/2026-08-19-modulo-acoes-b3-secao-8-e-piso-setorial.md`), 22 de 27
-  setores ficaram abaixo do mínimo de população da Seção 7 — o total de 113 escondia essa
-  fragmentação por completo. Consequência: o fallback de agregação setorial (Seção 7) não
-  é caso raro, é o caminho comum em estresse, e o gate (Seção 10, critério 5) é quem
-  precisa fazer esse trabalho — o critério 2 (N=100 total) nunca vai reprovar nada.
+- **Setor pequeno é comum na B3, não exceção — por isso a normalização da Seção 7 não usa
+  percentil-dentro-do-setor.** Desagregando o vale de 2016 por setor
+  (`changes/2026-08-19-modulo-acoes-b3-secao-8-e-piso-setorial.md`), 22 de 27 setores
+  ficaram abaixo de uma população de 6 usando a taxonomia CVM como proxy — o total de 113
+  escondia essa fragmentação por completo. Esse número (taxonomia errada, casamento por
+  nome enviesado) não calibra nenhum parâmetro, mas a direção decidiu a arquitetura: a
+  Seção 7 normaliza por percentil-no-universo com demeaning setorial, que só precisa da
+  média do setor (razoável com poucos nomes) em vez da distribuição inteira — degrada
+  suavemente em vez de quebrar. O gate (Seção 10, critério 5) continua sendo quem
+  verifica que a vantagem não vem de um único setor — o critério 2 (N=100 total) nunca
+  vai reprovar nada por construção.
 - **Folds de períodos diferentes não têm o mesmo poder estatístico.** O corte transversal
   variou de ~113 a ~235 ao longo do histórico medido — uma vitória num fold de vale de
-  liquidez (2016) e uma vitória num fold de pico (2022) não são evidências equivalentes,
-  mas o gate (Seção 10, critério 1) hoje conta os dois igualmente. Lacuna conhecida, não
-  resolvida nesta rodada.
+  liquidez (2016) e uma vitória num fold de pico (2022) não são evidências equivalentes.
+  Fechado com critério verificável, não ponderação nova: Seção 9 passou a reportar o N
+  transversal de cada fold, e o critério 1 do gate (Seção 10) só conta um fold na régua de
+  70% se o N transversal mediano do período atingir o piso — fold inteiro num vale de
+  liquidez não pesa como um fold de pico.
 - **Concentração do mercado** — o índice brasileiro é pesado em commodities e bancos. Um fator pode parecer funcionar quando na verdade está apostando em um setor.
 - **Regimes longos** — fatores passam anos sem funcionar. Um resultado ruim em 12 meses não invalida, e um bom não valida.
 - **Mudança regulatória e tributária** — regras de tributação de proventos e ganho de capital mudam. O sistema informa, não calcula obrigação fiscal.
