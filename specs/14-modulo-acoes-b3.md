@@ -391,7 +391,44 @@ nunca deixa a posição desaparecer —
   regra de dado faltante da Seção 7: o backtest só valida um comportamento que a produção
   de fato reproduz se a lógica de saída for a mesma nos dois lugares.
 
-Entradas: carteira atual (ticker, quantidade, preço médio), valor do aporte, restrições do usuário.
+**Entradas**: carteira atual (ticker, quantidade, preço médio), valor do aporte, e
+restrições do usuário — exclusões manuais (ticker ou setor que o usuário não quer
+aumentar, por razão fora do modelo), teto de peso máximo por ativo e por setor
+(configurável, com um default conservador versionado), valor mínimo de posição (evita
+sugerir um aporte residual que não compensa o custo de corretagem).
+
+**Mecanismo de sugestão: regra gulosa determinística sobre o ranking da Seção 7, não
+otimização de portfólio com função-objetivo própria.** Escolha deliberada — o sistema
+**ordena e evidencia** (Seção 1), a decisão é do usuário; um otimizador com função de
+utilidade embutida decidiria por trás de uma caixa-preta, o oposto do princípio de
+auditabilidade que rege toda a spec. O algoritmo:
+
+1. Percorre o ranking da Seção 7, do maior score para o menor.
+2. Para cada candidato, verifica se alocar a ele o quanto falta para não deixar dinheiro
+   parado (respeitando o teto por ativo e por setor, considerando a posição já existente
+   + o aporte acumulado até aqui) violaria algum teto. Se violar, pula para o próximo
+   candidato — não reduz a alocação para caber, porque alocação parcial arbitrária não é
+   mais auditável que pular.
+3. Repete até o aporte se esgotar ou não sobrar candidato elegível dentro dos tetos.
+4. **Sobra não alocável é reportada explicitamente**, nunca forçada em um ativo que
+   violaria teto — "R$ X não alocados porque os tetos configurados foram atingidos em
+   todos os candidatos restantes" é uma saída válida, não uma falha do algoritmo.
+5. **Lote padrão (100 ações) vs. mercado fracionário**: se o valor a alocar num candidato
+   não fecha um lote padrão ao preço atual, a sugestão usa o mercado fracionário
+   (`TPMERC=020` na tabela da COTAHIST, confirmado no layout oficial — distinto de
+   `TPMERC=010`/mercado à vista, que é o que a Seção 6 usa para o filtro de liquidez; a
+   sugestão de compra fracionária do mesmo papel não é impedida por isso). Regra
+   declarada e idêntica no backtest e em produção, mesmo princípio já aplicado à regra de
+   dado faltante (Seção 7) e à regra de saída por liquidez (acima).
+
+Esta é a mesma disciplina de "regra declarada, não implícita" já aplicada em toda a spec
+— o algoritmo é determinístico e auditável precisamente para que a decomposição por fator
+de cada sugestão (abaixo) seja rastreável até uma regra escrita, não até um comportamento
+emergente de otimização.
+
+**Restrição estrutural, não apenas de UI**: este motor nunca envia ordem — Seção 2 já
+exclui execução automática deste módulo por completo, e este mecanismo produz apenas a
+lista de sugestões descrita abaixo, nunca uma ação executada.
 
 Saídas:
 
@@ -400,7 +437,7 @@ Saídas:
 - Concentração: peso do maior ativo, dos cinco maiores, índice de concentração.
 - Alerta quando o candidato melhor ranqueado aumenta concentração já elevada — evidência de tensão, não bloqueio.
 - **Alerta de perda de liquidez** para posições em carteira que caíram do universo elegível (ver regra de saída acima).
-- Sugestão de aporte que respeita tetos configuráveis por ativo e por setor.
+- Sugestão de aporte (mecanismo acima), com o valor não alocado explícito quando os tetos esgotam os candidatos elegíveis antes do aporte.
 - **Nota fiscal-tributária informativa:** lembrete das regras vigentes de tributação de venda e de proventos, com a ressalva de que a regra deve ser confirmada com contador. O sistema não calcula imposto devido.
 
 ## 9. Backtest e validação
