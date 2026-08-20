@@ -73,6 +73,69 @@ Sites agregadores que proíbem scraping em ToS; qualquer "carteira recomendada" 
 
 **Eventos corporativos:** preços ajustados por desdobramento, grupamento, bonificação, JCP e dividendos. Série não ajustada gera retorno falso em toda data de evento.
 
+### 5.1 Fonte CVM confirmada, com contrato de ingestão (2026-08-19)
+
+A Seção 4 marcava CVM Dados Abertos como candidata, não confirmada. Verificado agora por
+acesso direto (não pela documentação do portal, que não expõe as colunas) — baixado
+`https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/DFP/DADOS/dfp_cia_aberta_2024.zip` (e
+confirmado o mesmo padrão para `ITR`) e inspecionados os CSVs reais:
+
+- **`data_publicacao` existe e tem o nome exato `DT_RECEB`** — mas só no arquivo-índice
+  mestre (`dfp_cia_aberta_AAAA.csv`), não nos arquivos de linha de item financeiro
+  (`dfp_cia_aberta_DRE_con_AAAA.csv` etc., que só têm `DT_REFER`). Contrato de ingestão:
+  toda linha de fundamento é join com o índice mestre por
+  `(CNPJ_CIA, DT_REFER, VERSAO)` para herdar `data_publicacao = DT_RECEB`. Confirmado
+  com dado real: Banco do Brasil, exercício 2024-12-31, `DT_RECEB=2025-02-19`; BRB Banco
+  de Brasília, mesmo exercício, `DT_RECEB=2025-04-09` — o lag varia por empresa,
+  exatamente por isso não dá para assumir um atraso fixo.
+- **Armadilha adicional, não estava na Seção 5 original**: cada filing traz o exercício
+  atual (`ORDEM_EXERC=ÚLTIMO`) **e** o exercício anterior comparativo
+  (`ORDEM_EXERC=PENÚLTIMO`) na mesma linha de dado. O mesmo ano-fiscal aparece em dois
+  filings diferentes (como ÚLTIMO no filing do próprio ano, como PENÚLTIMO comparativo no
+  filing do ano seguinte) — possivelmente com valor **reapresentado/diferente**, cada um
+  com sua própria `data_publicacao`. Regra de ingestão: só `ÚLTIMO` entra como fato
+  point-in-time primário; `PENÚLTIMO` fica disponível só para detecção de reapresentação,
+  nunca como fonte de um fator.
+- **`VERSAO` existe** — um filing pode ser retificado depois da entrega original, gerando
+  uma nova versão com sua própria `DT_RECEB` (posterior). Consulta point-in-time correta:
+  para cada `(CNPJ_CIA, DT_REFER)`, usar a versão de maior `VERSAO` cuja `DT_RECEB <=
+  data_da_decisão` — nunca a versão mais recente publicada até hoje, cujo `DT_RECEB` pode
+  ser posterior à data da decisão sendo consultada.
+- Arquivos são CSV `;`-delimitado, **latin-1** (não UTF-8) — confirmado por erro de
+  decodificação direto. Escala: ~870 filings/ano no índice DFP, ~33k linhas de item por
+  arquivo de demonstração (`DRE_con`, por exemplo) — tamanho trivial para armazenamento
+  relacional local.
+- **Ainda não verificado nesta rodada**: até quando os arquivos anuais (`_AAAA.zip`)
+  existem retroativamente (só 2024 foi baixado e confirmado; o portal menciona "últimos 5
+  anos" para o dataset atual, mas isso pode ser sobre o que o dataset *descreve*, não
+  sobre até onde os arquivos por ano vão); formato do FRE (Formulário de Referência,
+  Seção 4.1); e o ToS explícito do portal (dados.gov.br costuma ser aberto, mas não foi
+  lido linha a linha).
+
+### 5.2 Contrato de consulta point-in-time (Fase 1, critério de aceite)
+
+```sql
+-- "o que a empresa X tinha publicado, como sabido na data D"
+SELECT li.*, f.dt_receb AS data_publicacao
+FROM cvm_financial_line_items li
+JOIN cvm_filings f USING (cnpj_cia, dt_refer, versao)
+WHERE li.cnpj_cia = :cnpj
+  AND li.ordem_exerc = 'ÚLTIMO'
+  AND f.dt_receb <= :data_da_decisao
+  AND f.versao = (
+      SELECT MAX(f2.versao) FROM cvm_filings f2
+      WHERE f2.cnpj_cia = f.cnpj_cia AND f2.dt_refer = f.dt_refer
+        AND f2.dt_receb <= :data_da_decisao
+  )
+ORDER BY li.dt_refer DESC;
+```
+
+Teste automatizado de aceite (critério já listado na Seção 15, agora com dado real para
+provar): usando o filing real do Banco do Brasil acima —
+consultar com `data_da_decisao = 2025-02-18` deve **não** retornar o exercício
+2024-12-31; consultar com `data_da_decisao = 2025-02-19` (ou depois) deve retornar. Sem
+dado sintético — o dado real já baixado prova o contrato.
+
 ## 6. Universo elegível
 
 Filtros aplicados em cada data de decisão, todos configuráveis e versionados:
