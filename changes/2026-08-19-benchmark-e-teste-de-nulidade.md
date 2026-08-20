@@ -482,6 +482,55 @@ fold (`min_trades` em `PromotionCriteria`) continua sendo a forma certa de lidar
 — como condição de validade do fold dentro do gate, declarada de antemão e reportada via
 `reason`, nunca como filtro silencioso dentro de uma média (ver oitava rodada acima).
 
+## Nona rodada: checagem pré-execução + pré-registro da leitura, antes de rodar de novo
+
+Duas coisas pedidas pelo usuário para fazer **antes** de rodar a revalidação, não depois:
+
+**Checagem: o gate de zero-perda reintroduz o viés que a oitava rodada vetou?** Não —
+verificado por leitura direta do código antes de qualquer execução.
+`folds.append(FoldSummary(...))` (`model/evaluation.py`, dentro do loop de
+`evaluate_config`) roda incondicionalmente logo após `evaluate_fold` retornar — `won`/
+`reason` (afetados pelo gate de zero-perda) só preenchem esses dois campos do
+`FoldSummary`; o fold entra na lista `folds` de qualquer forma, vencedor ou rejeitado.
+`ConfigEvaluation.total_pnl`/`aggregate_profit_factor` somam sobre `self.folds` inteiro,
+sem filtrar por `won`. E como o mesmo `n_splits`/`walk_forward_splits` roda idêntico nos
+dois braços (shuffle só troca `.label`, nunca o número de linhas nem os limites de
+split), a contagem de folds contribuindo pra soma é sempre a mesma nos dois lados. Sem
+viés reintroduzido.
+
+**Custo real da purga, medido antes de rodar** (janela fixa, `BTCUSDT` 1m,
+`horizon_bars=15`, `n_splits=5`):
+
+| fold | treino antes | treino depois | perdido | % |
+|---|---|---|---|---|
+| 0 | 25.795 | 25.780 | 15 | 0,0582% |
+| 1 | 33.533 | 33.518 | 15 | 0,0447% |
+| 2 | 41.271 | 41.256 | 15 | 0,0363% |
+| 3 | 49.009 | 48.994 | 15 | 0,0306% |
+| 4 | 56.747 | 56.732 | 15 | 0,0264% |
+
+Perda de 15 linhas por fold (o próprio `horizon_bars`, por construção — a purga sempre
+remove exatamente isso, nunca mais), entre 0,026% e 0,058% do treino de cada fold.
+Desprezível — pesa contra a hipótese de "sinal ficou fraco por falta de dado" caso o
+resultado mude após a purga.
+
+**Pré-registro da leitura, escrito antes de ver o número novo:**
+
+- O p-valor novo **não é comparável** com o 0,032 (sexta rodada, pré-purga) nem com o
+  0,323 (sétima rodada, com `mean_profit_factor` degenerado). Mudou a purga, mudou a
+  estatística (`total_pnl`), mudou o gate de zero-perda. É medição nova, começa do zero.
+- Se o sinal (p baixo) sumir após a purga, existem duas explicações concorrentes, não
+  distinguíveis só pelo p-valor: (1) o 0,032 original vinha de vazamento na fronteira dos
+  folds, e a purga o removeu; (2) a purga tirou dado de treino, o modelo ficou pior, e o
+  sinal real ficou fraco demais para detectar. A tabela de perda de linhas acima é o que
+  decide entre as duas — perda desprezível (como medido) favorece (1); se fosse grande,
+  favoreceria (2) e reforçaria a decisão pendente de mais histórico/menos folds.
+- Reportar a **distribuição inteira** de `total_pnl` das permutações, não só o p-valor —
+  é ilimitada (ao contrário de um PF entre 0 e inf) e pode ser dominada pelo fold maior;
+  a forma da distribuição importa, não só onde o real cai nela.
+- N=30 tem piso de p=0,032 (`(0+1)/(30+1)`) — se o resultado vier interessante, vale
+  re-rodar com ~200 permutações para ter resolução mais fina.
+
 ## Pendente
 
 - Re-rodar o teste de nulidade com a purga **e** as correções desta rodada aplicadas
