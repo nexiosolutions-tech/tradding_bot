@@ -319,11 +319,20 @@ a empresa real). Não existe resposta certa; existe resposta **declarada por fat
 spec e idêntica no backtest e em produção** — a regra escolhida não pode divergir entre
 os dois ambientes, senão o backtest valida um comportamento que produção não reproduz.
 
-**Percentil setorial exige população mínima.** Setor com 3 empresas não tem percentil com
-significado estatístico. Definir um mínimo de empresas por setor (ex. 6) abaixo do qual o
-setor é agregado a uma classificação mais ampla (ex. sub-setor → setor B3) para aquele
-fator, ou o fator simplesmente não pontua ali — mesma lógica da "ausência de fator
-aplicável" acima, mesmo tratamento no score composto.
+**Percentil setorial exige população mínima — e é este piso, não o total do universo, que
+morde.** Medido contra dado real (`changes/2026-08-19-modulo-acoes-b3-secao-8-e-piso-setorial.md`):
+no vale de 2016 (113 empresas passando o filtro de liquidez da Seção 6), agrupando por
+setor via `SETOR_ATIV` da CVM (classificação mais granular que a da B3, casada por nome —
+73% de taxa de casamento, sem `cnpj_ticker_map` ainda) e mesmo depois de colapsar
+holdings ("Emp. Adm. Part. - X") no setor-base, uma aproximação mais próxima da
+classificação B3: **22 de 27 setores ficaram abaixo do mínimo de 6** — só Bancos,
+Metalurgia, Energia Elétrica, Construção Civil e Comércio sobreviveram. O total de 113
+escondia essa fragmentação por completo. Definir um mínimo de empresas por setor (ex. 6)
+abaixo do qual o setor é agregado a uma classificação mais ampla (ex. sub-setor → setor
+B3) para aquele fator, ou o fator simplesmente não pontua ali — mesma lógica da "ausência
+de fator aplicável" acima, mesmo tratamento no score composto. **Consequência de desenho:
+o fallback de agregação não é caso de borda — em período de estresse, é o caminho comum**,
+e precisa ser testado como tal, não como exceção rara.
 
 **Score composto:** média ponderada dos percentis de fator, com pesos explícitos, versionados e justificados. Pesos não são otimizados livremente sobre o histórico — cada configuração testada é registrada no log de experimentos, porque **cada tentativa é insumo do DSR**, exatamente como no bot.
 
@@ -333,6 +342,31 @@ aplicável" acima, mesmo tratamento no score composto.
 
 > *"Dado que minha carteira atual é X e tenho R$ Y para aportar este mês, o que faz mais sentido comprar?"*
 
+**Regra de saída por perda de liquidez (o item mais importante desta seção — trate antes
+do resto).** O filtro de liquidez da Seção 6 é um segundo canal de survivorship,
+independente da tabela de deslistagem: o universo elegível encolhe **na crise**, porque o
+volume seca, não porque a empresa deslistou (medido: o vale de 113 empresas em 2016 é
+exatamente esse efeito, `changes/2026-08-19-modulo-acoes-b3-medicao-universo.md`). Se o
+backtest simplesmente para de considerar uma posição em carteira no mês em que ela cai
+abaixo do limiar de liquidez, a posição desaparece do sample **no momento em que daria o
+pior resultado** — viés otimista, silencioso, e não corrigido por nada que já está na
+spec (a tabela de survivorship cobre deslistagem, não perda de liquidez).
+
+Regra: quando um ativo em carteira sai do universo elegível, o motor **modela a saída**,
+nunca deixa a posição desaparecer —
+
+- **No backtest:** a posição é liquidada na simulação com slippage compatível com a
+  iliquidez que causou a exclusão (não o slippage "normal" por faixa de liquidez da Seção
+  9 — a saída acontece justamente quando a faixa piorou), no mês em que o ativo cruzou o
+  limiar. O retorno dessa liquidação entra no cálculo de performance normalmente.
+- **Em produção:** o motor de carteira sinaliza a perda de elegibilidade como um alerta
+  de saída ao lado das sugestões de aporte — não uma ordem automática (a Seção 2 já exclui
+  execução automática deste módulo), mas informação que hoje nenhuma tela do menu Ações
+  cobre.
+- **A regra é declarada e idêntica nos dois ambientes** — mesmo princípio já aplicado à
+  regra de dado faltante da Seção 7: o backtest só valida um comportamento que a produção
+  de fato reproduz se a lógica de saída for a mesma nos dois lugares.
+
 Entradas: carteira atual (ticker, quantidade, preço médio), valor do aporte, restrições do usuário.
 
 Saídas:
@@ -341,6 +375,7 @@ Saídas:
 - Exposição setorial atual vs. resultante de cada sugestão.
 - Concentração: peso do maior ativo, dos cinco maiores, índice de concentração.
 - Alerta quando o candidato melhor ranqueado aumenta concentração já elevada — evidência de tensão, não bloqueio.
+- **Alerta de perda de liquidez** para posições em carteira que caíram do universo elegível (ver regra de saída acima).
 - Sugestão de aporte que respeita tetos configuráveis por ativo e por setor.
 - **Nota fiscal-tributária informativa:** lembrete das regras vigentes de tributação de venda e de proventos, com a ressalva de que a regra deve ser confirmada com contador. O sistema não calcula imposto devido.
 
@@ -387,17 +422,30 @@ Um conjunto de fatores só vai a produção se, simultaneamente:
 2. Universo elegível com mínimo de **N = 100 empresas** em toda data de decisão, e margem
    exigida sobre o equal-weight escalada inversamente ao tamanho do corte transversal
    naquela data — quanto menor o universo elegível, maior a margem necessária para
-   passar. Este é o critério que opera o eixo de amostra transversal da Seção 13. N=100
-   não é placeholder: medido rodando o filtro de liquidez da Seção 6 (mediana de
-   `VOLTOT` ≥ R$500 mil/dia em janela de 63 pregões, uma classe por empresa) contra
-   COTAHIST real em 9 anos amostrados de 2010 a 2025 — o universo elegível oscilou entre
-   ~113 (mínimo observado, 2016, ano de recessão) e ~235 (2022); N=100 fica abaixo do pior
-   ano observado, com margem, sem exigir do dado mais do que ele historicamente entregou.
-   Ver `changes/2026-08-19-modulo-acoes-b3-medicao-universo.md` para a tabela completa.
+   passar. Este é o critério que opera o eixo de amostra transversal da Seção 13.
+   **N=100 é guarda contra degradação futura, não filtro calibrado para reprovar o
+   histórico atual** — o mínimo observado ao rodar o filtro de liquidez da Seção 6 contra
+   COTAHIST real (9 anos amostrados, 2010–2025) foi ~113 (2016, ano de recessão), acima de
+   100 em todos os anos testados; por construção este critério nunca reprova nada no
+   histórico medido até aqui, e isso é esperado, não um sinal de que o critério é
+   desnecessário — ele existe para pegar uma degradação que ainda não aconteceu. **O
+   critério que de fato morde é o 5** (piso de amostra mínima por segmento): a mesma
+   medição, desagregada por setor no vale de 2016, achou 22 de 27 setores abaixo do
+   mínimo de população da Seção 7 — o total de 113 escondia essa fragmentação inteira.
+   Ver `changes/2026-08-19-modulo-acoes-b3-medicao-universo.md` e
+   `changes/2026-08-19-modulo-acoes-b3-secao-8-e-piso-setorial.md`.
 3. Fica fora da nuvem nula com p < 0,05.
 4. Tem DSR positivo, contabilizando **todas** as configurações de peso testadas.
-5. Não concentra a vantagem inteira em um único setor ou em um único período — segmentação com piso de amostra mínima.
+5. Não concentra a vantagem inteira em um único setor ou em um único período — segmentação com piso de amostra mínima. Ver nota do critério 2: este é o critério com poder real de reprovação nesta frente, não o 2.
 6. Turnover compatível com o orçamento de custo definido.
+
+**Folds de períodos diferentes não são evidência equivalente.** A largura do corte
+transversal variou de ~113 a ~235 empresas ao longo do histórico medido (Seção 13) — um
+fold cujo período caiu num vale de liquidez tem menos poder estatístico que um fold num
+pico, mesmo com o mesmo número de folds contado no critério 1. O critério 1 conta folds
+igualmente; nenhum critério aqui pondera por largura transversal do período. Registrado
+como lacuna conhecida do gate, não resolvida nesta rodada — ponderar por N transversal do
+fold (em vez de contagem simples) é candidato a entrar quando o gate for implementado.
 
 Enquanto nenhum conjunto passar, o sistema entrega apenas a **camada de evidência** (dados consolidados, rastreáveis, decompostos) — que já é útil por si e não depende de nenhum modelo funcionar.
 
@@ -490,7 +538,13 @@ As fases 1–3 entregam valor mesmo que nenhum score jamais passe no gate. Isso 
 ## 13. Riscos e armadilhas conhecidas
 
 - **Vazamento por data de publicação** — mitigado pela seção 5; é o risco número um.
-- **Survivorship bias** — mitigado pelo universo com data de saída.
+- **Survivorship bias tem dois canais, não um.** O universo com data de saída (COTAHIST,
+  Seção 5.3) mitiga deslistagem. Mas o filtro de liquidez da Seção 6 é um **segundo canal
+  independente**: um ativo em carteira pode cair abaixo do limiar de liquidez sem
+  deslistar, e simplesmente desaparecer do sample no mês de pior resultado se o motor não
+  modelar a saída explicitamente. Mitigado pela regra de saída da Seção 8 (backtest
+  liquida a posição com slippage compatível com a iliquidez, nunca a remove do sample sem
+  registrar o resultado).
 - **Amostra pequena** — a B3 tem poucas centenas de empresas líquidas, contra milhares nos EUA. O corte transversal é estreito e a significância estatística é mais difícil. Consequência: exigir margem maior na comparação transversal (Seção 10, critério 2), não no número de folds temporais — os dois eixos de amostra são independentes e não devem ser confundidos. No eixo temporal, o histórico CVM confirmado (Seção 5.1: DFP desde 2010, ITR desde 2011, ~16 anos/~60 trimestres) sustenta o piso de 8 folds que o gate já assume — sem essa confirmação, o gate estaria pedindo um número de folds que o histórico talvez não entregasse.
 - **Universo elegível não cresce de forma monotônica — é cíclico, sensível a recessão.**
   Medição direta contra COTAHIST (9 anos amostrados, 2010–2025, ver Seção 10 critério 2 e
@@ -500,6 +554,17 @@ As fases 1–3 entregam valor mesmo que nenhum score jamais passe no gate. Isso 
   de 16 anos. Consequência: folds temporais em anos de recessão têm corte transversal mais
   estreito que a média, não só os anos mais antigos — o piso de N=100 empresas (critério 2)
   precisa sobreviver ao pior ano observado, não ao ano médio.
+- **O piso que morde é o setorial, não o total do universo.** Desagregando o vale de 2016
+  por setor (`changes/2026-08-19-modulo-acoes-b3-secao-8-e-piso-setorial.md`), 22 de 27
+  setores ficaram abaixo do mínimo de população da Seção 7 — o total de 113 escondia essa
+  fragmentação por completo. Consequência: o fallback de agregação setorial (Seção 7) não
+  é caso raro, é o caminho comum em estresse, e o gate (Seção 10, critério 5) é quem
+  precisa fazer esse trabalho — o critério 2 (N=100 total) nunca vai reprovar nada.
+- **Folds de períodos diferentes não têm o mesmo poder estatístico.** O corte transversal
+  variou de ~113 a ~235 ao longo do histórico medido — uma vitória num fold de vale de
+  liquidez (2016) e uma vitória num fold de pico (2022) não são evidências equivalentes,
+  mas o gate (Seção 10, critério 1) hoje conta os dois igualmente. Lacuna conhecida, não
+  resolvida nesta rodada.
 - **Concentração do mercado** — o índice brasileiro é pesado em commodities e bancos. Um fator pode parecer funcionar quando na verdade está apostando em um setor.
 - **Regimes longos** — fatores passam anos sem funcionar. Um resultado ruim em 12 meses não invalida, e um bom não valida.
 - **Mudança regulatória e tributária** — regras de tributação de proventos e ganho de capital mudam. O sistema informa, não calcula obrigação fiscal.
