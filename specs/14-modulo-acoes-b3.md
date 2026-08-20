@@ -270,6 +270,14 @@ data passada não mude porque a lógica do filtro mudou depois.
   10 assume para a margem de comparação, a geração do universo falha explicitamente
   naquela data em vez de produzir um ranking sobre amostra pequena demais silenciosamente.
 
+**Medido contra dado real, não assumido.** O filtro acima (mediana de `VOLTOT`, uma
+classe por empresa) foi rodado contra COTAHIST em 9 anos amostrados de 2010 a 2025 —
+resultado, número de N=100 do gate e a correção da hipótese de crescimento monotônico em
+`changes/2026-08-19-modulo-acoes-b3-medicao-universo.md` e Seção 10/13. A medição usou o
+prefixo de 4 letras do ticker como proxy de "empresa" (ex. `PETR` para `PETR3`/`PETR4`) —
+aproximação razoável para contar, mas não substitui o mapeamento `cnpj_ticker_map` já
+identificado como pendência da Fase 2 (Seção 5.1) para a implementação real do filtro.
+
 ## 7. Fatores
 
 Nenhum fator inventado. Cada um precisa de referência na literatura e de justificativa econômica documentada na spec — se não há explicação de *por que* deveria funcionar, é mineração de dado.
@@ -376,11 +384,16 @@ Um conjunto de fatores só vai a produção se, simultaneamente:
    mínimo de 8 folds, e nenhum fold com degradação de drawdown além do limite definido —
    espelha a checagem de degradação que `promotion.py` já faz no bot, como teste de
    robustez, não como régua de unanimidade.
-2. Universo elegível com mínimo de N empresas em toda data de decisão (N definido e
-   versionado em `changes/`), e margem exigida sobre o equal-weight escalada
-   inversamente ao tamanho do corte transversal naquela data — quanto menor o universo
-   elegível, maior a margem necessária para passar. Este é o critério que opera o eixo
-   de amostra transversal da Seção 13.
+2. Universo elegível com mínimo de **N = 100 empresas** em toda data de decisão, e margem
+   exigida sobre o equal-weight escalada inversamente ao tamanho do corte transversal
+   naquela data — quanto menor o universo elegível, maior a margem necessária para
+   passar. Este é o critério que opera o eixo de amostra transversal da Seção 13. N=100
+   não é placeholder: medido rodando o filtro de liquidez da Seção 6 (mediana de
+   `VOLTOT` ≥ R$500 mil/dia em janela de 63 pregões, uma classe por empresa) contra
+   COTAHIST real em 9 anos amostrados de 2010 a 2025 — o universo elegível oscilou entre
+   ~113 (mínimo observado, 2016, ano de recessão) e ~235 (2022); N=100 fica abaixo do pior
+   ano observado, com margem, sem exigir do dado mais do que ele historicamente entregou.
+   Ver `changes/2026-08-19-modulo-acoes-b3-medicao-universo.md` para a tabela completa.
 3. Fica fora da nuvem nula com p < 0,05.
 4. Tem DSR positivo, contabilizando **todas** as configurações de peso testadas.
 5. Não concentra a vantagem inteira em um único setor ou em um único período — segmentação com piso de amostra mínima.
@@ -479,6 +492,14 @@ As fases 1–3 entregam valor mesmo que nenhum score jamais passe no gate. Isso 
 - **Vazamento por data de publicação** — mitigado pela seção 5; é o risco número um.
 - **Survivorship bias** — mitigado pelo universo com data de saída.
 - **Amostra pequena** — a B3 tem poucas centenas de empresas líquidas, contra milhares nos EUA. O corte transversal é estreito e a significância estatística é mais difícil. Consequência: exigir margem maior na comparação transversal (Seção 10, critério 2), não no número de folds temporais — os dois eixos de amostra são independentes e não devem ser confundidos. No eixo temporal, o histórico CVM confirmado (Seção 5.1: DFP desde 2010, ITR desde 2011, ~16 anos/~60 trimestres) sustenta o piso de 8 folds que o gate já assume — sem essa confirmação, o gate estaria pedindo um número de folds que o histórico talvez não entregasse.
+- **Universo elegível não cresce de forma monotônica — é cíclico, sensível a recessão.**
+  Medição direta contra COTAHIST (9 anos amostrados, 2010–2025, ver Seção 10 critério 2 e
+  `changes/2026-08-19-modulo-acoes-b3-medicao-universo.md`) mostrou o universo elegível
+  oscilando entre ~113 (2016, ano da recessão) e ~235 (2022) — não a trajetória de
+  crescimento suave que se poderia supor a partir só do crescimento do mercado ao longo
+  de 16 anos. Consequência: folds temporais em anos de recessão têm corte transversal mais
+  estreito que a média, não só os anos mais antigos — o piso de N=100 empresas (critério 2)
+  precisa sobreviver ao pior ano observado, não ao ano médio.
 - **Concentração do mercado** — o índice brasileiro é pesado em commodities e bancos. Um fator pode parecer funcionar quando na verdade está apostando em um setor.
 - **Regimes longos** — fatores passam anos sem funcionar. Um resultado ruim em 12 meses não invalida, e um bom não valida.
 - **Mudança regulatória e tributária** — regras de tributação de proventos e ganho de capital mudam. O sistema informa, não calcula obrigação fiscal.
