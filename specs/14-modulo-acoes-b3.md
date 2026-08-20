@@ -287,33 +287,75 @@ conhecidos.
    amostra. Registrado como risco não coberto pelo teste de aceite, não como "testado e
    aprovado".
 
-**Achado adicional, não previsto: taxa real de `Codigo_Negociacao` vazio entre linhas de
-ação (ON/PN/Units) no FCA — 9,4% a 19,1% conforme o ano** (pior em 2018, melhor em 2024).
-Não é ruído de junção — o campo vem vazio na própria fonte. Kroton-2018 é um caso desse
-gap, não uma exceção.
+**Achado adicional, não previsto: taxa de `Codigo_Negociacao` vazio no FCA tem um corte
+temporal duro, não é ruído distribuído.** Medido contra o universo elegível real (filtro
+de liquidez da Seção 6, todos os anos com COTAHIST já baixado):
+
+| Ano | Universo elegível | Resolvido via FCA | % |
+|---|---|---|---|
+| 2010 | 159 | 0 | 0,0% |
+| 2012 | 154 | 0 | 0,0% |
+| 2014 | 142 | 0 | 0,0% |
+| 2016 | 129 | 0 | 0,0% |
+| 2018 | 151 | 117 | 77,5% |
+| 2020 | 198 | 182 | 91,9% |
+| 2022 | 230 | 212 | 92,2% |
+| 2024 | 204 | 194 | 95,1% |
+| 2025 | 198 | 186 | 93,9% |
+
+`Codigo_Negociacao` é **zero populado em todo filing FCA até 2017 inclusive** — nem a
+Petrobras (o nome mais líquido do mercado) tem o campo preenchido nesses anos, apesar do
+CNPJ e da linha de "Ações Ordinárias"/"Ações Preferenciais" existirem no arquivo. Salta
+para a faixa de 78–95% a partir de 2018 (CVM aparentemente passou a exigir/capturar o
+campo de forma consistente naquele ano) e sobe gradualmente daí. Isso muda o significado
+da lacuna: **não é 9-19% de casos difíceis espalhados pela amostra — são os primeiros 8
+anos inteiros do histórico (2010-2017, metade da janela CVM confirmada na Seção 5.1) em
+que a reconciliação por nome deixa de ser fallback e vira o caminho único.** Abaixo do
+limiar de 95% que tornaria o gap tolerável sem mais rigor (2010-2022 inteiro fica abaixo
+disso) — reconciliação por nome nesses anos precisa de auditoria manual, não só
+automática, exatamente como antecipado antes de medir.
 
 **Veredito, schema corrigido pelo que a fonte realmente permite** — não é uma fonte única
-derivável, é duas fontes combinadas, cada uma no que faz bem:
+derivável, é duas fontes combinadas, cada uma no que faz bem, com uma dependência entre
+elas que a primeira versão deste schema não deixava explícita:
 
-- **Identidade (quem é o CNPJ de um ticker)** vem do FCA — mas cobre ~81–91% das linhas de
-  ação por ano; o resto precisa do casamento por nome já usado na Seção 7 (mesma
-  ressalva de viés: falha mais em empresa pequena/renomeada/incorporada), com essas
-  entradas marcadas com `fonte='reconciliacao_nome'` em vez de `fonte='FCA'` —
-  reconciliação manual auditada para a fração que não casa automaticamente, exatamente
-  como antecipado antes de rodar o teste.
-- **Vigência (desde quando um código específico é válido) vem do COTAHIST**, não do FCA —
-  primeira e última data de pregão de cada ticker no arquivo anual são a fonte
-  autoritativa de `data_inicio_vigencia`/`data_fim_vigencia`, não os campos de data do
-  FCA (que medem admissão da classe de ação, não do código atual).
+- **Identidade (quem é o CNPJ de um ticker) vem do FCA quando disponível (a partir de
+  ~2018, ~78-95% de cobertura crescente) ou de reconciliação por nome quando não (todo o
+  período 2010-2017, e o resto da lacuna depois de 2018)** — mesma ressalva de viés já
+  registrada: falha mais em empresa pequena/renomeada/incorporada, exatamente o perfil que
+  mais precisa do mapa. Entradas marcadas `fonte='FCA'` ou `fonte='reconciliacao_nome'`.
+- **Vigência (datas de início/fim de um código específico) vem do COTAHIST — mas só como
+  fonte das *bordas*, nunca da *costura*.** Primeira e última data de pregão de um ticker
+  no arquivo anual dão o intervalo em que aquele código negociou; **quem garante que dois
+  intervalos consecutivos (ex. `KROT3` até 10/10/2019, `COGN3` a partir de 11/10/2019)
+  pertencem ao mesmo CNPJ é o FCA (ou a reconciliação por nome), nunca a COTAHIST
+  sozinha.** A COTAHIST não sabe se um código mudou de dono — dois códigos com pregão
+  contíguo parecem idênticos do ponto de vista dela, tenham trocado de dono ou não. Se o
+  desenho derivasse tudo da COTAHIST, reintroduziria exatamente o risco de reatribuição
+  que o teste 3 não conseguiu descartar (só não encontrou evidência, o que é diferente de
+  provar ausência).
+- **Tolerância de gap contra falso fim de vigência por iliquidez.** Papel pouco líquido
+  pode passar semanas sem pregão sem ter saído da empresa — se `data_fim_vigencia` fosse
+  "a última data de pregão" sem tolerância, uma pausa de negociação fecharia a vigência e
+  a retomada abriria uma nova, fragmentando a identidade de um ticker que nunca deixou de
+  pertencer ao mesmo CNPJ. Morde justamente os papéis pequenos, a mesma população do vale
+  setorial de 2016 (Seção 7). Regra: só fecha vigência após ausência de pregão por mais de
+  180 dias corridos (mesma ordem de grandeza da janela de liquidez de 63 pregões ≈ 3 meses
+  da Seção 6, com margem). **Fechamento de vigência "de verdade" é cruzado com um evento
+  de deslistagem/cancelamento da CVM quando possível** (`cad_cia_aberta.csv`, campos `SIT`,
+  `DT_INI_SIT`, `MOTIVO_CANCEL` — já usados na Seção 5.1) — silêncio de pregão sozinho é
+  evidência fraca de fim de vigência, cancelamento registrado na CVM é evidência forte.
 
 ```
 cnpj_ticker_map:
   cnpj                    -- FCA.CNPJ_Companhia (ou reconciliação por nome)
   ticker                  -- FCA.Codigo_Negociacao (ou reconciliação por nome)
   tipo                    -- ON/PN/UNIT, de FCA.Valor_Mobiliario/Sigla_Classe_Acao_Preferencial
-  data_inicio_vigencia    -- COTAHIST: primeira data de pregão deste ticker
-  data_fim_vigencia       -- COTAHIST: última data de pregão (NULL = ainda negocia)
-  fonte                   -- 'FCA' | 'reconciliacao_nome'
+  data_inicio_vigencia    -- COTAHIST: primeira data de pregão deste ticker (borda)
+  data_fim_vigencia       -- COTAHIST: última data de pregão + tolerância de 180 dias sem
+                              pregão, cruzado com cad_cia_aberta.SIT/DT_INI_SIT quando
+                              houver cancelamento CVM correspondente (NULL = ainda vigente)
+  fonte                   -- 'FCA' | 'reconciliacao_nome'  (identidade, não vigência)
   data_coleta
 ```
 
@@ -323,9 +365,12 @@ o CNPJ dono do ticker naquela data. Append-only: reatribuição ou troca de cód
 vigência antiga (`UPDATE` só em `data_fim_vigencia`, nunca substitui a linha) e abre uma
 nova.
 
-**Decisão de saída, declarada**: CNPJ sem nenhum ticker mapeado (FCA vazio e sem casamento
-por nome) não entra no universo elegível nem no scoring — mesmo tratamento já usado para
-histórico insuficiente (Seção 6) e dado faltante de fator (Seção 7): omitido e registrado,
+**Decisão de saída, declarada**: ticker que passa o filtro de liquidez da Seção 6 mas não
+resolve para nenhum CNPJ (nem via FCA nem via reconciliação por nome) **não entra no
+universo elegível daquela data** — e essa exclusão é **contada explicitamente** (quantos
+tickers, quais, em qual data), nunca subtraída em silêncio do denominador. Mesmo
+tratamento já usado para histórico insuficiente (Seção 6), dado faltante de fator (Seção
+7) e perda de liquidez (Seção 8, segundo canal de survivorship): omitido e registrado,
 nunca descartado sem rastro.
 
 ## 6. Universo elegível
