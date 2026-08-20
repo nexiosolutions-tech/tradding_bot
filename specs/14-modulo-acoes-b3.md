@@ -481,24 +481,35 @@ Um ano só é avaliável (conta fold no gate de promoção, Seção 10) se passa
 | 2014 | 83,1% | 100% (0/118) | Não (perto) | Sim | **Não** |
 | 2016 | 90,7% | 100% (0/117) | Sim | Sim | **Sim** |
 
-**2016 entra como ano avaliável, junto com 2018 em diante.** 2010, 2012 e 2014 ficam de
-fora — não por identidade ruim (a precisão foi 100% nos quatro anos), só por cobertura
-insuficiente. A régua de precisão não cedeu em nenhum caso; a de cobertura reprovou três
-anos e aprovou um, exatamente a "fronteira móvel por ano" prevista antes de medir, não um
-corte único.
+**Segunda rodada: 2015 e 2017 medidos com o mesmo par de métricas, pré-registro
+reafirmado sem alteração antes de rodar.**
 
-**Não medido nesta rodada, item aberto**: 2011, 2013, 2015 e 2017 (anos ímpares da
-amostra bienal) não têm COTAHIST baixado nem cobertura/precisão medida. A tendência
-observada (69,8% → 79,9% → 83,1% → 90,7%, crescente) sugere que a fronteira real de
-"cobertura ≥ 85%" provavelmente fica entre 2014 e 2016 — possivelmente incluindo 2015
-e/ou 2017 — mas isso não foi confirmado. Medir os anos ímpares é o próximo passo natural,
-não feito aqui por teto de esforço explícito.
+| Ano | Cobertura | Precisão | ≥85% cobertura? | ≥98% precisão? | Avaliável? |
+|---|---|---|---|---|---|
+| 2010 | 69,8% | 100% (0/111) | Não | Sim | **Não** |
+| 2012 | 79,9% | 100% (0/123) | Não | Sim | **Não** |
+| 2014 | 83,1% | 100% (0/118) | Não (perto) | Sim | **Não** |
+| 2015 | 85,5% | 100% (0/106) | Sim (caso-limite) | Sim | **Sim** |
+| 2016 | 90,7% | 100% (0/117) | Sim | Sim | **Sim** |
+| 2017 | 90,1% | 100% (0/137) | Sim | Sim | **Sim** |
 
-**Consequência para a tensão de amostra (Seção 10/13)**: mesmo sem os anos ímpares, 2016
-recupera um fold para a era avaliável que antes não contava. Se 2015 e/ou 2017 também
-passarem quando medidos, a amostra de folds temporais para o gate de promoção cresce mais
-ainda, relaxando a tensão contra o piso de 8 folds. Rigor de identidade e amostra de fold
-deixam de estar em conflito — desde que o piso de precisão continue dele mesmo, sem ceder.
+2015 caiu exatamente em cima da linha, como previsto antes de medir — e passou sem
+precisar de tolerância: 85,5% ≥ 85%, precisão 100% igual aos outros anos. A régua não foi
+testada para ceder (o cenário inverso — 84% de cobertura reprovando um ano com precisão
+perfeita — não ocorreu, mas o critério estava pronto para aplicá-lo se ocorresse).
+
+**Fronteira fecha em 2015–2026, contígua.** 2010, 2012 e 2014 ficam de fora só por
+cobertura (a precisão foi 100% em todos os seis anos medidos — nenhum ano tem problema de
+identidade errada, só de ausência). 2011 e 2013 não foram medidos — dado o padrão
+crescente e monotônico observado (69,8% → 79,9% → 83,1% → 85,5% → 90,1%/90,7%, com 2014
+abaixo do piso e 2015 acima), é improvável que mudem o formato da fronteira, mas não foram
+confirmados e não estão incluídos na era avaliável.
+
+**Consequência para a tensão de amostra (Seção 10/13): a era avaliável passa de ~8-9 anos
+(só 2018+) para ~11-12 anos (2015-2026)** — folds temporais recuperados sem baixar o
+padrão de precisão em nenhum momento. Ainda não é garantia de atingir o piso de 8 folds
+dependendo da duração exata de cada fold (Seção 5.1), mas a tensão registrada na Seção 10
+e 13 relaxa substancialmente.
 
 ## 6. Universo elegível
 
@@ -739,13 +750,14 @@ Um conjunto de fatores só vai a produção se, simultaneamente:
    (folds de períodos diferentes não têm o mesmo poder estatístico) com um critério
    verificável em vez de ponderação nova. **Folds contam apenas se caírem inteiramente num
    ano avaliável — precisão de identidade ≥98% e cobertura ≥85%, auditado por ano (Seção
-   5.6), não um corte único em 2018.** Medido até aqui: 2018 em diante avaliável (Seção
-   5.4), mais **2016** (Seção 5.6 — 100% de precisão auditada, 90,7% de cobertura). 2010,
-   2012 e 2014 ficam de fora por cobertura insuficiente (precisão foi 100% nos quatro
-   anos medidos — não é problema de identidade errada, é ausência contável). 2011, 2013,
-   2015 e 2017 ainda não foram medidos. Folds fora da era avaliável podem ser computados e
-   exibidos como contexto, nunca contados no numerador ou denominador dos 70%. **Isso pode
-   reduzir os folds contáveis abaixo do piso de 8** — tensão que relaxa conforme mais anos
+   5.6), não um corte único em 2018.** Medido até aqui: **2015 a 2026, contíguo**
+   (Seção 5.6 — 2015/2016/2017 auditados a 100% de precisão, cobertura 85,5%/90,7%/90,1%;
+   2018+ já confirmado na Seção 5.4). 2010, 2012 e 2014 ficam de fora por cobertura
+   insuficiente (precisão foi 100% nos seis anos medidos — não é problema de identidade
+   errada, é ausência contável). 2011 e 2013 não foram medidos, improvável que mudem a
+   fronteira dado o padrão monotônico observado. Folds fora da era avaliável podem ser
+   computados e exibidos como contexto, nunca contados no numerador ou denominador dos
+   70%. **Isso pode reduzir os folds contáveis abaixo do piso de 8** — tensão que relaxa conforme mais anos
    (2015, 2017 candidatos) forem medidos e passarem nos dois pisos (ver Seção 5.6 e Seção 13).
 2. Universo elegível com mínimo de **N = 100 empresas** em toda data de decisão, e margem
    exigida sobre o equal-weight escalada inversamente ao tamanho do corte transversal
@@ -870,16 +882,18 @@ As fases 1–3 entregam valor mesmo que nenhum score jamais passe no gate. Isso 
   por nome (Seção 5.5) tinha precisão real ≈65% (27% sem match, incluindo os nomes mais
   líquidos do universo — Itaú Unibanco, Banco do Brasil, a própria bolsa — e 53% dos
   matches de baixa confiança errados). Propagação por CNPJ da era confiável (Seção 5.6)
-  resolveu esse risco — **100% de precisão auditada em 469 identificações, 2010 a 2016,
-  zero erros** — restando só um problema de cobertura, não de identidade errada.
-  Aplicando os dois pisos declarados (precisão ≥98%, cobertura ≥85%, por ano): **2016
-  entra como ano avaliável**, junto com 2018 em diante; 2010, 2012 e 2014 ficam de fora só
-  por cobertura (69,8%/79,9%/83,1%, todos com 100% de precisão); 2011/2013/2015/2017 não
-  medidos ainda. Isso ainda reduz a amostra de folds temporais do gate de promoção (Seção
-  10, critério 1) em relação aos ~16 anos originais — mas menos do que um corte fixo em
-  2018 sozinho, e a tensão relaxa mais se 2015/2017 também passarem quando medidos.
-  Dimensionamento final (folds mais curtos vs. esperar mais anos avaliáveis) segue
-  pendente para o desenho detalhado da Fase 3.
+  resolveu esse risco — **100% de precisão auditada em 712 identificações, 2010 a 2017,
+  zero erros em qualquer ano** — restando só um problema de cobertura, não de identidade
+  errada. Aplicando os dois pisos declarados (precisão ≥98%, cobertura ≥85%, por ano):
+  **a era avaliável fecha em 2015–2026, contígua** — 2015 (85,5%, caso-limite avaliado
+  pela regra sem ceder), 2016 (90,7%) e 2017 (90,1%) entram, junto com 2018 em diante;
+  2010, 2012 e 2014 ficam de fora só por cobertura (69,8%/79,9%/83,1%, todos com 100% de
+  precisão). 2011 e 2013 não medidos, improvável que mudem a fronteira dado o padrão
+  monotônico. A amostra de folds temporais do gate de promoção (Seção 10, critério 1)
+  passa de ~8-9 anos (só 2018+) para ~11-12 anos — recuperada sem ceder o piso de
+  precisão em nenhum momento, inclusive no caso-limite de 2015. Dimensionamento final
+  (se ~11-12 anos bastam para o piso de 8 folds, dependendo da duração exata de cada
+  fold) segue pendente para o desenho detalhado da Fase 3.
 - **Universo elegível não cresce de forma monotônica — é cíclico, sensível a recessão.**
   Medição direta contra COTAHIST (9 anos amostrados, 2010–2025, ver Seção 10 critério 2 e
   `changes/2026-08-19-modulo-acoes-b3-medicao-universo.md`) mostrou o universo elegível
