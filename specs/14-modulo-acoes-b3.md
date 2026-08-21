@@ -619,6 +619,68 @@ padrão de precisão em nenhum momento. Ainda não é garantia de atingir o piso
 dependendo da duração exata de cada fold (Seção 5.1), mas a tensão registrada na Seção 10
 e 13 relaxa substancialmente.
 
+### 5.7 `cnpj_ticker_map` como módulo de código (2026-08-20)
+
+As Seções 5.4-5.6 acima descreviam o desenho e a medição. Implementado como código
+(`backend/src/tradingbot/acoes/cnpj_ticker_map.py`) pela mesma razão que valeu para
+COTAHIST/preço: a Seção 6 (universo elegível) é o primeiro ponto onde as três fundações
+point-in-time (identidade, publicação, preço) se encontram, e assumir que o
+`cnpj_ticker_map` "existe" sem código sob os pés repete o erro que a lição do FATCOT já
+tinha ensinado a evitar.
+
+**Resolução de identidade em três níveis de confiança**, cada um só resolve se o
+resultado for inequívoco (mais de um CNPJ candidato = não resolvido, nunca "escolhe o
+primeiro"):
+
+1. `fca` — `Codigo_Negociacao` direto de qualquer ano FCA 2018-2025.
+2. `raiz_propagacao` — raiz de 4 letras do ticker (Seção 5.6).
+3. `reconciliacao_nome` — nome histórico (`Nome_Empresarial`) contra o `nomres` truncado
+   da COTAHIST, exigindo que todo token significativo da consulta seja um token exato do
+   nome histórico (sem crédito parcial em token genérico).
+
+**Vigência sempre derivada das bordas da COTAHIST** (primeira/última data de pregão do
+ticker), nunca do FCA — cujas datas medem admissão da classe de ação, não vigência do
+código (achado da Seção 5.6, caso `COGN3`). Tolerância de 180 dias sem pregão antes de
+fechar vigência (`data_fim_vigencia = None` = ainda vigente), para não fragmentar
+identidade de papel ilíquido por uma pausa comum de negociação.
+
+**Auditoria de precisão sobrevivendo à passagem para código — achado novo desta
+rodada.** Rodando `resolve_identity` contra os universos elegíveis EXATOS dos seis anos
+já auditados (712 identificações, Seção 5.6), dos 50 matches de `reconciliacao_nome`
+encontrados, **4 eram falsos positivos** por colisão de token de nome com empresa não
+relacionada — confirmados um a um contra o registro CVM completo (`cad_cia_aberta.csv`):
+
+| Ticker | Token da consulta | CNPJ errado que resolvia | Empresa real (CNPJ diferente) |
+|---|---|---|---|
+| `BRTO3` (Brasil Telecom) | `TELEC` | Telebrás | Ambas abreviam "telecomunicações" da mesma forma |
+| `CCIM3` (CC Desenv. Imob.) | `IMOB` | BRPR56 Securitizadora | Abreviação genérica de "imobiliário" |
+| `CZRS4` (Banco Cruzeiro do Sul, falido) | `CRUZEIRO` | Cruzeiro do Sul Educacional | CNPJs diferentes confirmados no registro CVM |
+| `RAIA3` (Droga Raia, pré-fusão 2010) | `RAIA` | CNPJ pós-fusão da RaiaDrogasil | Nome consolidado pós-evento vazando para ticker pré-evento |
+
+Os quatro tokens entraram em `_GENERIC_NAME_TOKENS` — não por serem gramaticalmente
+genéricos como `PART`/`HOLDING` (a causa raiz original do erro de 53%, Seção 5.5), mas
+por colisão empírica comprovada, mesmo tratamento preventivo. Todos os outros 13 casos de
+token único (`KROTON`, `CONTAX`, `TEGMA`, `PLASCAR`, `DROGASIL`, `MARISA`, `PACTUAL`,
+`PROPERT`, `TIETE`, `TREVISA`, `SMILES`, `AMBEV`, `PPLA`) foram confirmados corretos
+individualmente contra o registro CVM ou fonte FCA — incluindo `PPLA11`, que parecia
+suspeito por não aparecer em `cad_cia_aberta.csv` (é `PPLA Participations Ltd`, emissor
+estrangeiro de BDR, fora do escopo desse registro doméstico, não um erro).
+
+**Teste de regressão**: os matches `fca`+`raiz_propagacao` dos seis anos auditados
+(712 originalmente) rodam a 713 no código — a diferença é `DMMO3`/2017, que agora resolve
+via `raiz_propagacao` (raiz `DMMO`, CNPJ único da FCA) e não resolvia na auditoria
+original por essa não ter carregado exatamente o mesmo conjunto de anos FCA. Não é
+regressão (o caminho `raiz_propagacao` carrega sua própria garantia de 100% de precisão,
+Seção 5.6) — é uma identificação nova, isolada e explicada no teste, não escondida no
+total.
+
+**Teste de aceite fechado**: `KROT3` (vigente até 2019-10-10, resolvido por
+`reconciliacao_nome` contra o nome histórico `KROTON`) e `COGN3` (vigente a partir de
+2019-10-11) resolvem para o mesmo CNPJ (`02.800.026/0001-40`, Cogna Educação) via
+`get_cnpj_as_of`, sem sobreposição e sem vão na fronteira — mesma convenção de fronteira
+inclusiva-inclusiva de `get_filing_as_of` (Seção 5.2). Ticker sem CNPJ resolvido
+(`UnresolvedTicker`) confirmado contável, não silencioso.
+
 ## 6. Universo elegível
 
 Filtros aplicados em cada data de decisão, todos configuráveis, versionados e
@@ -966,7 +1028,7 @@ seletor de moedas — mas sem implementar nada além da B3 agora.
 
 | Fase | Entrega | Critério de conclusão |
 |---|---|---|
-| 1 | Ingestão CVM + cotações, com camada point-in-time | consulta histórica em qualquer data retorna só o que era público naquela data, com teste automatizado provando — **índice mestre CVM + consulta as-of + preço bruto COTAHIST normalizado + eventos societários tipo/data implementados e testados contra dado real, 2026-08-20** (`backend/src/tradingbot/acoes/`); ingestão de itens financeiros genéricos (todos os tipos de demonstração, todas as empresas) e magnitude de eventos societários (bloqueia só momentum, Seção 5.3.1) seguem pendentes |
+| 1 | Ingestão CVM + cotações, com camada point-in-time | consulta histórica em qualquer data retorna só o que era público naquela data, com teste automatizado provando — **índice mestre CVM + consulta as-of + preço bruto COTAHIST normalizado + eventos societários tipo/data + `cnpj_ticker_map` (identidade CNPJ↔ticker com vigência e consulta as-of) implementados e testados contra dado real, 2026-08-20** (`backend/src/tradingbot/acoes/`); ingestão de itens financeiros genéricos (todos os tipos de demonstração, todas as empresas) e magnitude de eventos societários (bloqueia só momentum, Seção 5.3.1) seguem pendentes — as três fundações point-in-time (identidade, publicação, preço) têm chão de código sob os pés para a Seção 6 (Fase 2) |
 | 2 | Universo elegível + eventos corporativos + survivorship | universo reconstruído corretamente para datas passadas |
 | 3 | Cálculo de fatores + percentis setoriais | ficha do ativo funcional; camada de evidência já entrega valor |
 | 4 | Backtest + benchmarks + teste de nulidade | régua honesta operando |

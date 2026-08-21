@@ -143,3 +143,59 @@ class CorporateEventFlag(Base):
     ex_suffix: Mapped[str] = mapped_column(String)  # "EB" | "EJ" | "ED" | "EG" | "EX" | ...
     is_level_break: Mapped[bool] = mapped_column()
     source: Mapped[str] = mapped_column(String, default="ESPECI_TRANSITION")
+
+
+class CnpjTickerMap(Base):
+    """Terceira consulta as-of da Fase 1 — spec 14, Seção 5.4/5.5/5.6. Costura
+    identidade (CNPJ, de onde vem o fundamento) com ticker (de onde vem o preço).
+
+    **Identidade e vigência vêm de fontes diferentes, nunca confundir**: `cnpj` vem do
+    FCA (`fonte='fca'`), da propagação por raiz de ticker (`fonte='raiz_propagacao'`) ou
+    de reconciliação por nome histórico (`fonte='reconciliacao_nome'` — a fonte com menor
+    confiança, usada só quando as outras duas não resolvem). `data_inicio_vigencia`/
+    `data_fim_vigencia` vêm sempre da COTAHIST (primeira/última data de pregão do ticker,
+    com tolerância de 180 dias sem pregão antes de fechar vigência) — nunca do FCA, cujos
+    campos de data medem admissão da classe de ação, não vigência do código (achado da
+    Seção 5.6, caso real: `Data_Inicio_Negociacao` do FCA para `COGN3` ficou em 2012 nos
+    dois filings, quando o código real só passou a ser `COGN3` em 2019-10-11 — confirmado
+    contra `COTAHIST_A2019.ZIP`). A COTAHIST sozinha nunca decide identidade — só fornece
+    as bordas de um intervalo já rotulado por uma das três fontes acima.
+
+    Append-only: `UniqueConstraint(ticker, data_inicio_vigencia)` — uma reatribuição ou
+    troca de código fecha a vigência antiga (`data_fim_vigencia`) e abre uma linha nova,
+    nunca sobrescreve.
+    """
+
+    __tablename__ = "cnpj_ticker_map"
+    __table_args__ = (
+        UniqueConstraint(
+            "ticker", "data_inicio_vigencia", name="uq_cnpj_ticker_map_identity"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    cnpj: Mapped[str] = mapped_column(String, index=True)
+    ticker: Mapped[str] = mapped_column(String, index=True)
+    data_inicio_vigencia: Mapped[Date] = mapped_column(Date, index=True)
+    data_fim_vigencia: Mapped[Date | None] = mapped_column(Date, nullable=True, index=True)
+    fonte: Mapped[str] = mapped_column(String)  # "fca" | "raiz_propagacao" | "reconciliacao_nome"
+    data_coleta: Mapped[Date] = mapped_column(Date)
+
+
+class UnresolvedTicker(Base):
+    """Ticker que passou o filtro de liquidez (Seção 6) mas não resolveu para nenhum
+    CNPJ — nem FCA, nem propagação por raiz, nem reconciliação por nome. Exclusão
+    **contável**, nunca silenciosa (Seção 5.6/8: mesmo tratamento já usado para histórico
+    insuficiente, dado faltante de fator e perda de liquidez) — é o que impede o
+    survivorship de voltar pela porta dos fundos quando a identidade falha em vez da
+    liquidez."""
+
+    __tablename__ = "unresolved_tickers"
+    __table_args__ = (
+        UniqueConstraint("ticker", "checked_year", name="uq_unresolved_tickers_identity"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ticker: Mapped[str] = mapped_column(String, index=True)
+    checked_year: Mapped[int] = mapped_column(Integer, index=True)
+    reason: Mapped[str] = mapped_column(String)
