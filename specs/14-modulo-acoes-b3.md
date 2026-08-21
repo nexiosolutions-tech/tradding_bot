@@ -763,18 +763,60 @@ setores da taxonomia CVM abaixo de população 6 (vs. 22/27 original, cobertura 
 detalhe completo, incluindo a verificação de integridade da ingestão (contagem de linhas
 byte a byte contra o arquivo bruto antes de confiar no resultado — pedido explícito do
 usuário depois de dois processos em background serem interrompidos na fronteira de
-sessão), em `changes/2026-08-20-modulo-acoes-b3-secao-6-universo-elegivel.md`. Taxonomia
-CVM granular, não a B3 de nível 1 de produção — de-para segue pendente (Seção 13).
+sessão), em `changes/2026-08-20-modulo-acoes-b3-secao-6-universo-elegivel.md`.
+
+### 6.2 De-para para a taxonomia setorial real da B3 (`b3_setor.py`, 2026-08-21)
+
+A medição acima ficou na taxonomia CVM granular (`SETOR_ATIV`), não a classificação B3 de
+nível 1 que a produção assume — fechado nesta rodada. Fonte verificada contra chamada
+real, não presumida do nome da página: o endpoint documentado
+(`b3.com.br/.../classificacao-setorial/`) não expõe nenhum arquivo de download, os dados
+vêm de uma API JS por trás dela (`sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/
+CompanyCall/GetDetail`), achada inspecionando o bundle carregado pela página — não
+documentada publicamente. `industryClassification` é `"Setor / Subsetor / Segmento"`,
+três níveis separados por `" / "`, confirmado com Petrobras (`"Petróleo. Gás e
+Biocombustíveis / Petróleo. Gás e Biocombustíveis / Exploração. Refino e Distribuição"` —
+setor e subsetor idênticos quando só há um subsetor dentro do setor) e Itaú
+(`"Financeiro / Intermediários Financeiros / Bancos"`). Chave é o **CNPJ direto** no
+payload — junção sem precisar de `cnpj_ticker_map` para este caso específico.
+
+**Cobertura só de empresa listada hoje, confirmado empiricamente, não presumido**:
+`codeCVM` antigo do Itaú (registro pré-reestruturação, cancelado) e Banco Cruzeiro do Sul
+(falido, deslistado) devolvem payload vazio contra o `codeCVM` atual do Itaú, que devolve
+classificação completa. Sobre as 115 empresas do universo real de 2016: 85% (98/115) têm
+cobertura hoje — os 17 sem cobertura majoritariamente por fusão/incorporação/falência/
+troca de ticker na década seguinte, não bug de junção (detalhe em
+`changes/2026-08-21-modulo-acoes-b3-b3-setor-de-para.md`).
+
+**Resultado, mesma data (2016-02-29), taxonomia de produção**: 11 setores de nível 1 (perto
+do "~10" assumido), **5 de 11 (45%) abaixo de população 6** — o cenário "meio a meio"
+pré-especificado antes de medir, nem resolvido nem inalterado, confirmando a decisão de
+demeaning setorial por média em vez de percentil-dentro-do-setor com o número real de
+produção, não só a taxonomia CVM proxy.
+
+**Decisão declarada sobre o eixo temporal**: classificação B3 tratada como atributo
+quase-estático, atribuído pela versão mais recente disponível — reclassificação setorial
+histórica é vazamento de baixo impacto, aceito e registrado, não escondido; empresa sem
+cobertura (deslistada antes de hoje) cai em exclusão contável ou fallback para `SETOR_ATIV`
+da CVM, nunca em adivinhação.
+
+`backend/src/tradingbot/acoes/b3_setor.py`: `parse_industry_classification` (parsing puro,
+testado com string real), `fetch_classification` (chamada de rede, thin wrapper, não
+exercitada pela suíte), `ingest_classification_snapshot` (persistência append-only por
+`(cnpj, data_coleta)`, testada com quatro respostas reais capturadas — duas com
+classificação, duas genuinamente vazias). Nova tabela `B3IndustryClassification`.
 
 **Pendências desta rodada**: recuperação judicial sem fonte real (lista vazia, gate 4
 nunca dispara); histórico mínimo é proxy de contagem de pregões, não amarrado a nenhum
 fator específico da Seção 7 (ainda não implementada); série completa 2015-2026 de N e
 distribuição setorial (só 2016-02-29 medido, por custo de ingestão — ver nota de
-performance abaixo); ingestão via savepoint-por-linha é lenta (~300-400s por ano completo
-de COTAHIST) — funcionalmente correta e verificada (contagem de linhas bate exatamente
-contra o esperado nos dois anos ingeridos), mas o padrão certo para produção é lote com um
-commit por arquivo, não savepoint por linha; registrado como pendência de performance, não
-resolvido nesta rodada para não misturar mudança de mecanismo de escrita com validação de
+performance abaixo); `b3_setor` não ligado a `build_universo_elegivel` — persiste separado,
+Seção 7 decide como consumir quando for implementada; ingestão via savepoint-por-linha é
+lenta (~300-400s por ano completo de COTAHIST) — funcionalmente correta e verificada
+(contagem de linhas bate exatamente contra o esperado nos dois anos ingeridos), mas o
+padrão certo para produção é lote com um commit por arquivo, não savepoint por linha;
+registrado como pendência de performance, não resolvido nesta rodada para não misturar
+mudança de mecanismo de escrita com validação de
 resultado na mesma passada.
 
 ## 7. Fatores
@@ -1089,7 +1131,7 @@ seletor de moedas — mas sem implementar nada além da B3 agora.
 | Fase | Entrega | Critério de conclusão |
 |---|---|---|
 | 1 | Ingestão CVM + cotações, com camada point-in-time | consulta histórica em qualquer data retorna só o que era público naquela data, com teste automatizado provando — **índice mestre CVM + consulta as-of + preço bruto COTAHIST normalizado + eventos societários tipo/data + `cnpj_ticker_map` (identidade CNPJ↔ticker com vigência e consulta as-of) implementados e testados contra dado real, 2026-08-20** (`backend/src/tradingbot/acoes/`); ingestão de itens financeiros genéricos (todos os tipos de demonstração, todas as empresas) e magnitude de eventos societários (bloqueia só momentum, Seção 5.3.1) seguem pendentes — as três fundações point-in-time (identidade, publicação, preço) têm chão de código sob os pés para a Seção 6 (Fase 2) |
-| 2 | Universo elegível + eventos corporativos + survivorship | universo reconstruído corretamente para datas passadas — **`universo_elegivel` (junção real de identidade+preço+publicação, precedência de exclusão explícita, materialização append-only) implementado e testado contra dado real, 2026-08-20** (`backend/src/tradingbot/acoes/universo_elegivel.py`); teste de aceite materializando 2016-07-15 (`ITUB4`/`BBAS3`/`PETR4` com CNPJ, classe e filing corretos) e medição definitiva do piso setorial de 2016-02-29 (N=115, 36/40 setores CVM abaixo de população 6) fecham a primeira junção das três camadas — série completa 2015-2026 e de-para para taxonomia B3 de nível 1 seguem pendentes |
+| 2 | Universo elegível + eventos corporativos + survivorship | universo reconstruído corretamente para datas passadas — **`universo_elegivel` (junção real de identidade+preço+publicação, precedência de exclusão explícita, materialização append-only) implementado e testado contra dado real, 2026-08-20** (`backend/src/tradingbot/acoes/universo_elegivel.py`); teste de aceite materializando 2016-07-15 (`ITUB4`/`BBAS3`/`PETR4` com CNPJ, classe e filing corretos); **de-para para a taxonomia setorial real da B3 (`b3_setor.py`) fechado 2026-08-21** — 11 setores de nível 1, 5/11 abaixo de população 6 (85% de cobertura sobre o universo de 2016), confirmando com o número de produção a decisão de demeaning por média — série completa 2015-2026 segue pendente |
 | 3 | Cálculo de fatores + percentis setoriais | ficha do ativo funcional; camada de evidência já entrega valor |
 | 4 | Backtest + benchmarks + teste de nulidade | régua honesta operando |
 | 5 | Score composto + gate de promoção | primeiro conjunto submetido ao gate (pode reprovar) |
@@ -1133,28 +1175,49 @@ As fases 1–3 entregam valor mesmo que nenhum score jamais passe no gate. Isso 
   estreito que a média, não só os anos mais antigos — o piso de N=100 empresas (critério 2)
   precisa sobreviver ao pior ano observado, não ao ano médio.
 - **Setor pequeno é comum na B3, não exceção — por isso a normalização da Seção 7 não usa
-  percentil-dentro-do-setor.** Medição original (script solto, casamento por nome,
-  `changes/2026-08-19-modulo-acoes-b3-secao-8-e-piso-setorial.md`): 22 de 27 setores da
-  taxonomia CVM abaixo de população 6, sobre 83 das 113 empresas do vale de 2016 (30 sem
-  setor atribuído, casamento por nome só cobriu 73%). **Remedido com código real sobre as
-  três camadas point-in-time** (`build_universo_elegivel`, `2026-08-20`,
-  `changes/2026-08-20-modulo-acoes-b3-secao-6-universo-elegivel.md`), mesma data
-  (2016-02-29), ingestão de 2015+2016 com contagem de linhas verificada byte a byte contra
-  o arquivo bruto antes de confiar no resultado: **N=115** (vs. 113 original — delta
-  pequeno e na direção esperada, identidade por `cnpj_ticker_map` resolveu casos que o
-  proxy por raiz de ticker da medição original não cobria) e **36 de 40 setores da mesma
-  taxonomia CVM abaixo de população 6**, agora sobre cobertura de 100% (115/115 com setor
-  via join direto por CNPJ, não casamento por nome) — o achado original não estava errado,
-  estava medido com cobertura parcial; a versão completa é mais severa, não menos. **A
-  taxonomia continua sendo a CVM (`SETOR_ATIV`, granular), não a classificação B3 de nível
-  1 que a produção vai usar** — nenhuma tabela de-para foi construída ainda, então o número
-  exato de setores pequenos na taxonomia de produção segue em aberto; a direção (setor
-  pequeno é a regra, não a exceção) está confirmada duas vezes, por dois métodos
-  independentes, o suficiente para manter a decisão de arquitetura: a Seção 7 normaliza por
-  percentil-no-universo com demeaning setorial, que só precisa da média do setor (razoável
-  com poucos nomes) em vez da distribuição inteira — degrada suavemente em vez de quebrar.
-  O gate (Seção 10, critério 5) continua sendo quem verifica que a vantagem não vem de um
-  único setor — o critério 2 (N=100 total) nunca vai reprovar nada por construção.
+  percentil-dentro-do-setor.** Três medições independentes da mesma data (2016-02-29),
+  cada uma corrigindo a cobertura da anterior, convergem na mesma direção:
+
+  | Medição | Taxonomia | Cobertura | N | Setores medidos | Abaixo de população 6 |
+  |---|---|---|---|---|---|
+  | Original (script solto, casamento por nome) | CVM (`SETOR_ATIV`, granular) | 73% (83/113) | 113 | 27 | 22 (81%) |
+  | Código real, join por CNPJ (`build_universo_elegivel`) | CVM (`SETOR_ATIV`, granular) | 100% (115/115) | 115 | 40 | 36 (90%) |
+  | **De-para B3 real (`b3_setor.py`, 2026-08-21)** | **B3 nível 1 (produção)** | **85% (98/115)** | 115 | **11** | **5 (45%)** |
+
+  A terceira medição é a que importa para produção: fonte verificada contra chamada real
+  (não presumida do nome da página — a página HTML de "Classificação setorial" não expõe
+  nenhum arquivo, os dados vêm de uma API JS por trás dela,
+  `sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall/GetDetail`, achada
+  inspecionando o bundle carregado, não documentada publicamente). Schema confirmado por
+  chamada real: `industryClassification` é `"Setor / Subsetor / Segmento"`, três níveis
+  separados por `" / "` — 11 setores de nível 1 no universo de 2016, perto do "~10"
+  assumido. Chave é o **CNPJ direto** no payload, não precisa de `cnpj_ticker_map` para
+  esta junção específica.
+
+  **Cobertura confirmada empiricamente, não presumida — a fonte só cobre empresa listada
+  hoje.** Testado direto: `codeCVM` antigo do Itaú (registro pré-reestruturação, cancelado)
+  e o Banco Cruzeiro do Sul (falido, deslistado) devolvem payload vazio; o `codeCVM` atual
+  do Itaú devolve classificação completa. Sobre as 115 empresas reais do universo de 2016:
+  85% (98/115) têm classificação hoje — os 17 sem cobertura são majoritariamente fusão,
+  incorporação, falência ou troca de ticker na década seguinte (`LAME4`→Americanas
+  pós-recuperação judicial, `FIBR3`→incorporada pela Suzano, `SMLE3`→incorporada pela GOL,
+  `QGEP3`→renomeada Enauta, entre outras) — não um bug de junção. **Decisão declarada**
+  (não escondida): classificação B3 tratada como atributo quase-estático, atribuído pela
+  versão mais recente disponível — reclassificação setorial histórica (setor de hoje
+  aplicado a uma decisão de 2016) é vazamento de baixo impacto, aceito; empresa sem
+  cobertura cai em exclusão contável ou fallback para `SETOR_ATIV` da CVM, nunca em
+  adivinhação.
+
+  **5 de 11 setores (45%) abaixo de população 6 na taxonomia de produção — exatamente o
+  cenário "meio a meio" pré-especificado antes de medir**, nem o caso "resolvido"
+  (2-3/10, que abriria espaço para percentil-dentro-do-setor) nem o caso "sem mudança"
+  (quase todos pequenos). Confirma, com o número real de produção, a decisão de
+  arquitetura já tomada: a Seção 7 normaliza por percentil-no-universo com demeaning
+  setorial, que só precisa da média do setor (razoável com poucos nomes, inclusive nos
+  6 setores acima do piso) em vez da distribuição inteira — degrada suavemente nos
+  setores pequenos em vez de quebrar. O gate (Seção 10, critério 5) continua sendo quem
+  verifica que a vantagem não vem de um único setor — o critério 2 (N=100 total) nunca vai
+  reprovar nada por construção.
 - **Folds de períodos diferentes não têm o mesmo poder estatístico.** O corte transversal
   variou de ~113 a ~235 ao longo do histórico medido — uma vitória num fold de vale de
   liquidez (2016) e uma vitória num fold de pico (2022) não são evidências equivalentes.

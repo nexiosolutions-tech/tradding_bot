@@ -1,0 +1,36 @@
+{
+  "PETR4": {
+    "codeCVM": "9512",
+    "raw": {
+      "issuingCompany": "PETR",
+      "companyName": "PETROLEO BRASILEIRO S.A. PETROBRAS",
+      "tradingName": "PETROBRAS",
+      "cnpj": "33000167000101",
+      "industryClassification": "Petróleo. Gás e Biocombustíveis / Petróleo. Gás e Biocombustíveis / Exploração. Refino e Distribuição",
+      "status": "A",
+      "code": "PETR4",
+      "codeCVM": "9512"
+    }
+  },
+  "ITUB4": {
+    "codeCVM": "19348",
+    "raw": {
+      "issuingCompany": "ITUB",
+      "companyName": "ITAU UNIBANCO HOLDING S.A.",
+      "tradingName": "ITAUUNIBANCO",
+      "cnpj": "60872504000123",
+      "industryClassification": "Financeiro / Intermediários Financeiros / Bancos",
+      "status": "A",
+      "code": "ITUB4",
+      "codeCVM": "19348"
+    }
+  },
+  "ITAU_ANTIGO_CANCELADO": {
+    "codeCVM": "1279",
+    "raw": {}
+  },
+  "BANCO_CRUZEIRO_SUL_CANCELADO": {
+    "codeCVM": "20753",
+    "raw": {}
+  }
+}

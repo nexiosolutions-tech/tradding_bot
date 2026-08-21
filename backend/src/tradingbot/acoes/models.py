@@ -248,3 +248,35 @@ class UniversoExclusao(Base):
     data_decisao: Mapped[Date] = mapped_column(Date, index=True)
     ticker: Mapped[str] = mapped_column(String, index=True)
     motivo: Mapped[str] = mapped_column(String)
+
+
+class B3IndustryClassification(Base):
+    """Classificação setorial real da B3 (`setor econômico / subsetor / segmento`,
+    endpoint `GetDetail` do `listedCompaniesProxy`) — spec 14, Seção 6.1/13. Chave de
+    junção é o **CNPJ diretamente** (vem no próprio payload), não precisa passar por
+    `cnpj_ticker_map`.
+
+    **Atributo quase-estático, não point-in-time real**: a fonte só cobre empresas
+    listadas *hoje* — confirmado empiricamente consultando o `codeCVM` antigo do Itaú
+    (pré-reestruturação, cancelado) e o Banco Cruzeiro do Sul (falido, deslistado), ambos
+    devolvendo payload vazio, contra o `codeCVM` atual do Itaú, que devolve classificação
+    completa. Empresa deslistada antes da data de coleta não tem classificação B3
+    disponível por este caminho — cai em exclusão contável ou fallback para `SETOR_ATIV`
+    da CVM (Seção 6), nunca em adivinhação. Reclassificação setorial ao longo do tempo
+    (setor de hoje aplicado a uma decisão histórica) é vazamento de baixo impacto,
+    aceito e declarado, não escondido — mesmo tratamento dado pelo `data_coleta` já usado
+    em `CnpjTickerMap`.
+    """
+
+    __tablename__ = "b3_industry_classification"
+    __table_args__ = (
+        UniqueConstraint("cnpj", "data_coleta", name="uq_b3_industry_classification_identity"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    cnpj: Mapped[str] = mapped_column(String, index=True)
+    code_cvm: Mapped[str] = mapped_column(String)
+    setor: Mapped[str] = mapped_column(String)
+    subsetor: Mapped[str] = mapped_column(String)
+    segmento: Mapped[str] = mapped_column(String)
+    data_coleta: Mapped[Date] = mapped_column(Date, index=True)
