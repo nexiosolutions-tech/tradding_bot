@@ -267,24 +267,50 @@ uma nova sequência de sufixo é o ex-date real; os pregões seguintes com o mes
 são um novo evento.
 
 **Desdobramento não tem marcador — a COTAHIST dá "aconteceu e quando" para a maioria dos
-tipos, nunca "quanto", e nem sempre o "quando".** Achado real: `EG` (ex-grupamento,
-reverse split) existe na tabela oficial; um "ex-desdobramento" (forward split) equivalente
-**não existe em nenhuma linha da tabela**, documentada ou observada no dado real de 2024.
-Um sufixo `EX` aparece no dado real (BBAS3, 2024-02-22) sem estar documentado em lugar
-nenhum do layout oficial — capturado como evento, tipo registrado explicitamente como
-"não documentado" em vez de adivinhado.
+tipos, nunca "quanto".** Achado real: `EG` (ex-grupamento, reverse split) existe na
+tabela oficial; um "ex-desdobramento" (forward split) equivalente **não existe em
+nenhuma linha da tabela**, documentada ou observada no dado real. Um sufixo `EX` aparece
+no dado real sem estar documentado em lugar nenhum do layout oficial — capturado como
+evento, tipo registrado explicitamente como "não documentado" (Seção 5.3.2 mede o que
+esse rótulo esconde).
 
-**Só bonificação e grupamento quebram o nível da série — confirmado, não assumido.**
+**Bonificação e grupamento quebram o nível da série sempre — confirmado, não assumido.**
 Testado o efeito de preço de cada sufixo real do BBAS3 em 2024: `EB` (bonificação) caiu
 **-50,57%** no dia — mecânico, mudança de quantidade de ações sem contrapartida em caixa,
-descontinuidade real na série bruta. `EJ` (+0,65%), `EDJ` (-3,53%) e `EX` (-2,25%) ficaram
-na faixa de movimento de mercado normal — distribuição em caixa é um preço real, não uma
-quebra artificial (o comprador de fato recebe menos valor futuro, o preço reflete isso
+descontinuidade real na série bruta. `EJ` (+0,65%) e `EDJ` (-3,53%) ficaram na faixa de
+movimento de mercado normal — distribuição em caixa é um preço real, não uma quebra
+artificial (o comprador de fato recebe menos valor futuro, o preço reflete isso
 genuinamente; diferente de bonificação/grupamento, que só dilui/concentra sem mudar valor
-econômico). **Regra: `is_level_break=True` só para sufixos com `B` (bonificação) ou `G`
-(grupamento)**; desdobramento fica com schema pronto para receber o tipo (`ex_suffix`
+econômico). **Regra: `is_level_break=True` sempre para sufixos com `B` (bonificação) ou
+`G` (grupamento)**; desdobramento fica com schema pronto para receber o tipo (`ex_suffix`
 aceita qualquer string), mas nenhuma linha é gerada — sem detector confiável, melhor
 vazio e registrado do que adivinhado.
+
+#### 5.3.2 `EX`: população inteira medida, não amostra (2026-08-20)
+
+`EX` ficou como item aberto na Seção 5.3.1 — um único caso (BBAS3, -2,25%) não bastava
+para decidir. Medidas **todas as 73 ocorrências reais de `EX` no universo de ações,
+2010–2026** (não uma amostra): baixados os 17 anos de COTAHIST desse intervalo, cada
+transição ON→...EX... da população inteira contabilizada.
+
+**Resultado**: min=-80,96%, max=+4,86%, mediana=-2,37%. Distribuição nem uniformemente
+ruído nem limpamente bimodal — 67,1% (49/73) dentro de ±5%, consistente com
+ruído/distribuição em caixa normal; 20 casos entre 5% e 33%, zona ambígua; **4 casos
+(5,5%) cruzam -33%**: `CEBR6`/`CEBR3`/`CEBR5` (as três classes da mesma empresa, mesmo
+dia, 2021-10-18, -80,96%/-80,35%/-80,12%) e `VIVT3` (2025-04-15, -50,08%). Há um vão real
+na cauda entre -22,54% (`CGAS5`, 2019-12-10) e -50,08% (`VIVT3`) — nenhum caso no meio.
+
+**Decisão, o tratamento conservador para rótulo ambíguo**: `is_level_break` de `EX` **não
+é fixo pelo sufixo** (diferente de `B`/`G`, estrutural) — é decidido **caso a caso pelo
+retorno do próprio dia**, limiar `|retorno| ≥ 0,33`, escolhido dentro do vão real da
+distribuição (entre -22,54% e -50,08%), não por conveniência. Implementado em
+`_is_level_break(ex_suffix, pct_change)`; testado contra os dois extremos reais — BBAS3
+2024-02-22 (-2,25%, não é quebra) e VIVT3 2025-04-15 (-50,08%, é quebra).
+
+O que fica registrado, não presumido: `EX` continua com tipo não documentado no layout
+oficial (não sabemos *o quê* ele marca), mas o comportamento de preço em N=73 casos reais
+está medido, e a regra de classificação decorre da medição, não de uma suposição sobre o
+rótulo.
 
 **Regra de consistência (price-only vs. total-return): nunca misturar.** Ter provento dos
 sobreviventes e não dos deslistados faria o retorno total ser medido de formas diferentes

@@ -117,10 +117,17 @@ class CorporateEventFlag(Base):
     descontinuidade artificial (confirmado: `EJ` e `EDJ` reais do `BBAS3` em 2024
     mostraram variação de +0,65% e -3,53%, dentro do normal, nunca perto de -50%).
 
-    `EX` aparece no dado real sem estar documentado na tabela oficial de `ESPECI` — capturado
-    como evento com `is_level_break=False` (variação real medida de -2,25% no único caso
-    verificado, não uma quebra de nível), mas o tipo exato fica como item aberto,
-    registrado explicitamente como não documentado em vez de adivinhado.
+    `EX` aparece no dado real sem estar documentado na tabela oficial de `ESPECI` — o tipo
+    exato fica como item aberto, registrado como não documentado em vez de adivinhado.
+    **Medidas as 73 ocorrências reais em 2010-2026, população inteira, não amostra**:
+    67,1% dentro de ±5% (ruído/distribuição em caixa normal), mas 4 casos (`CEBR6`/
+    `CEBR3`/`CEBR5`, mesmo dia, e `VIVT3`) caem a -80,96%/-80,35%/-80,12%/-50,08% — quebra
+    de nível real. Distribuição nem uniformemente ruído nem limpamente bimodal (20 casos
+    intermediários entre 5% e 33%), mas com um vão real na cauda entre -22,54% e -50,08%
+    sem nenhum caso no meio. Tratamento conservador adotado: `is_level_break` de `EX` é
+    decidido **caso a caso** pelo retorno do próprio dia (`|retorno| >=
+    EX_LEVEL_BREAK_THRESHOLD = 0,33`, dentro do vão real, não escolhido por conveniência),
+    não um valor fixo para o sufixo — diferente de `EB`/`EG`, que são estruturais.
     """
 
     __tablename__ = "corporate_event_flags"

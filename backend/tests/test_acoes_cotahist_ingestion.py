@@ -1,11 +1,14 @@
 """Fase 1 do módulo de Ações — ingestão de preço bruto COTAHIST e eventos societários
-tipo+data (spec 14, Seção 4.2/5.3). Fixture em `tests/fixtures/cotahist/` é um extrato
-real (8 registros reais, mesmo cabeçalho/rodapé do formato oficial) do
-`COTAHIST_A2024.ZIP` baixado de `bvmf.bmfbovespa.com.br` em 2026-08-20 — cobre a
-transição real EB (bonificação) e EDJ (dividendo+juros) do BBAS3. A verificação de
-FATCOT usa valores reais de `FNAM11`/`SMLL11` medidos diretamente contra o arquivo
-original (não incluídos na fixture — são fundos, fora do universo de ações — mas os
-números vêm de linhas reais inspecionadas, não inventados).
+tipo+data (spec 14, Seção 4.2/5.3). Fixtures em `tests/fixtures/cotahist/` são extratos
+reais (mesmo cabeçalho/rodapé do formato oficial) do `COTAHIST_A2024.ZIP`/
+`COTAHIST_A2025.ZIP` baixados de `bvmf.bmfbovespa.com.br` — cobrem as transições reais
+EB (bonificação), EDJ (dividendo+juros) e duas ocorrências reais de EX (BBAS3,
+2024-02-22, -2,25% — dentro do ruído; VIVT3, 2025-04-15, -50,08% — quebra de nível real,
+parte da amostra de 73 ocorrências medidas na população inteira 2010-2026 que decidiu o
+limiar caso a caso). A verificação de FATCOT usa valores reais de `FNAM11`/`SMLL11`
+medidos diretamente contra o arquivo original (não incluídos na fixture — são fundos,
+fora do universo de ações — mas os números vêm de linhas reais inspecionadas, não
+inventados).
 """
 
 import pytest
@@ -21,7 +24,9 @@ from tradingbot.acoes.price_sanity import find_implausible_returns
 from pathlib import Path
 from sqlalchemy import select
 
-FIXTURE = Path(__file__).parent / "fixtures" / "cotahist" / "COTAHIST_A2024_real_extract.ZIP"
+FIXTURES_DIR = Path(__file__).parent / "fixtures" / "cotahist"
+FIXTURE = FIXTURES_DIR / "COTAHIST_A2024_real_extract.ZIP"
+FIXTURE_2025 = FIXTURES_DIR / "COTAHIST_A2025_real_extract.ZIP"
 
 
 def _session(tmp_path):
@@ -46,21 +51,22 @@ def test_normalize_price_matches_real_traded_average():
 def test_parse_equity_only_excludes_funds():
     """O filtro `equity_only` (default) exclui FNAM11/SMLL11 do universo — são fundos
     (CODBDI != 02 ou ESPECI fora de ON/PN/PR/OR/UNT), corretamente fora do escopo da
-    Seção 6. Confirma que o parser da fixture só devolve as 6 linhas de BBAS3."""
+    Seção 6. Confirma que o parser da fixture só devolve as 8 linhas de BBAS3 (EB, EDJ e
+    o par EX leve de 2024-02-21/22)."""
     rows = list(parse_cotahist_year(FIXTURE))
-    assert len(rows) == 6
+    assert len(rows) == 8
     assert all(r.ticker == "BBAS3" for r in rows)
 
 
 def test_ingest_prices_is_append_only(tmp_path):
     session = _session(tmp_path)
     first = ingest_cotahist_year(session, FIXTURE)
-    assert first.prices_inserted == 6
+    assert first.prices_inserted == 8
     assert first.prices_rejected_duplicate == 0
 
     second = ingest_cotahist_year(session, FIXTURE)
     assert second.prices_inserted == 0
-    assert second.prices_rejected_duplicate == 6
+    assert second.prices_rejected_duplicate == 8
 
 
 def test_prices_normalized_fatcot_1_equal_to_raw(tmp_path):
@@ -86,13 +92,14 @@ def test_corporate_event_detected_only_on_first_day_of_transition(tmp_path):
     session = _session(tmp_path)
     stats = ingest_cotahist_year(session, FIXTURE)
 
-    # duas transições reais na fixture: ON->EB em 04-16, ON->EDJ em 06-12
-    assert stats.events_inserted == 2
+    # tres transicoes reais na fixture: ON->EX em 02-22, ON->EB em 04-16, ON->EDJ em 06-12
+    assert stats.events_inserted == 3
 
     events = session.execute(
         select(CorporateEventFlag).order_by(CorporateEventFlag.event_date)
     ).scalars().all()
     assert [(e.ex_suffix, str(e.event_date)) for e in events] == [
+        ("EX", "2024-02-22"),
         ("EB", "2024-04-16"),
         ("EDJ", "2024-06-12"),
     ]
@@ -142,3 +149,35 @@ def test_implausible_return_flagged_only_when_unexplained(tmp_path):
     assert anomalies[0].ticker == "BBAS3"
     assert str(anomalies[0].date_to) == "2024-04-16"
     assert anomalies[0].pct_change < -0.5
+
+
+def test_ex_leve_nao_e_quebra_de_nivel(tmp_path):
+    """EX é rótulo ambíguo (medidas as 73 ocorrências reais em 2010-2026, população
+    inteira): 67,1% dentro de ±5%, mas 4 casos caem a -50%/-80% — decidido caso a caso
+    pelo retorno do próprio dia, limiar 33% (dentro do vão real da distribuição, entre
+    -22,54% e -50,08%). BBAS3 em 2024-02-22 é um EX real de -2,25% — fica abaixo do
+    limiar, não é quebra de nível."""
+    session = _session(tmp_path)
+    ingest_cotahist_year(session, FIXTURE)
+
+    ex = session.execute(
+        select(CorporateEventFlag).where(
+            CorporateEventFlag.ticker == "BBAS3", CorporateEventFlag.ex_suffix == "EX"
+        )
+    ).scalar_one()
+    assert ex.is_level_break is False
+
+
+def test_ex_extremo_e_quebra_de_nivel(tmp_path):
+    """VIVT3 em 2025-04-15 é um EX real de -50,08% — um dos 4 casos (de 73 medidos em
+    2010-2026) que cruzam o limiar de 33%, tratado como quebra de nível pela regra caso a
+    caso. Fixture separada (ano diferente) porque a COTAHIST é um arquivo por ano."""
+    session = _session(tmp_path)
+    ingest_cotahist_year(session, FIXTURE_2025)
+
+    ex = session.execute(
+        select(CorporateEventFlag).where(
+            CorporateEventFlag.ticker == "VIVT3", CorporateEventFlag.ex_suffix == "EX"
+        )
+    ).scalar_one()
+    assert ex.is_level_break is True

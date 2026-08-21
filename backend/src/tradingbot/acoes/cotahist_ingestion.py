@@ -32,6 +32,14 @@ EQUITY_ESPECI_EXACT = {"UNT"}
 # ficaram entre -3,53% e +0,65%, nunca perto de uma quebra de nível).
 _LEVEL_BREAK_MARKERS = ("B", "G")  # bonificação, grupamento
 
+# "EX" não está em nenhuma linha da tabela oficial de ESPECI — rótulo ambíguo, confirmado
+# medindo as 73 ocorrências reais em 2010-2026: 67,1% dentro de ±5% (ruído/distribuição em
+# caixa normal), mas 4 (CEBR6/CEBR3/CEBR5 no mesmo dia, VIVT3) caem a -80,96%/-80,35%/
+# -80,12%/-50,08% — quebra de nível real. Vão real na distribuição entre -22,54% e
+# -50,08%, sem nenhum caso no meio — o limiar abaixo fica dentro desse vão, não escolhido
+# por conveniência.
+EX_LEVEL_BREAK_THRESHOLD = 0.33
+
 
 @dataclass(frozen=True)
 class RawPriceRow:
@@ -65,8 +73,18 @@ def _parse_ex_suffix(especi_raw: str) -> str | None:
     return None
 
 
-def _is_level_break(ex_suffix: str) -> bool:
-    return any(marker in ex_suffix for marker in _LEVEL_BREAK_MARKERS)
+def _is_level_break(ex_suffix: str, pct_change: float | None) -> bool:
+    """`B`/`G` (bonificação/grupamento) são quebra de nível sempre — estrutural, decidido
+    só pelo sufixo. `EX` é ambíguo — decidido caso a caso pelo retorno do próprio dia
+    (`EX_LEVEL_BREAK_THRESHOLD`), porque o rótulo sozinho cobre tanto ruído/distribuição
+    em caixa (67% dos casos medidos) quanto quebra de nível real (o resto). Demais
+    sufixos (ED/EJ/ER/ES e combinações sem B/G) seguem `False` — distribuição em caixa
+    real, não quebra artificial (medido para EJ/EDJ contra BBAS3/2024, não para todos)."""
+    if any(marker in ex_suffix for marker in _LEVEL_BREAK_MARKERS):
+        return True
+    if ex_suffix == "EX":
+        return pct_change is not None and abs(pct_change) >= EX_LEVEL_BREAK_THRESHOLD
+    return False
 
 
 def normalize_price(raw_price_cents: int, fatcot: int) -> float:
@@ -127,6 +145,7 @@ def ingest_cotahist_year(session: Session, zip_path: Path) -> CotahistIngestStat
     """
     stats = CotahistIngestStats()
     last_suffix_by_ticker: dict[str, str | None] = {}
+    last_close_by_ticker: dict[str, float] = {}
 
     for raw in parse_cotahist_year(zip_path):
         price = CotahistPrice(
@@ -151,13 +170,20 @@ def ingest_cotahist_year(session: Session, zip_path: Path) -> CotahistIngestStat
             stats.prices_inserted += 1
 
         previous_suffix = last_suffix_by_ticker.get(raw.ticker)
+        previous_close = last_close_by_ticker.get(raw.ticker)
         last_suffix_by_ticker[raw.ticker] = raw.ex_suffix
+        last_close_by_ticker[raw.ticker] = raw.close
         if raw.ex_suffix is not None and raw.ex_suffix != previous_suffix:
+            pct_change = (
+                (raw.close - previous_close) / previous_close
+                if previous_close
+                else None
+            )
             event = CorporateEventFlag(
                 ticker=raw.ticker,
                 event_date=raw.trade_date,
                 ex_suffix=raw.ex_suffix,
-                is_level_break=_is_level_break(raw.ex_suffix),
+                is_level_break=_is_level_break(raw.ex_suffix, pct_change),
                 source="ESPECI_TRANSITION",
             )
             try:
