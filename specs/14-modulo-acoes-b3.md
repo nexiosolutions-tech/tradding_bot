@@ -233,6 +233,59 @@ survivorship resolvido). `brapi.dev` fica como conveniência para proventos rece
 tickers líquidos, não como fonte primária. `yfinance` descartado — o COTAHIST cobre tudo
 que ele cobriria, com menos risco de ToS e sem o problema de série pré-ajustada.
 
+#### 5.3.1 `FATCOT`, `ESPECI` e o que a COTAHIST realmente dá para separar bruto de evento (2026-08-20)
+
+Antes de desenhar o schema de preço, verificado contra o layout oficial (revisão 02,
+`SeriesHistoricas_Layout.pdf`) e contra dado real — não assumido.
+
+**`FATCOT` não é fator de ajuste corporativo — é escala de cotação.** Posições 211-217,
+valores documentados `1` (cotação unitária) e `1000` (cotação por lote de mil ações,
+prática histórica para papéis de baixo valor). Confirmado empiricamente, não só pelo
+texto do layout: `VOLTOT/QUATOT` (preço médio real do dia, invariante a qualquer
+convenção de escala) bate com `PREULT/FATCOT` tanto para `FATCOT=1000` (`FNAM11`,
+2024-01-02) quanto para `FATCOT=10` — **um valor que existe no dado real mas não está
+documentado em lugar nenhum do layout oficial** (só `1` e `1000` são descritos;
+`SMLL11`, 2024-10-16, tem `FATCOT=10` e o preço médio bate exato com `PREULT/10`). A
+armadilha real aqui: se o mesmo ticker mudar de `FATCOT` ao longo do tempo, a série bruta
+salta de escala sem nenhum evento societário ter ocorrido — um filtro de liquidez ou um
+cálculo de retorno engoliria isso como um movimento de preço absurdo. **Regra: todo preço
+é normalizado por `FATCOT` na ingestão** (`normalize_price = raw/100/FATCOT`), antes de
+qualquer outra coisa tocar o preço. Nenhum ticker do universo de ações propriamente dito
+(`ESPECI` começando com ON/PN/PR/OR ou `UNT`) teve `FATCOT≠1` em 2024 — a armadilha existe
+majoritariamente em fundos/ETFs (`FNAM11`, `SMLL11`), fora do escopo da Seção 6, mas a
+normalização é aplicada sempre, por desenho, não condicionalmente.
+
+**O sinal de evento societário está em `ESPECI`, não em `FATCOT`.** O campo (posições
+40-49) tokeniza por espaço: classe (`ON`/`PN`/...), sufixo "ex-" opcional (sempre começa
+com `E`: `ED`=ex-dividendo, `EJ`=ex-juros, `EB`=ex-bonificação, `ER`=ex-rendimento,
+`ES`=ex-subscrição, `EG`=ex-grupamento, e combinações), tag de segmento opcional
+(`NM`=Novo Mercado etc. — confirmado por inspeção de byte a byte: `'ON  EB  NM'` →
+`['ON','EB','NM']`, não por posição fixa, porque a tag de segmento desloca onde o sufixo
+aparece). **O sufixo persiste por vários pregões, não é um marcador de um dia só**
+(confirmado: `ON EJ` do BBAS3 durou ~8 pregões seguidos em 2024) — a **primeira** data de
+uma nova sequência de sufixo é o ex-date real; os pregões seguintes com o mesmo sufixo não
+são um novo evento.
+
+**Desdobramento não tem marcador — a COTAHIST dá "aconteceu e quando" para a maioria dos
+tipos, nunca "quanto", e nem sempre o "quando".** Achado real: `EG` (ex-grupamento,
+reverse split) existe na tabela oficial; um "ex-desdobramento" (forward split) equivalente
+**não existe em nenhuma linha da tabela**, documentada ou observada no dado real de 2024.
+Um sufixo `EX` aparece no dado real (BBAS3, 2024-02-22) sem estar documentado em lugar
+nenhum do layout oficial — capturado como evento, tipo registrado explicitamente como
+"não documentado" em vez de adivinhado.
+
+**Só bonificação e grupamento quebram o nível da série — confirmado, não assumido.**
+Testado o efeito de preço de cada sufixo real do BBAS3 em 2024: `EB` (bonificação) caiu
+**-50,57%** no dia — mecânico, mudança de quantidade de ações sem contrapartida em caixa,
+descontinuidade real na série bruta. `EJ` (+0,65%), `EDJ` (-3,53%) e `EX` (-2,25%) ficaram
+na faixa de movimento de mercado normal — distribuição em caixa é um preço real, não uma
+quebra artificial (o comprador de fato recebe menos valor futuro, o preço reflete isso
+genuinamente; diferente de bonificação/grupamento, que só dilui/concentra sem mudar valor
+econômico). **Regra: `is_level_break=True` só para sufixos com `B` (bonificação) ou `G`
+(grupamento)**; desdobramento fica com schema pronto para receber o tipo (`ex_suffix`
+aceita qualquer string), mas nenhuma linha é gerada — sem detector confiável, melhor
+vazio e registrado do que adivinhado.
+
 **Regra de consistência (price-only vs. total-return): nunca misturar.** Ter provento dos
 sobreviventes e não dos deslistados faria o retorno total ser medido de formas diferentes
 em dois subgrupos do mesmo universo — erro concentrado exatamente na população que existe
@@ -240,10 +293,39 @@ para corrigir survivorship, pior que um erro uniforme. Enquanto não houver font
 proventos com a mesma cobertura do COTAHIST (todo ticker que já negociou, não só líquidos
 atuais), o backtest roda **price-only para todo o universo**. Total-return só é permitido
 quando houver provento coberto para 100% dos nomes elegíveis naquela data de decisão —
-nunca parcial. Consequência direta para a Seção 7: a família de dividendos fica **marcada
-como não utilizável em fator validado por backtest** até a fonte existir; pode aparecer na
-camada de evidência do mês corrente (dado do `brapi` para nomes líquidos), mas não entra
-no score.
+nunca parcial.
+
+**Escopo do gap de magnitude, refinado — não é "ajuste pendente" genérico.** Dois tamanhos
+diferentes, dependendo do fator (Seção 7):
+
+- **Fatores de nível de fundamento sobre preço** (P/L, P/VP, dividend yield calculado do
+  fundamento) comparam o preço de hoje com o fundamento de hoje — não atravessam a série,
+  sobrevivem sem ajuste. **Não bloqueados.**
+- **Fatores de série de retorno** (momentum 6-12 meses) atravessam eventos e exigem ajuste
+  correto, logo exigem magnitude que a COTAHIST não tem. **Momentum especificamente fica
+  bloqueado** até a fonte de magnitude existir — não "ajuste genérico pendente", um fator
+  nomeado.
+- A regra price-only acima e o universo elegível (Seção 6, que usa `VOLTOT`, imune a
+  ajuste) **não são bloqueados** por nenhum dos dois achados desta seção.
+
+**Fontes de magnitude candidatas, não verificadas — registradas para quando a Fase 3
+(fatores) chegar em momentum**: B3 publica proventos/eventos corporativos com magnitude em
+arquivos próprios (não os mesmos da COTAHIST); a CVM tem dado de proventos em alguns
+formulários; desdobramento às vezes aparece no FRE (Formulário de Referência, Seção 4.1,
+ainda não verificado). Nenhuma testada. **Deliberadamente não cogitada**: casar contra
+fonte de terceiro não-oficial só para preencher magnitude — reintroduziria no eixo de
+preço a mesma fragilidade que a propagação por CNPJ eliminou do eixo de identidade
+(Seção 5.6) ao abandonar o casamento por nome.
+
+**Implementado** (`backend/src/tradingbot/acoes/cotahist_ingestion.py`,
+`price_sanity.py`): `CotahistPrice` (preço bruto normalizado por `FATCOT`) e
+`CorporateEventFlag` (tipo + data + `is_level_break`, detectado por transição de
+`ESPECI`) — 7 testes contra um extrato real do `COTAHIST_A2024.ZIP` (transições reais
+`EB`/`EDJ` do BBAS3), incluindo o teste de sanidade de retorno implausível sugerido no
+lugar do teste de desdobramento (que não é certificável só com a COTAHIST): limiar de
+plausibilidade configurável (padrão 60%), retorno diário que excede o limiar sem
+`CorporateEventFlag(is_level_break=True)` correspondente é sinalizado explicitamente em
+vez de seguir como dado de mercado normal.
 
 ### 5.4 `cnpj_ticker_map` — fonte real encontrada, schema derivado do que ela realmente oferece (2026-08-19)
 
@@ -858,7 +940,7 @@ seletor de moedas — mas sem implementar nada além da B3 agora.
 
 | Fase | Entrega | Critério de conclusão |
 |---|---|---|
-| 1 | Ingestão CVM + cotações, com camada point-in-time | consulta histórica em qualquer data retorna só o que era público naquela data, com teste automatizado provando — **índice mestre + consulta as-of implementados e testados contra dado real, 2026-08-20** (`backend/src/tradingbot/acoes/`); ingestão de cotação (COTAHIST) e de itens financeiros genéricos (todos os tipos de demonstração, todas as empresas) seguem pendentes |
+| 1 | Ingestão CVM + cotações, com camada point-in-time | consulta histórica em qualquer data retorna só o que era público naquela data, com teste automatizado provando — **índice mestre CVM + consulta as-of + preço bruto COTAHIST normalizado + eventos societários tipo/data implementados e testados contra dado real, 2026-08-20** (`backend/src/tradingbot/acoes/`); ingestão de itens financeiros genéricos (todos os tipos de demonstração, todas as empresas) e magnitude de eventos societários (bloqueia só momentum, Seção 5.3.1) seguem pendentes |
 | 2 | Universo elegível + eventos corporativos + survivorship | universo reconstruído corretamente para datas passadas |
 | 3 | Cálculo de fatores + percentis setoriais | ficha do ativo funcional; camada de evidência já entrega valor |
 | 4 | Backtest + benchmarks + teste de nulidade | régua honesta operando |

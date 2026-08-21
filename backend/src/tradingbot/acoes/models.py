@@ -67,3 +67,72 @@ class CvmFinancialLineItem(Base):
     cd_conta: Mapped[str] = mapped_column(String, index=True)
     ds_conta: Mapped[str] = mapped_column(String)
     vl_conta: Mapped[float] = mapped_column(Float)
+
+
+class CotahistPrice(Base):
+    """Um pregão de um ticker — spec 14, Seção 5.3. Preço **bruto normalizado por
+    `FATCOT`**, nunca ajustado por evento corporativo (isso é responsabilidade da consulta
+    point-in-time, cruzando com `CorporateEventFlag`, nunca da ingestão).
+
+    Normalização por `FATCOT` verificada contra o próprio dado, não assumida do layout:
+    `VOLTOT/QUATOT` (preço médio real, invariante a qualquer convenção de escala) bateu
+    com `PREULT/FATCOT` tanto para `FATCOT=1000` (`FNAM11`, 2024-01-02: 0,34/1000 ≈
+    0,00034 ≈ VOLTOT/QUATOT) quanto para `FATCOT=10` (`SMLL11`, 2024-10-16: 2033/10 = 203,3
+    = VOLTOT/QUATOT exato) — um valor de `FATCOT` não documentado no layout oficial (só
+    `1` e `1000` são descritos), mas presente no dado real e seguindo a mesma regra.
+    """
+
+    __tablename__ = "cotahist_prices"
+    __table_args__ = (
+        UniqueConstraint("ticker", "trade_date", name="uq_cotahist_prices_identity"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ticker: Mapped[str] = mapped_column(String, index=True)
+    trade_date: Mapped[Date] = mapped_column(Date, index=True)
+    especi_raw: Mapped[str] = mapped_column(String)  # campo ESPECI cru, ex. "ON  EB  NM"
+    fatcot: Mapped[int] = mapped_column(Integer)  # fator de escala aplicado (1, 10, 1000...)
+    open: Mapped[float] = mapped_column(Float)  # normalizados (raw / fatcot)
+    high: Mapped[float] = mapped_column(Float)
+    low: Mapped[float] = mapped_column(Float)
+    avg: Mapped[float] = mapped_column(Float)
+    close: Mapped[float] = mapped_column(Float)
+    quantity: Mapped[int] = mapped_column(Integer)  # QUATOT — não precisa de normalização
+    financial_volume: Mapped[float] = mapped_column(Float)  # VOLTOT (R$) — idem
+
+
+class CorporateEventFlag(Base):
+    """Evento societário **detectado** (tipo + data), derivado da transição do sufixo
+    "ex-" em `ESPECI` — spec 14, Seção 5.3. Nunca tem magnitude (valor de provento, razão
+    de bonificação/grupamento) porque a COTAHIST não carrega esse dado; existe para marcar
+    onde a série de preço bruto tem uma quebra conhecida, não para permitir ajuste
+    numérico.
+
+    `is_level_break=True` só para sufixos que mudam quantidade de ações sem
+    contrapartida em caixa (`EB`=bonificação, `EG`=grupamento — confirmado contra dado
+    real: `BBAS3` caiu -50,57% em 2024-04-16, dia do `EB`, e o volume financeiro
+    diário não mudou de ordem de grandeza, consistente com bonificação, não com queda de
+    mercado). Sufixos de distribuição em caixa (`ED`/`EJ`/`ER`/`ES` e combinações) ficam
+    `False` — o preço bruto nesses dias é um movimento de mercado real, não uma
+    descontinuidade artificial (confirmado: `EJ` e `EDJ` reais do `BBAS3` em 2024
+    mostraram variação de +0,65% e -3,53%, dentro do normal, nunca perto de -50%).
+
+    `EX` aparece no dado real sem estar documentado na tabela oficial de `ESPECI` — capturado
+    como evento com `is_level_break=False` (variação real medida de -2,25% no único caso
+    verificado, não uma quebra de nível), mas o tipo exato fica como item aberto,
+    registrado explicitamente como não documentado em vez de adivinhado.
+    """
+
+    __tablename__ = "corporate_event_flags"
+    __table_args__ = (
+        UniqueConstraint(
+            "ticker", "event_date", "ex_suffix", name="uq_corporate_event_flags_identity"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ticker: Mapped[str] = mapped_column(String, index=True)
+    event_date: Mapped[Date] = mapped_column(Date, index=True)
+    ex_suffix: Mapped[str] = mapped_column(String)  # "EB" | "EJ" | "ED" | "EG" | "EX" | ...
+    is_level_break: Mapped[bool] = mapped_column()
+    source: Mapped[str] = mapped_column(String, default="ESPECI_TRANSITION")
