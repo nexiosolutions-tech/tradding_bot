@@ -717,6 +717,66 @@ prefixo de 4 letras do ticker como proxy de "empresa" (ex. `PETR` para `PETR3`/`
 aproximação razoável para contar, mas não substitui o mapeamento `cnpj_ticker_map` já
 identificado como pendência da Fase 2 (Seção 5.1) para a implementação real do filtro.
 
+### 6.1 `universo_elegivel` como módulo — primeira junção real das três camadas (2026-08-20)
+
+Implementado (`backend/src/tradingbot/acoes/universo_elegivel.py`) sobre as tabelas já
+persistidas pelos três módulos anteriores — nunca re-parseia COTAHIST/FCA/CVM aqui, opera
+por cima da camada point-in-time já ingerida. **Mesmo relógio nas três consultas as-of**:
+fronteira inclusiva em `data_decisao` nas três (`trade_date <= data_decisao` para preço,
+`data_inicio_vigencia <= data_decisao <= data_fim_vigencia` para identidade via
+`get_cnpj_as_of`, `dt_receb <= data_decisao` para publicação via `get_latest_filing_as_of`
+— nova consulta, generaliza `get_filing_as_of` para quando o exercício de referência não
+é conhecido de antemão) — testado com dado real de junção de fronteira (`BBAS3`/Banco do
+Brasil, mesma data servindo de borda em duas camadas diferentes: último pregão real do
+fixture e `dt_receb` real de um filing).
+
+**Precedência de exclusão explícita e sequencial** (nunca ambígua: um ticker só chega a um
+motivo posterior se sobreviveu a todos os anteriores):
+
+1. `iliquido` — mediana de `VOLTOT` na janela móvel abaixo do piso.
+2. `classe_secundaria` — mesma raiz de 4 letras que uma classe mais líquida já escolhida.
+3. `identidade_nao_resolvida` — `get_cnpj_as_of` devolve `None` na data de decisão.
+4. `recuperacao_judicial` — fonte real ainda pendente (Seção 13); lista vazia por padrão
+   não exclui ninguém por este motivo nesta rodada.
+5. `historico_insuficiente` — menos de `min_pregoes_historico` pregões do próprio ticker
+   até a data de decisão; proxy independente de fator específico da Seção 7 (que ainda não
+   existe como código), número exato pode precisar de revisão quando os fatores forem
+   implementados.
+
+Materializado em duas tabelas append-only: `UniversoElegivel` (quem entrou — ticker,
+CNPJ, setor `SETOR_ATIV`, classe escolhida, volume mediano) e `UniversoExclusao` (quem
+ficou de fora e por quê) — a segunda tão parte do artefato quanto a primeira, mesmo
+mecanismo de exclusão contável já usado em `UnresolvedTicker`.
+
+**Teste de aceite**: materialização real em 2016-07-15 (era avaliável, Seção 5.6) com
+`ITUB3`/`ITUB4`/`BBAS3`/`PETR3`/`PETR4` (dado real de COTAHIST) e o índice mestre DFP real
+da CVM para o exercício 2015 (publicado em 2016, incluindo as 3 retificações reais do
+Banco do Brasil). Resultado: `ITUB4` (não `ITUB3`) e `PETR4` (não `PETR3`) escolhidos como
+classe mais líquida, os três com CNPJ correto, e `get_latest_filing_as_of` devolvendo a
+versão 3 do balanço do BB (a retificação mais recente já pública em 2016-07-15,
+`dt_receb=2016-06-02`), não a versão 1 nem a 2 — prova que a junção respeita retificação
+E fronteira de data ao mesmo tempo.
+
+**Medição definitiva do piso setorial (2016-02-29, mesma data da medição original de
+Seção 8/13), agora sobre código real, não proxy**: N=115 (vs. 113 original), 36 de 40
+setores da taxonomia CVM abaixo de população 6 (vs. 22/27 original, cobertura de 73%) —
+detalhe completo, incluindo a verificação de integridade da ingestão (contagem de linhas
+byte a byte contra o arquivo bruto antes de confiar no resultado — pedido explícito do
+usuário depois de dois processos em background serem interrompidos na fronteira de
+sessão), em `changes/2026-08-20-modulo-acoes-b3-secao-6-universo-elegivel.md`. Taxonomia
+CVM granular, não a B3 de nível 1 de produção — de-para segue pendente (Seção 13).
+
+**Pendências desta rodada**: recuperação judicial sem fonte real (lista vazia, gate 4
+nunca dispara); histórico mínimo é proxy de contagem de pregões, não amarrado a nenhum
+fator específico da Seção 7 (ainda não implementada); série completa 2015-2026 de N e
+distribuição setorial (só 2016-02-29 medido, por custo de ingestão — ver nota de
+performance abaixo); ingestão via savepoint-por-linha é lenta (~300-400s por ano completo
+de COTAHIST) — funcionalmente correta e verificada (contagem de linhas bate exatamente
+contra o esperado nos dois anos ingeridos), mas o padrão certo para produção é lote com um
+commit por arquivo, não savepoint por linha; registrado como pendência de performance, não
+resolvido nesta rodada para não misturar mudança de mecanismo de escrita com validação de
+resultado na mesma passada.
+
 ## 7. Fatores
 
 Nenhum fator inventado. Cada um precisa de referência na literatura e de justificativa econômica documentada na spec — se não há explicação de *por que* deveria funcionar, é mineração de dado.
@@ -1029,7 +1089,7 @@ seletor de moedas — mas sem implementar nada além da B3 agora.
 | Fase | Entrega | Critério de conclusão |
 |---|---|---|
 | 1 | Ingestão CVM + cotações, com camada point-in-time | consulta histórica em qualquer data retorna só o que era público naquela data, com teste automatizado provando — **índice mestre CVM + consulta as-of + preço bruto COTAHIST normalizado + eventos societários tipo/data + `cnpj_ticker_map` (identidade CNPJ↔ticker com vigência e consulta as-of) implementados e testados contra dado real, 2026-08-20** (`backend/src/tradingbot/acoes/`); ingestão de itens financeiros genéricos (todos os tipos de demonstração, todas as empresas) e magnitude de eventos societários (bloqueia só momentum, Seção 5.3.1) seguem pendentes — as três fundações point-in-time (identidade, publicação, preço) têm chão de código sob os pés para a Seção 6 (Fase 2) |
-| 2 | Universo elegível + eventos corporativos + survivorship | universo reconstruído corretamente para datas passadas |
+| 2 | Universo elegível + eventos corporativos + survivorship | universo reconstruído corretamente para datas passadas — **`universo_elegivel` (junção real de identidade+preço+publicação, precedência de exclusão explícita, materialização append-only) implementado e testado contra dado real, 2026-08-20** (`backend/src/tradingbot/acoes/universo_elegivel.py`); teste de aceite materializando 2016-07-15 (`ITUB4`/`BBAS3`/`PETR4` com CNPJ, classe e filing corretos) e medição definitiva do piso setorial de 2016-02-29 (N=115, 36/40 setores CVM abaixo de população 6) fecham a primeira junção das três camadas — série completa 2015-2026 e de-para para taxonomia B3 de nível 1 seguem pendentes |
 | 3 | Cálculo de fatores + percentis setoriais | ficha do ativo funcional; camada de evidência já entrega valor |
 | 4 | Backtest + benchmarks + teste de nulidade | régua honesta operando |
 | 5 | Score composto + gate de promoção | primeiro conjunto submetido ao gate (pode reprovar) |
@@ -1073,16 +1133,28 @@ As fases 1–3 entregam valor mesmo que nenhum score jamais passe no gate. Isso 
   estreito que a média, não só os anos mais antigos — o piso de N=100 empresas (critério 2)
   precisa sobreviver ao pior ano observado, não ao ano médio.
 - **Setor pequeno é comum na B3, não exceção — por isso a normalização da Seção 7 não usa
-  percentil-dentro-do-setor.** Desagregando o vale de 2016 por setor
-  (`changes/2026-08-19-modulo-acoes-b3-secao-8-e-piso-setorial.md`), 22 de 27 setores
-  ficaram abaixo de uma população de 6 usando a taxonomia CVM como proxy — o total de 113
-  escondia essa fragmentação por completo. Esse número (taxonomia errada, casamento por
-  nome enviesado) não calibra nenhum parâmetro, mas a direção decidiu a arquitetura: a
-  Seção 7 normaliza por percentil-no-universo com demeaning setorial, que só precisa da
-  média do setor (razoável com poucos nomes) em vez da distribuição inteira — degrada
-  suavemente em vez de quebrar. O gate (Seção 10, critério 5) continua sendo quem
-  verifica que a vantagem não vem de um único setor — o critério 2 (N=100 total) nunca
-  vai reprovar nada por construção.
+  percentil-dentro-do-setor.** Medição original (script solto, casamento por nome,
+  `changes/2026-08-19-modulo-acoes-b3-secao-8-e-piso-setorial.md`): 22 de 27 setores da
+  taxonomia CVM abaixo de população 6, sobre 83 das 113 empresas do vale de 2016 (30 sem
+  setor atribuído, casamento por nome só cobriu 73%). **Remedido com código real sobre as
+  três camadas point-in-time** (`build_universo_elegivel`, `2026-08-20`,
+  `changes/2026-08-20-modulo-acoes-b3-secao-6-universo-elegivel.md`), mesma data
+  (2016-02-29), ingestão de 2015+2016 com contagem de linhas verificada byte a byte contra
+  o arquivo bruto antes de confiar no resultado: **N=115** (vs. 113 original — delta
+  pequeno e na direção esperada, identidade por `cnpj_ticker_map` resolveu casos que o
+  proxy por raiz de ticker da medição original não cobria) e **36 de 40 setores da mesma
+  taxonomia CVM abaixo de população 6**, agora sobre cobertura de 100% (115/115 com setor
+  via join direto por CNPJ, não casamento por nome) — o achado original não estava errado,
+  estava medido com cobertura parcial; a versão completa é mais severa, não menos. **A
+  taxonomia continua sendo a CVM (`SETOR_ATIV`, granular), não a classificação B3 de nível
+  1 que a produção vai usar** — nenhuma tabela de-para foi construída ainda, então o número
+  exato de setores pequenos na taxonomia de produção segue em aberto; a direção (setor
+  pequeno é a regra, não a exceção) está confirmada duas vezes, por dois métodos
+  independentes, o suficiente para manter a decisão de arquitetura: a Seção 7 normaliza por
+  percentil-no-universo com demeaning setorial, que só precisa da média do setor (razoável
+  com poucos nomes) em vez da distribuição inteira — degrada suavemente em vez de quebrar.
+  O gate (Seção 10, critério 5) continua sendo quem verifica que a vantagem não vem de um
+  único setor — o critério 2 (N=100 total) nunca vai reprovar nada por construção.
 - **Folds de períodos diferentes não têm o mesmo poder estatístico.** O corte transversal
   variou de ~113 a ~235 ao longo do histórico medido — uma vitória num fold de vale de
   liquidez (2016) e uma vitória num fold de pico (2022) não são evidências equivalentes.

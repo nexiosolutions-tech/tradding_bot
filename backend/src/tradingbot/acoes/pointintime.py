@@ -48,6 +48,34 @@ def get_filing_as_of(
     return session.execute(stmt).scalar_one_or_none()
 
 
+def get_latest_filing_as_of(
+    session: Session,
+    cnpj_cia: str,
+    categ_doc: str,
+    data_decisao: date,
+) -> CvmFiling | None:
+    """Generaliza `get_filing_as_of` para quando o `dt_refer` (exercício de referência)
+    não é conhecido de antemão — o caso da Seção 6, que precisa do **último balanço
+    público** antes de `data_decisao`, não de um exercício específico. Mesma disciplina de
+    filtrar primeiro por `dt_receb <= data_decisao`, só depois ordenar — nunca pegar o
+    `dt_refer` mais recente que existe hoje e checar a data depois, que vazaria um
+    exercício ainda não publicado. Dentro do conjunto já visível, ordena por `dt_refer`
+    (exercício mais recente primeiro) e, dentro do mesmo exercício, por `versao` (a
+    retificação mais recente já visível) — mesma convenção de fronteira inclusiva de
+    `get_filing_as_of`."""
+    stmt = (
+        select(CvmFiling)
+        .where(
+            CvmFiling.cnpj_cia == cnpj_cia,
+            CvmFiling.categ_doc == categ_doc,
+            CvmFiling.dt_receb <= data_decisao,
+        )
+        .order_by(CvmFiling.dt_refer.desc(), CvmFiling.versao.desc())
+        .limit(1)
+    )
+    return session.execute(stmt).scalar_one_or_none()
+
+
 def get_line_items_as_of(
     session: Session,
     cnpj_cia: str,

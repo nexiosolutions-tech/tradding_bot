@@ -199,3 +199,52 @@ class UnresolvedTicker(Base):
     ticker: Mapped[str] = mapped_column(String, index=True)
     checked_year: Mapped[int] = mapped_column(Integer, index=True)
     reason: Mapped[str] = mapped_column(String)
+
+
+class UniversoElegivel(Base):
+    """Universo elegível materializado por data de decisão — spec 14, Seção 6. Primeiro
+    artefato que junta as três fundações point-in-time (identidade via `cnpj_ticker_map`,
+    preço via `CotahistPrice`, publicação via `CvmFiling`) numa única data.
+
+    Materializado, nunca recalculado retroativamente (mesmo princípio da janela fixa do
+    bot): uma vez gravado para `(data_decisao, ticker)`, o registro não muda mesmo que a
+    lógica do filtro mude depois — reprodutibilidade exige que o universo de uma data
+    passada continue sendo o que foi calculado naquele momento. `UniqueConstraint` é a
+    garantia estrutural, não uma checagem de aplicação.
+    """
+
+    __tablename__ = "universo_elegivel"
+    __table_args__ = (
+        UniqueConstraint("data_decisao", "ticker", name="uq_universo_elegivel_identity"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    data_decisao: Mapped[Date] = mapped_column(Date, index=True)
+    ticker: Mapped[str] = mapped_column(String, index=True)
+    cnpj: Mapped[str] = mapped_column(String, index=True)
+    setor_ativ: Mapped[str | None] = mapped_column(String, nullable=True)
+    volume_mediano: Mapped[float] = mapped_column(Float)
+
+
+class UniversoExclusao(Base):
+    """Quem ficou de fora do universo elegível numa data de decisão, e por quê — tão
+    parte do artefato da Seção 6 quanto `UniversoElegivel`. Exclusão sempre **contável**,
+    nunca silenciosa (mesmo mecanismo já usado em `UnresolvedTicker` e em toda a spec):
+    é o que prova, meses depois, que o survivorship está controlado.
+
+    `motivo` segue a ordem de precedência explícita de `universo_elegivel.py`
+    (`iliquido` → `classe_secundaria` → `identidade_nao_resolvida` →
+    `recuperacao_judicial` → `historico_insuficiente`) — um ticker só chega a um motivo
+    posterior se sobreviveu a todos os anteriores, então nunca há ambiguidade sobre qual
+    motivo registrar quando mais de um se aplicaria.
+    """
+
+    __tablename__ = "universo_exclusao"
+    __table_args__ = (
+        UniqueConstraint("data_decisao", "ticker", name="uq_universo_exclusao_identity"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    data_decisao: Mapped[Date] = mapped_column(Date, index=True)
+    ticker: Mapped[str] = mapped_column(String, index=True)
+    motivo: Mapped[str] = mapped_column(String)
