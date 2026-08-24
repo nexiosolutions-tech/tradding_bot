@@ -942,6 +942,95 @@ industrial); demais fatores das famílias Qualidade/Saúde financeira/Cresciment
 Tamanho, cada um com justificativa econômica própria antes de entrar; composição do score
 só depois dos fatores individuais saírem certos.
 
+### 7.2 Segundo fator, primeiro a exercitar a matriz: dívida líquida/EBITDA (`fatores.py`, 2026-08-24)
+
+Ao contrário do EPS, a CVM não entrega EBITDA pronto — é derivado, e a derivação
+escondia duas armadilhas reais, achadas verificando a DRE/DFC/BP de uma industrial
+conhecida (Petrobras) antes de escrever qualquer fórmula, não presumindo o schema.
+
+**D&A não está na DRE.** Confirmado contra as 86 linhas reais da DRE da Petrobras
+(todos `DT_REFER`/`ORDEM_EXERC`): zero menções a depreciação/amortização. Só aparece na
+**DFC método indireto** (`dfp_cia_aberta_DFC_MI_con_AAAA.csv`), grupo de reconciliação do
+lucro líquido `CD_CONTA "6.01.01.*"` — para a Petrobras, `"6.01.01.04"` = "Depreciação,
+Depleção e Amortização", real R$38.574 milhões. **O código exato não é fixo**
+(`ST_CONTA_FIXA='N'`, confirmado) — `get_depreciacao_amortizacao_as_of` busca por
+conteúdo de `DS_CONTA` dentro do prefixo, não por código literal; das 12 linhas reais do
+grupo de reconciliação da Petrobras, só uma casa com as palavras-chave, resolvendo sem
+ambiguidade.
+
+**`ST_CONTA_FIXA='S'` não garante o mesmo significado entre planos de contas
+diferentes — o achado mais perigoso desta rodada.** `CD_CONTA "3.05"` (DRE) é
+`ST_CONTA_FIXA='S'` tanto para Petrobras quanto para Itaú, mas: Petrobras =
+`"Resultado Antes do Resultado Financeiro e dos Tributos"` (EBIT real, **-R$13.188
+milhões — a Petrobras teve prejuízo operacional em 2015**, não só líquido); Itaú =
+`"Resultado Antes dos Tributos sobre o Lucro"` (lucro pré-imposto, conta inteiramente
+diferente — instituição financeira usa um plano de contas de DRE próprio, fixo *dentro*
+da variante, não *entre* variantes). Sem verificar `DS_CONTA`, `get_ebit_as_of` teria
+devolvido o lucro pré-imposto do banco com cara de EBIT — erro silencioso, não uma
+exceção. `get_ebit_as_of` verifica `DS_CONTA` antes de aceitar qualquer valor; devolve
+`None` para Itaú e Banco do Brasil, corretamente.
+
+**Consolidado vs. individual: convenção fixa, estrutural, não por confiança.**
+`CvmFinancialLineItem` ganhou o campo `base` (`"con"`/`"ind"`, padrão `"con"`) — cada
+consulta de fator filtra pela mesma base sempre, por construção, para que EBIT
+consolidado nunca se combine com D&A individual (ou vice-versa) num EBITDA sem sentido
+econômico.
+
+**EBITDA real da Petrobras é positivo apesar do EBIT real negativo** — R$25.386 milhões
+(EBIT -R$13.188M + D&A R$38.574M) — o comportamento esperado numa empresa intensiva em
+ativo fixo, e a prova de que a soma está certa, não só a mecânica.
+
+**Dívida líquida** (BP): caixa e equivalentes (BPA `"1.01.01"`) menos empréstimos e
+financiamentos circulante (BPP `"2.01.04"`) + não circulante (BPP `"2.02.01"`) — real da
+Petrobras: R$395.004 milhões. Dívida líquida/EBITDA real ≈ **15,56x** — alavancagem real e
+severa, consistente com o rebaixamento de rating da Petrobras por agências
+internacionais em 2015.
+
+**Três categorias de ausência, nunca confundidas, cada uma um ramo de código
+diferente**:
+
+1. **Inaplicável** — matriz por subsetor B3 (`fator_divida_liquida_ebitda_aplicavel`),
+   não "financeiro sim/não" binário. Escopo desta rodada: só `"Intermediários
+   Financeiros"` (bancos), verificado estruturalmente (o próprio plano de contas de DRE
+   de banco não tem conta equivalente a EBIT). Justificativa econômica registrada:
+   alavancagem é o próprio negócio do banco (insumo de intermediação financeira), não um
+   risco a medir — dívida líquida não significa o mesmo que numa industrial.
+   Seguradoras, bolsa (`BVMF3`/B3) e holdings financeiras são casos-limite distintos,
+   **não verificados nesta rodada** — ficam de fora da matriz até serem confirmados
+   contra dado real, não assumidos.
+2. **Faltante** — `get_ebitda_as_of`/`get_divida_liquida_as_of` devolvem `None` por linha
+   ausente ou ambígua (D&A sem candidato único). Imputado pela mediana do universo pela
+   mesma `compute_demeaned_percentiles` do earnings yield.
+3. **Indefinido** — `divida_liquida_ebitda_raw` devolve `None` quando `EBITDA ≤ 0`: o
+   dado existe, mas o múltiplo não tem significado econômico (EBITDA perto de zero faz o
+   múltiplo explodir; negativo inverteria o sinal — mesmo problema do P/L com lucro
+   negativo, do lado do denominador). Mecanicamente tratado como faltante na
+   normalização, mas semanticamente distinto, registrado para auditoria.
+
+**Score composto renormaliza pesos sobre fatores aplicáveis** (`compute_score_composto`)
+— sem isso, a matriz criaria um viés setorial escondido na aritmética: banco com um fator
+a menos (inaplicável) teria o score puxado para baixo só por contar menos parcelas, não
+por desempenho pior. Teste de aceite: `ITUB4` (só earnings yield aplicável) e `PETR4`
+(os dois fatores aplicáveis), ambos no percentil 80 nos fatores que se aplicam a cada um,
+chegam ao **mesmo score composto** — a prova de que a matriz não penaliza estrutura
+setorial. Isso resolve, para este par de fatores, a pergunta em aberto sobre a Seção 8:
+como Seção 8 ainda não tem código (só spec), a renormalização foi implementada aqui como
+semente mínima, não como o motor de carteira completo — quando a Seção 8 for
+implementada, precisa herdar esta regra, não redecidir.
+
+**Point-in-time de três demonstrações, testado**: EBITDA (DRE+DFC) e dívida líquida (BP)
+resolvidos pelo mesmo `get_latest_filing_as_of` — antes da publicação real da Petrobras
+(`dt_receb=2016-03-21`), os dois são `None`; depois, os valores reais aparecem, do mesmo
+exercício. O teste mais exigente de point-in-time até agora, porque combina três
+consultas datadas num número só.
+
+**Pendente**: EV/EBITDA (precisa de valor de mercado = ações em circulação × preço —
+fonte não encontrada em FCA nem DFP, provável quinta demonstração, Formulário de
+Referência, não aberta nesta rodada); seguradoras/bolsa/holdings financeiras na matriz;
+demais famílias de fator; Seção 8 (motor de carteira) ainda sem código — a renormalização
+de pesos existe só como função isolada em `fatores.py`, precisa ser adotada quando a
+Seção 8 for implementada de verdade.
+
 ## 8. Motor consciente da carteira
 
 É o que separa este sistema de um screener. O relatório mensal não responde "quais as melhores ações", e sim:
@@ -1178,7 +1267,7 @@ seletor de moedas — mas sem implementar nada além da B3 agora.
 |---|---|---|
 | 1 | Ingestão CVM + cotações, com camada point-in-time | consulta histórica em qualquer data retorna só o que era público naquela data, com teste automatizado provando — **índice mestre CVM + consulta as-of + preço bruto COTAHIST normalizado + eventos societários tipo/data + `cnpj_ticker_map` (identidade CNPJ↔ticker com vigência e consulta as-of) implementados e testados contra dado real, 2026-08-20** (`backend/src/tradingbot/acoes/`); ingestão de itens financeiros genéricos (todos os tipos de demonstração, todas as empresas) e magnitude de eventos societários (bloqueia só momentum, Seção 5.3.1) seguem pendentes — as três fundações point-in-time (identidade, publicação, preço) têm chão de código sob os pés para a Seção 6 (Fase 2) |
 | 2 | Universo elegível + eventos corporativos + survivorship | universo reconstruído corretamente para datas passadas — **`universo_elegivel` (junção real de identidade+preço+publicação, precedência de exclusão explícita, materialização append-only) implementado e testado contra dado real, 2026-08-20** (`backend/src/tradingbot/acoes/universo_elegivel.py`); teste de aceite materializando 2016-07-15 (`ITUB4`/`BBAS3`/`PETR4` com CNPJ, classe e filing corretos); **de-para para a taxonomia setorial real da B3 (`b3_setor.py`) fechado 2026-08-21** — 11 setores de nível 1, 5/11 abaixo de população 6 (85% de cobertura sobre o universo de 2016), confirmando com o número de produção a decisão de demeaning por média — série completa 2015-2026 segue pendente |
-| 3 | Cálculo de fatores + percentis setoriais | ficha do ativo funcional; camada de evidência já entrega valor — **primeiro fator ponta a ponta (earnings yield) implementado e testado contra dado real, 2026-08-24** (`backend/src/tradingbot/acoes/fatores.py`): winsorização, demeaning com fallback hierárquico B3 (segmento→subsetor→setor→universo), dado faltante imputado pela mediana (declarado); matriz de aplicabilidade e demais fatores seguem pendentes |
+| 3 | Cálculo de fatores + percentis setoriais | ficha do ativo funcional; camada de evidência já entrega valor — **dois fatores ponta a ponta implementados e testados contra dado real** (`backend/src/tradingbot/acoes/fatores.py`): earnings yield (2026-08-24) com winsorização e demeaning hierárquico B3; **dívida líquida/EBITDA (2026-08-24)**, primeiro a exercitar a matriz de aplicabilidade (banco inaplicável, verificado estruturalmente), o point-in-time de três demonstrações (DRE+DFC+BP) e a renormalização de pesos no composto (semente mínima, Seção 8 ainda sem código); demais fatores e o motor de carteira completo (Seção 8) seguem pendentes |
 | 4 | Backtest + benchmarks + teste de nulidade | régua honesta operando |
 | 5 | Score composto + gate de promoção | primeiro conjunto submetido ao gate (pode reprovar) |
 | 6 | Motor de carteira + painel do aporte | relatório mensal completo |

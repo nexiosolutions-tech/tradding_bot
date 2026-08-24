@@ -86,14 +86,21 @@ def ingest_master_index(session: Session, csv_path: Path) -> IngestStats:
 
 
 def ingest_line_items_for_cnpj(
-    session: Session, csv_path: Path, cnpj_cia: str
+    session: Session, csv_path: Path, cnpj_cia: str, *, base: str = "con"
 ) -> IngestStats:
     """Carrega as linhas de um único CNPJ de um arquivo de item financeiro (ex.
-    `dfp_cia_aberta_DRE_con_AAAA.csv`) — **escopo deliberadamente restrito**: existe só
-    para provar o contrato point-in-time da Seção 5.2 contra dado real (teste de
-    `ORDEM_EXERC`), não é a ingestão genérica de todos os tipos de demonstração para
-    todas as empresas, que fica para a Fase 2. Sem trava de unicidade própria — cada
-    execução re-carrega; não é o caminho de produção."""
+    `dfp_cia_aberta_DRE_con_AAAA.csv`, `dfp_cia_aberta_DFC_MI_con_AAAA.csv`,
+    `dfp_cia_aberta_BPA_con_AAAA.csv`) — **escopo deliberadamente restrito**: existe só
+    para provar os contratos point-in-time já testados (Seção 5.2) e os fatores já
+    implementados (Seção 7), não é a ingestão genérica de todos os tipos de demonstração
+    para todas as empresas, que fica para a Fase 2. Sem trava de unicidade própria — cada
+    execução re-carrega; não é o caminho de produção.
+
+    `base` (`"con"` padrão, ou `"ind"`) é gravada em cada linha, não inferida do nome do
+    arquivo — quem chama declara explicitamente qual arquivo está ingerindo, para que a
+    consulta de fator possa filtrar pela mesma base sempre (Seção 7.2: misturar
+    consolidado com individual entre EBIT e D&A produz EBITDA sem sentido, em
+    silêncio)."""
     stats = IngestStats()
     with open(csv_path, encoding="latin-1", newline="") as f:
         for row in csv.DictReader(f, delimiter=";"):
@@ -104,6 +111,7 @@ def ingest_line_items_for_cnpj(
                 dt_refer=date.fromisoformat(row["DT_REFER"].strip()),
                 versao=int(row["VERSAO"]),
                 ordem_exerc=row["ORDEM_EXERC"].strip(),
+                base=base,
                 cd_conta=row["CD_CONTA"].strip(),
                 ds_conta=row["DS_CONTA"].strip(),
                 vl_conta=float(row["VL_CONTA"]),

@@ -45,16 +45,34 @@ class CvmFiling(Base):
 
 class CvmFinancialLineItem(Base):
     """Uma linha de um arquivo de item financeiro (`dfp_cia_aberta_DRE_con_AAAA.csv` e
-    equivalentes). **Escopo desta rodada: só o suficiente para provar o contrato
-    point-in-time contra dado real (spec 14, Seção 5.2, teste de `ORDEM_EXERC`)** — não é
-    a ingestão genérica de todos os tipos de demonstração (BPA/BPP/DRE/DFC/DMPL/DRA/DVA,
-    con/ind), que fica para quando o resto do fundamento (Fase 2) for construído.
+    equivalentes — DRE, DFC, BPA, BPP, cada demonstração com seu próprio namespace de
+    `cd_conta` pelo padrão CVM: `1.x`=BPA, `2.x`=BPP, `3.x`=DRE, `6.x`=DFC — não colidem
+    entre si, então uma linha de qualquer demonstração cabe na mesma tabela). **Escopo:
+    só o suficiente para os contratos point-in-time já provados (Seção 5.2) e os fatores
+    já implementados (Seção 7)** — não a ingestão genérica de todo tipo de demonstração
+    para toda empresa, que fica para quando o resto do fundamento (Fase 2) for
+    construído.
 
     `ordem_exerc` é o campo que a Seção 5.1 identificou como armadilha: cada filing traz
     o exercício atual (`ÚLTIMO`) e o comparativo do ano anterior (`PENÚLTIMO`) na mesma
     linha de dado, possivelmente com valor reapresentado. Só `ÚLTIMO` é fato point-in-time
     primário — `PENÚLTIMO` nunca é fonte de fator, existe só para detecção de
     reapresentação (não implementada nesta rodada).
+
+    `base` (`"con"` consolidado | `"ind"` individual) é convenção fixa, não escolha por
+    fator — consolidado é o padrão de mercado. Achado da Seção 7.2: misturar EBIT
+    consolidado com D&A individual (ou vice-versa) produziria um EBITDA sem sentido
+    econômico, silenciosamente — este campo existe para que a consulta de cada fator
+    filtre pela mesma base sempre, por construção, nunca por confiança na disciplina de
+    quem ingeriu.
+
+    `ST_CONTA_FIXA='S'` no arquivo real **não garante o mesmo significado entre planos de
+    contas diferentes** — achado real (Seção 7.2): `CD_CONTA "3.05"` é `ST_CONTA_FIXA='S'`
+    tanto para Petrobras (`"Resultado Antes do Resultado Financeiro e dos Tributos"`,
+    EBIT) quanto para Itaú (`"Resultado Antes dos Tributos sobre o Lucro"`, lucro
+    pré-imposto) — instituição financeira usa um plano de contas DRE inteiramente
+    diferente, fixo *dentro* da própria variante, não *entre* variantes. Toda consulta de
+    fator que depende de `cd_conta` verifica `ds_conta` antes de aceitar o valor.
     """
 
     __tablename__ = "cvm_financial_line_items"
@@ -64,6 +82,7 @@ class CvmFinancialLineItem(Base):
     dt_refer: Mapped[Date] = mapped_column(Date, index=True)
     versao: Mapped[int] = mapped_column(Integer)
     ordem_exerc: Mapped[str] = mapped_column(String)  # "ÚLTIMO" | "PENÚLTIMO"
+    base: Mapped[str] = mapped_column(String, default="con")  # "con" | "ind"
     cd_conta: Mapped[str] = mapped_column(String, index=True)
     ds_conta: Mapped[str] = mapped_column(String)
     vl_conta: Mapped[float] = mapped_column(Float)

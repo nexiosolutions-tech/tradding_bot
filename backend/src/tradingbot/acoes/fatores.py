@@ -24,13 +24,40 @@ Este módulo tem duas partes deliberadamente separadas:
    não precisa derivar via ações em circulação, que exigiria uma fonte de dado nova
    (capital social) não verificada nesta rodada.
 
-**Dado faltante vs. fator inaplicável — dois ramos diferentes, nunca confundidos.**
-Inaplicável (ex. EV/EBITDA de banco) é decisão determinística por setor, vem de uma
-matriz de aplicabilidade (Seção 7, ainda não implementada — earnings yield se aplica a
-todo setor, não exercita este ramo). Faltante é uma empresa que deveria ter o dado e não
-tem (não reportou, campo ausente) — aqui a regra declarada é imputação pela mediana do
-grupo (não exclusão, que cria viés de seleção sistemático contra empresa de reporte mais
-fraco) — mesma regra em backtest e produção, nunca implícita.
+3. **Dívida líquida/EBITDA** (`get_ebitda_as_of`, `get_divida_liquida_as_of`,
+   `divida_liquida_ebitda_raw`) — segundo fator, família Saúde financeira, o primeiro a
+   exercitar a matriz de aplicabilidade de verdade (`fator_divida_liquida_ebitda_
+   aplicavel`) e o point-in-time de múltiplas demonstrações (DRE para EBIT, DFC para
+   D&A, BP para dívida e caixa — três fontes, todas resolvidas pelo mesmo
+   `get_latest_filing_as_of`, mesma `base` consolidada nas três). EBITDA não vem pronto
+   da CVM como o EPS veio — é derivado, e a derivação escondia duas armadilhas reais
+   (Seção 7.2): D&A não está na DRE (só na DFC, método indireto, posição não fixa dentro
+   do grupo de reconciliação); e o mesmo `CD_CONTA` de EBIT (`"3.05"`) tem significado
+   diferente em instituição financeira (lucro pré-imposto, não EBIT) mesmo sendo marcado
+   `ST_CONTA_FIXA='S'` nas duas — por isso toda consulta que depende de `cd_conta`
+   verifica `ds_conta` antes de aceitar o valor, nunca confia no código sozinho.
+
+**Três categorias de ausência, nunca confundidas** — cada uma um ramo de código
+diferente, porque misturá-las produz o mesmo tipo de erro silencioso que motivou o
+earnings yield e a normalização com winsorização:
+
+- **Inaplicável** (`fator_divida_liquida_ebitda_aplicavel` devolve `False`) — decisão
+  determinística por subsetor B3, vem da matriz. Banco não entra no cálculo, ponto —
+  não é ausência de dado, é o fator não fazer sentido econômico para aquele negócio.
+- **Faltante** (`get_ebitda_as_of`/`get_divida_liquida_as_of` devolvem `None` por linha
+  ausente ou ambígua) — a empresa deveria ter o dado e não tem (não reportou, campo
+  ausente, ou mais de um candidato onde só um era esperado). Regra declarada:
+  `compute_demeaned_percentiles` imputa pela mediana do universo, nunca exclui.
+- **Indefinido** (`divida_liquida_ebitda_raw` devolve `None` quando `ebitda <= 0`) — o
+  dado *existe*, mas o múltiplo não tem significado econômico ali (mesmo problema do P/L
+  com lucro negativo, do lado do denominador). Mecanicamente tratado como faltante pela
+  camada de normalização (imputação pela mediana), mas semanticamente distinto — vale a
+  pena registrar por quê, não só o quê, para auditoria futura.
+
+**Composto renormaliza pesos sobre fatores aplicáveis** (`compute_score_composto`) — sem
+isso, a matriz criaria um viés setorial escondido na aritmética: banco com um fator a
+menos (inaplicável) teria o score puxado para baixo só por contar menos parcelas, não por
+desempenho pior.
 """
 
 from __future__ import annotations
@@ -90,6 +117,178 @@ def earnings_yield_raw(eps: float, preco: float) -> float:
     negativo, corretamente no fundo do ranking; P/L bruto de deficitária ficaria negativo
     e apareceria como "a mais barata" num ranking ingênuo, sinal invertido."""
     return eps / preco
+
+
+# ------------------------------------------------------------- divida liquida / EBITDA
+
+# DRE, padrao empresas nao-financeiras: "Resultado Antes do Resultado Financeiro e dos
+# Tributos" (EBIT). ST_CONTA_FIXA='S', mas achado real (Secao 7.2): o mesmo CD_CONTA em
+# banco (Itau, real) e "Resultado Antes dos Tributos sobre o Lucro" (lucro pre-imposto,
+# NAO EBIT) - instituicao financeira usa plano de contas DRE inteiramente diferente, fixo
+# so DENTRO da propria variante. Nunca aceitar o valor sem checar DS_CONTA.
+_CD_CONTA_EBIT = "3.05"
+_DS_CONTA_EBIT_ESPERADO = "Resultado Antes do Resultado Financeiro e dos Tributos"
+
+# DFC metodo indireto, grupo de reconciliacao do lucro liquido (6.01.01.*) - o codigo
+# exato do D&A dentro desse grupo NAO e fixo (ST_CONTA_FIXA='N', achado real: Petrobras
+# usa 6.01.01.04, outra empresa pode usar posicao diferente ou nao ter a linha) - busca
+# por conteudo de DS_CONTA, nunca por CD_CONTA literal.
+_CD_CONTA_DFC_RECONCILIACAO_PREFIXO = "6.01.01."
+_DA_KEYWORDS = ("DEPRECIA", "AMORTIZ", "EXAUST")
+
+_CD_CONTA_CAIXA_E_EQUIVALENTES = "1.01.01"
+_CD_CONTA_DIVIDA_CIRCULANTE = "2.01.04"
+_CD_CONTA_DIVIDA_NAO_CIRCULANTE = "2.02.01"
+
+EBITDA_INDEFINIDO_LIMIAR = 0.0
+
+
+def _linha_unica(session: Session, cnpj: str, filing, cd_conta: str, base: str = "con"):
+    stmt = select(CvmFinancialLineItem).where(
+        CvmFinancialLineItem.cnpj_cia == cnpj,
+        CvmFinancialLineItem.dt_refer == filing.dt_refer,
+        CvmFinancialLineItem.versao == filing.versao,
+        CvmFinancialLineItem.ordem_exerc == "ÚLTIMO",
+        CvmFinancialLineItem.base == base,
+        CvmFinancialLineItem.cd_conta == cd_conta,
+    )
+    return session.execute(stmt).scalar_one_or_none()
+
+
+def get_ebit_as_of(session: Session, cnpj: str, data_decisao: date, base: str = "con") -> float | None:
+    """EBIT como conhecido em `data_decisao`. `None` se não houver filing visível, se o
+    `CD_CONTA` não existir, **ou se existir mas `DS_CONTA` não bater com o esperado** —
+    o caso real de banco, onde o mesmo código numérico é outra conta inteiramente."""
+    filing = get_latest_filing_as_of(session, cnpj, "DFP", data_decisao)
+    if filing is None:
+        return None
+    linha = _linha_unica(session, cnpj, filing, _CD_CONTA_EBIT, base)
+    if linha is None or linha.ds_conta.strip() != _DS_CONTA_EBIT_ESPERADO:
+        return None
+    return linha.vl_conta
+
+
+def get_depreciacao_amortizacao_as_of(session: Session, cnpj: str, data_decisao: date, base: str = "con") -> float | None:
+    """D&A do exercício, via reconciliação da DFC método indireto (não está na DRE —
+    verificado contra dado real, Seção 7.2). `None` se a linha não existir (D&A ausente
+    ≠ D&A zero — somar zero produziria um EBITDA falso com cara de válido) ou se mais de
+    uma linha do grupo casar com as palavras-chave (ambíguo, mesma disciplina de nunca
+    adivinhar entre candidatos)."""
+    filing = get_latest_filing_as_of(session, cnpj, "DFP", data_decisao)
+    if filing is None:
+        return None
+
+    stmt = select(CvmFinancialLineItem).where(
+        CvmFinancialLineItem.cnpj_cia == cnpj,
+        CvmFinancialLineItem.dt_refer == filing.dt_refer,
+        CvmFinancialLineItem.versao == filing.versao,
+        CvmFinancialLineItem.ordem_exerc == "ÚLTIMO",
+        CvmFinancialLineItem.base == base,
+        CvmFinancialLineItem.cd_conta.startswith(_CD_CONTA_DFC_RECONCILIACAO_PREFIXO),
+    )
+    candidatos = [
+        row for row in session.execute(stmt).scalars().all()
+        if any(kw in row.ds_conta.upper() for kw in _DA_KEYWORDS)
+    ]
+    if len(candidatos) != 1:
+        return None
+    return candidatos[0].vl_conta
+
+
+def get_ebitda_as_of(session: Session, cnpj: str, data_decisao: date, base: str = "con") -> float | None:
+    """EBIT + D&A, mesma `base` (consolidado por padrão) nas duas consultas — misturar
+    consolidado com individual produziria um EBITDA sem sentido econômico (Seção 7.2).
+    `None` se qualquer uma das duas partes for `None` (nunca soma parcial)."""
+    ebit = get_ebit_as_of(session, cnpj, data_decisao, base)
+    da = get_depreciacao_amortizacao_as_of(session, cnpj, data_decisao, base)
+    if ebit is None or da is None:
+        return None
+    return ebit + da
+
+
+def get_divida_liquida_as_of(session: Session, cnpj: str, data_decisao: date, base: str = "con") -> float | None:
+    """Dívida bruta (empréstimos e financiamentos circulante + não circulante, BPP) menos
+    caixa e equivalentes (BPA) — as três linhas do balanço patrimonial na data de
+    decisão. `None` se qualquer uma faltar."""
+    filing = get_latest_filing_as_of(session, cnpj, "DFP", data_decisao)
+    if filing is None:
+        return None
+
+    caixa = _linha_unica(session, cnpj, filing, _CD_CONTA_CAIXA_E_EQUIVALENTES, base)
+    divida_circulante = _linha_unica(session, cnpj, filing, _CD_CONTA_DIVIDA_CIRCULANTE, base)
+    divida_nao_circulante = _linha_unica(session, cnpj, filing, _CD_CONTA_DIVIDA_NAO_CIRCULANTE, base)
+    if caixa is None or divida_circulante is None or divida_nao_circulante is None:
+        return None
+    return (divida_circulante.vl_conta + divida_nao_circulante.vl_conta) - caixa.vl_conta
+
+
+def divida_liquida_ebitda_raw(divida_liquida: float, ebitda: float) -> float | None:
+    """`None` (indefinido) quando `ebitda <= 0` — terceira categoria, distinta de
+    "faltante" (a empresa deveria ter o dado e não tem) e de "inaplicável" (o setor não
+    comporta o fator, matriz abaixo). Aqui o dado *existe*, mas o múltiplo não tem
+    significado econômico: EBITDA perto de zero faz o múltiplo explodir, EBITDA negativo
+    inverteria o sinal (empresa endividada pareceria ótima) — o mesmo problema do P/L com
+    lucro negativo que levou ao earnings yield, agora do lado do denominador."""
+    if ebitda <= EBITDA_INDEFINIDO_LIMIAR:
+        return None
+    return divida_liquida / ebitda
+
+
+# ------------------------------------------------------- matriz de aplicabilidade
+
+# Por subsetor B3 (Seção 6.2), não por "setor financeiro sim/não" binário — o setor
+# "Financeiro" da B3 não é homogêneo (banco, seguradora, bolsa, holding financeira são
+# casos distintos). Escopo desta rodada: só o subsetor verificado contra dado real
+# (bancos, Seção 7.2 — o próprio plano de contas DRE de banco não tem a conta de EBIT).
+# Seguradoras/bolsa/holdings financeiras ficam pendentes até serem verificadas.
+DIVIDA_LIQUIDA_EBITDA_SUBSETORES_INAPLICAVEIS = {
+    "Intermediários Financeiros",  # justificativa: alavancagem é o próprio negócio do
+    # banco (insumo de intermediação financeira), não um risco a medir — dívida líquida
+    # não significa o mesmo que numa industrial. Confirmado estruturalmente: o plano de
+    # contas da DRE de instituição financeira nem tem uma conta equivalente a EBIT
+    # (Seção 7.2, achado real do CD_CONTA "3.05").
+}
+
+
+def fator_divida_liquida_ebitda_aplicavel(subsetor_b3: str | None) -> bool:
+    """`False` só para subsetor explicitamente listado como inaplicável, com
+    justificativa econômica registrada. Subsetor desconhecido (`None`, sem cobertura B3
+    — Seção 6.2) não é tratado como inaplicável, que seria uma decisão determinística
+    não tomada — fica aplicável por padrão, e a ausência de dado financeiro (se houver)
+    aparece como faltante, não como decisão de matriz."""
+    if subsetor_b3 is None:
+        return True
+    return subsetor_b3 not in DIVIDA_LIQUIDA_EBITDA_SUBSETORES_INAPLICAVEIS
+
+
+# ------------------------------------------------------------------ score composto
+
+@dataclass
+class PesoFator:
+    nome: str
+    peso: float
+
+
+def compute_score_composto(
+    percentis_por_fator: dict[str, float | None], pesos: list[PesoFator]
+) -> float | None:
+    """Média ponderada dos percentis de fator, **renormalizando os pesos sobre os
+    fatores aplicáveis** (percentil presente), não sobre um conjunto fixo — o mecanismo
+    que a matriz de aplicabilidade precisa para não virar viés setorial escondido na
+    aritmética. Sem renormalização, um banco com um fator a menos (`None` por
+    inaplicabilidade) teria seu score puxado para baixo só por contar menos parcelas,
+    não por desempenho pior — o mesmo banco, pontuando igual nos fatores que se aplicam
+    a ele, ficaria com score menor que uma industrial só pela estrutura da matriz.
+    `None` se nenhum fator for aplicável (situação degenerada, não esperada em produção)."""
+    aplicaveis = [
+        (p.peso, percentis_por_fator[p.nome])
+        for p in pesos
+        if percentis_por_fator.get(p.nome) is not None
+    ]
+    if not aplicaveis:
+        return None
+    soma_pesos = sum(peso for peso, _ in aplicaveis)
+    return sum(peso * percentil for peso, percentil in aplicaveis) / soma_pesos
 
 
 def winsorize(values: list[float], lower_pct: float = WINSORIZE_LOWER_PCT, upper_pct: float = WINSORIZE_UPPER_PCT) -> list[float]:
