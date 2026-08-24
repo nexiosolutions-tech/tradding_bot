@@ -1031,6 +1031,65 @@ demais famílias de fator; Seção 8 (motor de carteira) ainda sem código — a
 de pesos existe só como função isolada em `fatores.py`, precisa ser adotada quando a
 Seção 8 for implementada de verdade.
 
+### 7.3 Terceiro fator, primeiro a cruzar duas demonstrações num quociente: ROE (`fatores.py`, 2026-08-24)
+
+Família Qualidade. ROE = lucro líquido (DRE) / patrimônio líquido (BP) — o primeiro fator
+onde o numerador e o denominador vêm de demonstrações diferentes no mesmo quociente, não
+só somados (EBITDA) ou usados lado a lado (dívida líquida/EBITDA).
+
+**O princípio do `"3.05"` (Seção 7.2) se confirma de novo, preventivamente verificado
+antes de calcular.** `DS_CONTA "Atribuído a Sócios da Empresa Controladora"` (lucro dos
+controladores) e `DS_CONTA "Patrimônio Líquido Consolidado"` são idênticos nas duas
+variantes de plano de contas (banco e industrial) — mas o `CD_CONTA` numérico muda por
+empresa (`"3.09.01"`/`"2.08"` para banco, `"3.11.01"`/`"2.03"` para a Petrobras),
+dependendo de quantas linhas precedem na demonstração de cada uma. Toda consulta busca
+por `DS_CONTA`, nunca por código — a lição do "3.05" aplicada preventivamente desta vez,
+não descoberta durante a implementação.
+
+**Lucro dos controladores, não o consolidado com minoritários** — mesma disciplina de
+consistência já usada em `base` (con/ind, Seção 7.2): patrimônio líquido também precisou
+ser líquido de minoritários (`"Patrimônio Líquido Consolidado"` menos `"Participação dos
+Acionistas Não Controladores"`, achado real: a linha de minoritários existe separada no
+BP, subtraída para consistência com o numerador) — usar o patrimônio total sobre o lucro
+dos controladores infla o ROE.
+
+**Patrimônio líquido ≤ 0 → indefinido — a armadilha mais traiçoeira do módulo até
+aqui.** Prejuízo dividido por patrimônio negativo dá ROE **positivo** — empresa em
+situação terminal aparecendo no topo do ranking de qualidade. `roe_raw` devolve `None`
+nesse caso, confirmando que a categoria "indefinido" (introduzida para `EBITDA ≤ 0`,
+Seção 7.2) generaliza para um segundo gatilho totalmente independente, sem acoplamento
+entre as duas funções — testado explicitamente.
+
+**ROE real, 2015**: Petrobras -13,68% (prejuízo real, mas patrimônio ainda positivo —
+não é o caso indefinido, é prejuízo genuíno corretamente refletido), Itaú +22,93%, Banco
+do Brasil +17,04%.
+
+**ROE não precisa da matriz — testa o demeaning setorial de verdade.** Diferente de
+dívida líquida/EBITDA, banco tem lucro e patrimônio, ROE de banco é métrica central, não
+inaplicável. Mas ROE de banco é estruturalmente mais alto que o de industrial
+(alavancagem), então comparação em nível absoluto seria injusta — o demeaning setorial
+já construído (Seção 7) resolve isso sem precisar de matriz nova. Testado com os dois
+bancos reais (`ITUB4`/`BBAS3`, mesmo segmento `Bancos`), demeaned contra a própria média
+de par (`min_bucket_size=2` — a fixture desta rodada só tem 3 empresas ao todo, piso de
+produção nunca formaria bucket de segmento com só 2 nomes), e com um mecanismo isolado
+(dado ilustrativo, não real — seis nomes divididos em bucket "bancos" ~20% de ROE e
+bucket "industriais" ~5%): depois do demeaning, o banco e a industrial "típicos" do
+próprio setor ficam com percentil parecido, não um sistematicamente acima do outro só
+pela estrutura de capital do setor.
+
+**Ortogonalidade medida, não presumida — com a ressalva estatística que o tamanho da
+amostra exige.** Correlação de Pearson entre earnings yield e ROE sobre as três empresas
+desta fixture: **≈0,92**. Alta — mas `n=3` não é amostra suficiente para aplicar o
+limiar de 0,7 pré-especificado com qualquer confiança: três pontos quase sempre produzem
+correlação alta por acaso, não porque os fatores meçam a mesma coisa de verdade. O número
+é calculado e registrado honestamente (não escondido por ser inconveniente), mas a
+decisão sobre ortogonalidade real fica **pendente até medir sobre o universo de 2016
+inteiro** (115 empresas, já materializado na Seção 6.1) — o próximo passo explícito, não
+fabricado aqui só para fechar a pergunta.
+
+**Pendente**: correlação real sobre o universo de 115 empresas (a medição que decide se
+ROE adiciona informação genuína); demais famílias de fator; Seção 8 ainda sem código.
+
 ## 8. Motor consciente da carteira
 
 É o que separa este sistema de um screener. O relatório mensal não responde "quais as melhores ações", e sim:
@@ -1267,7 +1326,7 @@ seletor de moedas — mas sem implementar nada além da B3 agora.
 |---|---|---|
 | 1 | Ingestão CVM + cotações, com camada point-in-time | consulta histórica em qualquer data retorna só o que era público naquela data, com teste automatizado provando — **índice mestre CVM + consulta as-of + preço bruto COTAHIST normalizado + eventos societários tipo/data + `cnpj_ticker_map` (identidade CNPJ↔ticker com vigência e consulta as-of) implementados e testados contra dado real, 2026-08-20** (`backend/src/tradingbot/acoes/`); ingestão de itens financeiros genéricos (todos os tipos de demonstração, todas as empresas) e magnitude de eventos societários (bloqueia só momentum, Seção 5.3.1) seguem pendentes — as três fundações point-in-time (identidade, publicação, preço) têm chão de código sob os pés para a Seção 6 (Fase 2) |
 | 2 | Universo elegível + eventos corporativos + survivorship | universo reconstruído corretamente para datas passadas — **`universo_elegivel` (junção real de identidade+preço+publicação, precedência de exclusão explícita, materialização append-only) implementado e testado contra dado real, 2026-08-20** (`backend/src/tradingbot/acoes/universo_elegivel.py`); teste de aceite materializando 2016-07-15 (`ITUB4`/`BBAS3`/`PETR4` com CNPJ, classe e filing corretos); **de-para para a taxonomia setorial real da B3 (`b3_setor.py`) fechado 2026-08-21** — 11 setores de nível 1, 5/11 abaixo de população 6 (85% de cobertura sobre o universo de 2016), confirmando com o número de produção a decisão de demeaning por média — série completa 2015-2026 segue pendente |
-| 3 | Cálculo de fatores + percentis setoriais | ficha do ativo funcional; camada de evidência já entrega valor — **dois fatores ponta a ponta implementados e testados contra dado real** (`backend/src/tradingbot/acoes/fatores.py`): earnings yield (2026-08-24) com winsorização e demeaning hierárquico B3; **dívida líquida/EBITDA (2026-08-24)**, primeiro a exercitar a matriz de aplicabilidade (banco inaplicável, verificado estruturalmente), o point-in-time de três demonstrações (DRE+DFC+BP) e a renormalização de pesos no composto (semente mínima, Seção 8 ainda sem código); demais fatores e o motor de carteira completo (Seção 8) seguem pendentes |
+| 3 | Cálculo de fatores + percentis setoriais | ficha do ativo funcional; camada de evidência já entrega valor — **três fatores ponta a ponta implementados e testados contra dado real** (`backend/src/tradingbot/acoes/fatores.py`, todos 2026-08-24): earnings yield (winsorização, demeaning hierárquico B3); dívida líquida/EBITDA (matriz de aplicabilidade, point-in-time de três demonstrações, renormalização de pesos); **ROE**, primeiro a cruzar duas demonstrações num quociente, categoria "indefinido" generalizada para um segundo gatilho (patrimônio ≤ 0), demeaning setorial provado com banco/industrial, correlação com earnings yield medida (≈0,92 sobre `n=3`, pendente confirmar sobre o universo de 115 empresas) — demais famílias de fator e o motor de carteira completo (Seção 8) seguem pendentes |
 | 4 | Backtest + benchmarks + teste de nulidade | régua honesta operando |
 | 5 | Score composto + gate de promoção | primeiro conjunto submetido ao gate (pode reprovar) |
 | 6 | Motor de carteira + painel do aporte | relatório mensal completo |

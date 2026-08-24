@@ -291,6 +291,88 @@ def compute_score_composto(
     return sum(peso * percentil for peso, percentil in aplicaveis) / soma_pesos
 
 
+# ------------------------------------------------------------------------------- ROE
+
+# Achado real (Seção 7.3, mesmo padrão do "3.05" — Seção 7.2): o CD_CONTA do lucro
+# atribuído aos controladores muda de posição por empresa ("3.09.01" para banco,
+# "3.11.01" para a Petrobras) dependendo de quantas linhas precedem na DRE de cada uma —
+# mas o DS_CONTA é idêntico nas duas variantes de plano de contas. Busca sempre por
+# DS_CONTA dentro do prefixo da demonstração certa ("3." = DRE, "2." = BPP), nunca por
+# código.
+_DS_CONTA_LUCRO_LIQUIDO_CONTROLADORES = "Atribuído a Sócios da Empresa Controladora"
+_DS_CONTA_PATRIMONIO_LIQUIDO_CONSOLIDADO = "Patrimônio Líquido Consolidado"
+_DS_CONTA_PARTICIPACAO_NAO_CONTROLADORES = "Participação dos Acionistas Não Controladores"
+
+PATRIMONIO_INDEFINIDO_LIMIAR = 0.0
+
+
+def _linha_por_ds_conta(session: Session, cnpj: str, filing, prefixo_cd_conta: str, ds_conta_esperado: str, base: str = "con"):
+    stmt = select(CvmFinancialLineItem).where(
+        CvmFinancialLineItem.cnpj_cia == cnpj,
+        CvmFinancialLineItem.dt_refer == filing.dt_refer,
+        CvmFinancialLineItem.versao == filing.versao,
+        CvmFinancialLineItem.ordem_exerc == "ÚLTIMO",
+        CvmFinancialLineItem.base == base,
+        CvmFinancialLineItem.cd_conta.startswith(prefixo_cd_conta),
+        CvmFinancialLineItem.ds_conta == ds_conta_esperado,
+    )
+    return session.execute(stmt).scalar_one_or_none()
+
+
+def get_lucro_liquido_controladores_as_of(session: Session, cnpj: str, data_decisao: date, base: str = "con") -> float | None:
+    """Lucro líquido **atribuível aos controladores** — não o consolidado com
+    participação de minoritários, que infla o numerador em relação ao patrimônio dos
+    controladores (denominador). Busca por `DS_CONTA` dentro do prefixo `"3."` (DRE);
+    `None` se a linha não existir."""
+    filing = get_latest_filing_as_of(session, cnpj, "DFP", data_decisao)
+    if filing is None:
+        return None
+    linha = _linha_por_ds_conta(session, cnpj, filing, "3.", _DS_CONTA_LUCRO_LIQUIDO_CONTROLADORES, base)
+    return linha.vl_conta if linha else None
+
+
+def get_patrimonio_liquido_controladores_as_of(session: Session, cnpj: str, data_decisao: date, base: str = "con") -> float | None:
+    """Patrimônio líquido consolidado menos participação de acionistas não
+    controladores — consistente com o numerador (lucro dos controladores). `None` se
+    qualquer uma das duas linhas faltar (nunca assume participação de minoritários
+    zero por ausência — faltante ≠ zero, mesma disciplina do D&A na Seção 7.2)."""
+    filing = get_latest_filing_as_of(session, cnpj, "DFP", data_decisao)
+    if filing is None:
+        return None
+    total = _linha_por_ds_conta(session, cnpj, filing, "2.", _DS_CONTA_PATRIMONIO_LIQUIDO_CONSOLIDADO, base)
+    nao_controladores = _linha_por_ds_conta(session, cnpj, filing, "2.", _DS_CONTA_PARTICIPACAO_NAO_CONTROLADORES, base)
+    if total is None or nao_controladores is None:
+        return None
+    return total.vl_conta - nao_controladores.vl_conta
+
+
+def roe_raw(lucro_liquido_controladores: float, patrimonio_liquido_controladores: float) -> float | None:
+    """`None` (indefinido) quando `patrimônio_líquido <= 0` — armadilha mais traiçoeira
+    que a de `EBITDA <= 0` (Seção 7.2): empresa com prejuízo acumulado grande pode ter
+    patrimônio líquido negativo, e aí o ROE inverte de forma perversa — prejuízo dividido
+    por patrimônio negativo dá ROE **positivo**, empresa em situação terminal aparecendo
+    no topo do ranking de qualidade. Confirma que a categoria "indefinido" generaliza:
+    segundo gatilho independente (patrimônio, não EBITDA), mesmo tratamento mecânico
+    (`None`, imputado pela mediana do universo), semanticamente distinto e registrado."""
+    if patrimonio_liquido_controladores <= PATRIMONIO_INDEFINIDO_LIMIAR:
+        return None
+    return lucro_liquido_controladores / patrimonio_liquido_controladores
+
+
+def pearson_correlation(xs: list[float], ys: list[float]) -> float:
+    """Correlação de Pearson entre duas séries — usada para medir ortogonalidade entre
+    fatores (Seção 7.3): se dois fatores rankeiam o universo de forma muito parecida,
+    um deles adiciona pouca informação ao score composto. Implementação direta, sem
+    dependência nova — a mesma disciplina de manter o módulo sem `numpy`/`scipy`."""
+    n = len(xs)
+    media_x = sum(xs) / n
+    media_y = sum(ys) / n
+    covariancia = sum((x - media_x) * (y - media_y) for x, y in zip(xs, ys))
+    desvio_x = sum((x - media_x) ** 2 for x in xs) ** 0.5
+    desvio_y = sum((y - media_y) ** 2 for y in ys) ** 0.5
+    return covariancia / (desvio_x * desvio_y)
+
+
 def winsorize(values: list[float], lower_pct: float = WINSORIZE_LOWER_PCT, upper_pct: float = WINSORIZE_UPPER_PCT) -> list[float]:
     """Corta as caudas nos percentis `lower_pct`/`upper_pct` antes de qualquer média
     setorial — outlier num bucket de 3 desloca a média e contamina as outras duas.
