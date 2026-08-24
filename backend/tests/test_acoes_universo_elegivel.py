@@ -17,6 +17,8 @@ Fixtures reais:
 - `tests/fixtures/cvm_cadastro/cad_cia_aberta_itub_bbas_petr_real_extract.csv` —
   `SETOR_ATIV` real do cadastro CVM (`Bancos` para Itaú/BB, `Petróleo e Gás` para
   Petrobras).
+- `tests/fixtures/b3_setor/getdetail_real_samples.json` — classificação setorial real da
+  B3 (Seção 6.2) para as mesmas três empresas, taxonomia de produção.
 
 O teste de junção de fronteira (mesmo relógio nas três camadas) reusa fixtures já
 existentes (BBAS3/Banco do Brasil, `COTAHIST_A2024_real_extract.ZIP` +
@@ -26,11 +28,13 @@ convenção de fronteira inclusiva.
 """
 
 import csv
+import json
 from datetime import date
 from pathlib import Path
 
 from sqlalchemy import select
 
+from tradingbot.acoes.b3_setor import ingest_classification_snapshot
 from tradingbot.acoes.cnpj_ticker_map import build_cnpj_ticker_map, compute_vigencia, load_fca_identity
 from tradingbot.acoes.cotahist_ingestion import ingest_cotahist_year
 from tradingbot.acoes.cvm_ingestion import ingest_master_index
@@ -45,6 +49,7 @@ COTAHIST_2024_BBAS3 = FIXTURES / "cotahist" / "COTAHIST_A2024_real_extract.ZIP"
 DFP_2015 = FIXTURES / "cvm" / "dfp_master_index_2015_itub_bbas_petr_real_extract.csv"
 DFP_2024_BB = FIXTURES / "cvm" / "dfp_master_index_2024_real_extract.csv"
 CADASTRO = FIXTURES / "cvm_cadastro" / "cad_cia_aberta_itub_bbas_petr_real_extract.csv"
+B3_SETOR_FIXTURE = FIXTURES / "b3_setor" / "getdetail_real_samples.json"
 
 FCA_DIR = FIXTURES / "fca"
 CONFIABLE_FCA_YEARS = [2018, 2019, 2020, 2021, 2022, 2024, 2025]
@@ -87,6 +92,10 @@ def _setup_universo_2016(session):
     }
     build_cnpj_ticker_map(session, identity, vigencia, tickers_by_year, date(2026, 8, 20))
 
+    b3_fixture = json.loads(B3_SETOR_FIXTURE.read_text())
+    raw_entries = [v["raw"] | {"codeCVM": v["codeCVM"]} for v in b3_fixture.values()]
+    ingest_classification_snapshot(session, raw_entries, date(2026, 8, 21))
+
 
 def test_materializacao_2016_itub_bbas_petr_com_cnpj_classe_e_filing_corretos(tmp_path):
     """Teste de aceite da Seção 6: materializa o universo em 2016-07-15 (dentro da era
@@ -121,6 +130,13 @@ def test_materializacao_2016_itub_bbas_petr_com_cnpj_classe_e_filing_corretos(tm
     assert aceitos["ITUB4"].setor_ativ == "Bancos"
     assert aceitos["BBAS3"].setor_ativ == "Bancos"
     assert aceitos["PETR4"].setor_ativ == "Petróleo e Gás"
+
+    # taxonomia B3 real (Seção 6.2), lado a lado com a CVM — mesmas três empresas
+    assert aceitos["ITUB4"].setor_b3 == "Financeiro"
+    assert aceitos["ITUB4"].segmento_b3 == "Bancos"
+    assert aceitos["BBAS3"].setor_b3 == "Financeiro"
+    assert aceitos["PETR4"].setor_b3 == "Petróleo. Gás e Biocombustíveis"
+    assert aceitos["PETR4"].segmento_b3 == "Exploração. Refino e Distribuição"
 
     excluidos = {row.ticker: row.motivo for row in session.execute(select(UniversoExclusao)).scalars().all()}
     assert excluidos["ITUB3"] == "classe_secundaria"
@@ -237,6 +253,9 @@ def test_junta_fronteira_mesmo_relogio_preco_e_publicacao(tmp_path):
     universo = session.execute(select(UniversoElegivel)).scalar_one()
     assert universo.ticker == "BBAS3"
     assert universo.cnpj == BB_CNPJ
+    # nenhum snapshot B3 foi ingerido nesta sessao isolada - fallback declarado, None,
+    # nunca adivinhado (Secao 6.2)
+    assert universo.setor_b3 is None
 
     dt_receb_real = date(2025, 2, 19)
     filing_no_dia_exato = get_latest_filing_as_of(session, BB_CNPJ, "DFP", dt_receb_real)

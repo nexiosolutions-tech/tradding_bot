@@ -63,16 +63,17 @@ def test_parse_industry_classification_vazio_devolve_none():
 
 
 def test_ingest_classification_snapshot_cobertura_real(tmp_path):
-    """Duas empresas com classificação real (Petrobras, Itaú) e duas sem cobertura hoje
-    (registro antigo cancelado do Itaú, Banco Cruzeiro do Sul falido) — a mesma amostra
-    real que expôs o achado de cobertura de 85% sobre o universo de 2016."""
+    """Três empresas com classificação real (Petrobras, Itaú, Banco do Brasil) e duas
+    sem cobertura hoje (registro antigo cancelado do Itaú, Banco Cruzeiro do Sul falido)
+    — a mesma amostra real que expôs o achado de cobertura de 85% sobre o universo de
+    2016."""
     session = _session(tmp_path)
     fixture = _load_fixture()
     raw_entries = [v["raw"] | {"codeCVM": v["codeCVM"]} for v in fixture.values()]
 
     stats = ingest_classification_snapshot(session, raw_entries, date(2026, 8, 21))
 
-    assert stats.inserted == 2
+    assert stats.inserted == 3
     assert stats.sem_cobertura == 2
 
     petr = session.execute(
@@ -91,6 +92,14 @@ def test_ingest_classification_snapshot_cobertura_real(tmp_path):
     assert itau.setor == "Financeiro"
     assert itau.segmento == "Bancos"
 
+    bb = session.execute(
+        select(B3IndustryClassification).where(
+            B3IndustryClassification.cnpj == "00.000.000/0001-91"
+        )
+    ).scalar_one()
+    assert bb.setor == "Financeiro"
+    assert bb.segmento == "Bancos"
+
 
 def test_ingest_classification_snapshot_e_append_only(tmp_path):
     session = _session(tmp_path)
@@ -98,12 +107,12 @@ def test_ingest_classification_snapshot_e_append_only(tmp_path):
     raw_entries = [v["raw"] | {"codeCVM": v["codeCVM"]} for v in fixture.values()]
 
     first = ingest_classification_snapshot(session, raw_entries, date(2026, 8, 21))
-    assert first.inserted == 2
+    assert first.inserted == 3
 
     second = ingest_classification_snapshot(session, raw_entries, date(2026, 8, 21))
     assert second.inserted == 0
-    assert second.rejected_duplicate == 2
+    assert second.rejected_duplicate == 3
 
     # nova data_coleta: mesma empresa, snapshot novo, nao e duplicata
     third = ingest_classification_snapshot(session, raw_entries, date(2026, 9, 1))
-    assert third.inserted == 2
+    assert third.inserted == 3

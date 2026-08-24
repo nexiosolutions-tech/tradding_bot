@@ -36,6 +36,7 @@ import urllib.request
 from dataclasses import dataclass
 from datetime import date
 
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -82,6 +83,21 @@ def fetch_classification(code_cvm: str) -> dict | None:
     if not inner or not inner.get("cnpj") or not inner.get("industryClassification"):
         return None
     return inner
+
+
+def get_latest_b3_classification(session: Session, cnpj: str) -> B3IndustryClassification | None:
+    """A classificação B3 é atributo quase-estático (Seção 6.2), não point-in-time — não
+    existe conceito de "como era conhecida em `data_decisao`" aqui, só "a versão mais
+    recente coletada". Devolve o snapshot de `data_coleta` mais recente para o CNPJ, ou
+    `None` se a empresa nunca teve cobertura (deslistada antes de qualquer coleta, ou
+    payload vazio em todas as tentativas)."""
+    stmt = (
+        select(B3IndustryClassification)
+        .where(B3IndustryClassification.cnpj == cnpj)
+        .order_by(B3IndustryClassification.data_coleta.desc())
+        .limit(1)
+    )
+    return session.execute(stmt).scalar_one_or_none()
 
 
 @dataclass

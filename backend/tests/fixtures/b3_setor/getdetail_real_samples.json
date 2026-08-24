@@ -25,6 +25,19 @@
       "codeCVM": "19348"
     }
   },
+  "BBAS3": {
+    "codeCVM": "1023",
+    "raw": {
+      "issuingCompany": "BBAS",
+      "companyName": "BCO BRASIL S.A.",
+      "tradingName": "BRASIL",
+      "cnpj": "00000000000191",
+      "industryClassification": "Financeiro / Intermediários Financeiros / Bancos",
+      "status": "A",
+      "code": "BBAS3",
+      "codeCVM": "1023"
+    }
+  },
   "ITAU_ANTIGO_CANCELADO": {
     "codeCVM": "1279",
     "raw": {}

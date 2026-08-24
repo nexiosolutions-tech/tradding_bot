@@ -838,15 +838,28 @@ não percentil dentro do setor.** Percentil-dentro-do-setor degrada catastrofica
 bucket pequeno (percentil sobre 4 empresas não é estatística, é ordenação de quatro
 pontos) — e o achado da subseção abaixo mostra que bucket pequeno não é caso raro na B3,
 é comum. A correção padrão em quant: para cada métrica, calcular o valor **demeaned**
-(valor da empresa menos a média do setor de nível 1 B3 na data), depois tomar o percentil
-dessa série demeaned sobre o **universo elegível inteiro**, não sobre o setor. A diferença
-é o que cada forma precisa estimar — demeaning só precisa da **média** do setor
-(razoável com 3–4 nomes), percentil-dentro-do-setor precisa da **distribuição inteira**
-(não razoável com poucos nomes). Isso mantém o objetivo original — não comparar P/L de
-banco com o de mineradora — sem exigir a população que a B3 não tem. Setor com pelo menos
-3 empresas estima a própria média; abaixo disso, a empresa entra num bucket "outros" (sem
-neutralização setorial específica) em vez de ser descartada. Setorização via
-classificação B3, versionada.
+(valor da empresa menos a média do bucket setorial), depois tomar o percentil dessa série
+demeaned sobre o **universo elegível inteiro**, não sobre o setor. A diferença é o que
+cada forma precisa estimar — demeaning só precisa da **média** do setor (razoável com
+3–4 nomes), percentil-dentro-do-setor precisa da **distribuição inteira** (não razoável
+com poucos nomes). Isso mantém o objetivo original — não comparar P/L de banco com o de
+mineradora — sem exigir a população que a B3 não tem.
+
+**Winsorização antes do demeaning — não opcional com bucket pequeno.** A média de um
+setor com 3 empresas ainda é instável e sensível a outlier: uma métrica extrema de uma
+empresa em situação especial desloca a média e contamina o score das outras duas. Corta
+as caudas de cada métrica (percentis 1/99) antes de calcular qualquer média setorial —
+rotina em fatores, implementada e testada (`fatores.py`, `winsorize`).
+
+**Piso de bucket com fallback hierárquico declarado.** Abaixo de `min_bucket_size`
+empresas (padrão 3) no bucket, a média não é confiável. Em vez de cair direto num bucket
+"outros" sem neutralização, o fallback sobe a hierarquia real da B3 que a Seção 6.2 já
+materializa — `segmento` → `subsetor` → `setor` → universo elegível inteiro (sem
+neutralização) — parando no primeiro nível que atinge a população mínima. Implementado e
+testado (`compute_demeaned_percentiles`): cada empresa registra qual nível de bucket foi
+de fato usado (`bucket_usado`), auditável por construção. Regra idêntica em backtest e
+produção — mesmo princípio já aplicado à regra de dado faltante abaixo e à regra de saída
+por liquidez (Seção 8).
 
 **Matriz de aplicabilidade de fator por setor.** Banco não tem EV/EBITDA, dívida líquida
 nem capital de giro no sentido usual das demais empresas — o balanço de uma instituição
@@ -865,36 +878,69 @@ clássico de fator de valor. Métrica de valor baseada em lucro usa earnings yie
 (lucro/preço, o inverso do P/L): deficitárias ficam corretamente no fundo do ranking, sem
 precisar de tratamento especial.
 
-**Dado faltante: regra declarada, não implícita.** Quando uma empresa não tem o campo
-para um fator (demonstração incompleta, métrica não aplicável), duas opções — excluir a
-empresa daquele fator (risco: viés de seleção, sistematicamente afasta setores/empresas
-com reporte mais fraco) ou imputar a mediana do grupo (risco: número falso que não reflete
-a empresa real). Não existe resposta certa; existe resposta **declarada por fator na
-spec e idêntica no backtest e em produção** — a regra escolhida não pode divergir entre
-os dois ambientes, senão o backtest valida um comportamento que produção não reproduz.
+**Dado faltante vs. fator inaplicável — dois ramos diferentes, nunca confundidos.**
+Inaplicável (banco sem EV/EBITDA, decisão determinística por setor — matriz de
+aplicabilidade abaixo, ainda não implementada) é diferente de faltante (empresa que
+deveria ter o dado e não tem — não reportou, campo ausente no filing). Faltante tem regra
+declarada e **implementada** (`fatores.py`, `_preencher_faltantes`): imputação pela
+mediana do universo elegível inteiro, não exclusão (risco de exclusão: viés de seleção,
+afasta sistematicamente empresa de reporte mais fraco) — mesma regra em backtest e
+produção, idêntica, nunca implícita. Cada resultado registra se o valor foi imputado
+(`imputado`), auditável.
 
-**Por que a normalização acima existe: o piso setorial é achado real, não hipotético —
-mas dois números distintos, não confundir.** Medido contra dado real
-(`changes/2026-08-19-modulo-acoes-b3-secao-8-e-piso-setorial.md`): no vale de 2016 (113
-empresas passando o filtro de liquidez da Seção 6), agrupando por setor via `SETOR_ATIV`
-da CVM e mesmo depois de colapsar holdings no setor-base (aproximação da classificação
-B3), 22 de 27 setores ficaram abaixo de uma população de 6 — só Bancos, Metalurgia,
-Energia Elétrica, Construção Civil e Comércio sobreviveram.
-
-- **O que esse número decide:** a direção e a magnitude qualitativa — setor pequeno é
-  comum, não exceção, na B3. Isso justifica a mudança de arquitetura acima
-  (percentil-no-universo + demeaning em vez de percentil-dentro-do-setor), que degrada
-  suavemente com setor pequeno em vez de quebrar.
-- **O que esse número NÃO decide:** nenhum piso calibrado. `SETOR_ATIV` da CVM é mais
-  granular que a classificação B3 real que a spec assume para produção — o 22/27 usa a
-  taxonomia errada. E o casamento por nome (73%, sem `cnpj_ticker_map`) não é uma falha
-  aleatória: empresa que trocou de nome, foi incorporada ou é pequena e antiga tem mais
-  chance de não casar — exatamente o perfil que preenche setor pequeno. O 22/27 pode estar
-  sub ou superestimado, e a direção do viés não é conhecida. O piso de 3 nomes para
-  estimar média (acima) é escolha de desenho independente deste número, não calibrada por
-  ele — revisar quando a classificação B3 real e o `cnpj_ticker_map` existirem.
+**Por que a normalização acima existe: o piso setorial é achado real, medido três vezes,
+convergente — fechado na Seção 6.2, não hipotético.** Três medições independentes da
+mesma data (2016-02-29), cada uma corrigindo a cobertura da anterior — script solto com
+casamento por nome (22/27 setores CVM abaixo de população 6, cobertura 73%), depois
+`build_universo_elegivel` com join real por CNPJ (36/40, cobertura 100%, mesma taxonomia
+CVM granular), depois `b3_setor` na taxonomia B3 real de produção (**5 de 11, 45%,
+cobertura 85%** — o número que efetivamente calibra esta seção). Detalhe completo na
+Seção 6.2 e `changes/2026-08-21-modulo-acoes-b3-b3-setor-de-para.md`. O 5/11 é o cenário
+"meio a meio" pré-especificado antes de medir — nem o caso que abriria espaço para
+percentil-dentro-do-setor, nem o caso "sem mudança" — confirmando com o número de
+produção a decisão de demeaning por média tomada a partir do 22/27 direcional.
 
 **Score composto:** média ponderada dos percentis de fator, com pesos explícitos, versionados e justificados. Pesos não são otimizados livremente sobre o histórico — cada configuração testada é registrada no log de experimentos, porque **cada tentativa é insumo do DSR**, exatamente como no bot.
+
+### 7.1 Primeiro fator ponta a ponta: earnings yield (`fatores.py`, 2026-08-24)
+
+Camada de decisão de modelagem, não de fundação de dado — o rigor muda de "bate com a
+fonte?" para "tem justificativa econômica ou é mineração?". Earnings yield escolhido para
+implementar primeiro (família Valor, já justificado acima) porque expõe o encanamento
+inteiro (fallback de bucket, dado faltante, winsorização) num caso pequeno e auditável
+antes de multiplicar por sete fatores.
+
+**Fonte do lucro por ação verificada, não presumida.** A DRE consolidada da CVM já
+reporta `CD_CONTA` `"3.99.01.01"`/`"3.99.01.02"` = Lucro Básico por Ação, separado por
+classe (ON/PN) — não precisa derivar via ações em circulação (que exigiria uma fonte de
+capital social não verificada nesta rodada). `get_eps_as_of` usa `get_latest_filing_as_of`
+(Seção 6.1) para achar o balanço visível na data de decisão, depois busca o `CD_CONTA` da
+classe do ticker pelo sufixo numérico (`3`=ON, `4`=PN).
+
+**Teste de aceite, dado real, mesma data e universo que fecharam a Seção 6
+(2016-07-15)**: Itaú (`ITUB4`, EPS real R$4,30) e Banco do Brasil (`BBAS3`, EPS real
+R$5,03) com earnings yield positivo; **Petrobras (`PETR4`, EPS real **-R$2,67**, prejuízo
+real do exercício 2015 — queda do petróleo + baixas contábeis)** com earnings yield
+negativo, corretamente na ponta inferior do ranking demeaned/percentil, sem inversão de
+sinal. Com só três empresas no universo desta fixture, nenhum nível da hierarquia
+setorial atinge a população mínima sozinho — todas caem no bucket `universo`, resultado
+real esperado dado o tamanho do universo aqui (o fallback hierárquico foi testado à parte
+com caso ilustrativo do mecanismo, não dado de mercado, para provar a subida
+`segmento`→`subsetor`→`setor` isoladamente).
+
+**Bug achado e corrigido nesta rodada, antes de chegar a produção**: `winsorize` usava
+índice de percentil por truncamento (`int`), que para `n=3` mapeava o percentil 99 para o
+valor do meio em vez do máximo, cortando incorretamente o maior valor de uma amostra
+pequena. Corrigido para arredondamento (`round`) — amostra pequena (o caso comum na B3,
+Seção 6.2) não perde nada aos percentis 1/99 por construção, só corta cauda quando a
+amostra é grande o suficiente para o percentil não colapsar no extremo. Testado com
+regressão explícita do caso `n=3`.
+
+**Pendente**: matriz de aplicabilidade por setor (earnings yield se aplica a todo setor,
+não exercita o ramo "inaplicável" — próximo passo, testado com um banco e uma
+industrial); demais fatores das famílias Qualidade/Saúde financeira/Crescimento/Momentum/
+Tamanho, cada um com justificativa econômica própria antes de entrar; composição do score
+só depois dos fatores individuais saírem certos.
 
 ## 8. Motor consciente da carteira
 
@@ -1132,7 +1178,7 @@ seletor de moedas — mas sem implementar nada além da B3 agora.
 |---|---|---|
 | 1 | Ingestão CVM + cotações, com camada point-in-time | consulta histórica em qualquer data retorna só o que era público naquela data, com teste automatizado provando — **índice mestre CVM + consulta as-of + preço bruto COTAHIST normalizado + eventos societários tipo/data + `cnpj_ticker_map` (identidade CNPJ↔ticker com vigência e consulta as-of) implementados e testados contra dado real, 2026-08-20** (`backend/src/tradingbot/acoes/`); ingestão de itens financeiros genéricos (todos os tipos de demonstração, todas as empresas) e magnitude de eventos societários (bloqueia só momentum, Seção 5.3.1) seguem pendentes — as três fundações point-in-time (identidade, publicação, preço) têm chão de código sob os pés para a Seção 6 (Fase 2) |
 | 2 | Universo elegível + eventos corporativos + survivorship | universo reconstruído corretamente para datas passadas — **`universo_elegivel` (junção real de identidade+preço+publicação, precedência de exclusão explícita, materialização append-only) implementado e testado contra dado real, 2026-08-20** (`backend/src/tradingbot/acoes/universo_elegivel.py`); teste de aceite materializando 2016-07-15 (`ITUB4`/`BBAS3`/`PETR4` com CNPJ, classe e filing corretos); **de-para para a taxonomia setorial real da B3 (`b3_setor.py`) fechado 2026-08-21** — 11 setores de nível 1, 5/11 abaixo de população 6 (85% de cobertura sobre o universo de 2016), confirmando com o número de produção a decisão de demeaning por média — série completa 2015-2026 segue pendente |
-| 3 | Cálculo de fatores + percentis setoriais | ficha do ativo funcional; camada de evidência já entrega valor |
+| 3 | Cálculo de fatores + percentis setoriais | ficha do ativo funcional; camada de evidência já entrega valor — **primeiro fator ponta a ponta (earnings yield) implementado e testado contra dado real, 2026-08-24** (`backend/src/tradingbot/acoes/fatores.py`): winsorização, demeaning com fallback hierárquico B3 (segmento→subsetor→setor→universo), dado faltante imputado pela mediana (declarado); matriz de aplicabilidade e demais fatores seguem pendentes |
 | 4 | Backtest + benchmarks + teste de nulidade | régua honesta operando |
 | 5 | Score composto + gate de promoção | primeiro conjunto submetido ao gate (pode reprovar) |
 | 6 | Motor de carteira + painel do aporte | relatório mensal completo |

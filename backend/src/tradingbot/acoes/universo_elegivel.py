@@ -6,6 +6,14 @@ persistida) e, separadamente demonstrado no teste de aceite, publicação
 (`pointintime.get_latest_filing_as_of`). Opera sobre as tabelas já persistidas pelos
 módulos anteriores — nunca re-parseia ZIP da COTAHIST aqui, essa camada já foi ingerida.
 
+Também materializa `setor_ativ` (CVM, `SETOR_ATIV` — cobertura de 100% sobre CNPJ
+resolvido, mas taxonomia mais granular que a produção assume) e, lado a lado,
+`setor_b3`/`subsetor_b3`/`segmento_b3` (`b3_setor.get_latest_b3_classification` — taxonomia
+de produção real, mas só cobre empresa listada hoje, Seção 6.2). Quando não há
+classificação B3 para o CNPJ, os três campos ficam `None` — fallback declarado, nunca
+adivinhado; a Seção 7 decide como usar os dois lados (provavelmente B3 quando disponível,
+CVM como fallback), a Seção 6 só materializa o que é conhecido de cada fonte.
+
 **Mesmo relógio nas três consultas as-of**: todas usam fronteira inclusiva em
 `data_decisao` (`trade_date <= data_decisao` para preço, `data_inicio_vigencia <=
 data_decisao <= data_fim_vigencia` para identidade, `dt_receb <= data_decisao` para
@@ -39,6 +47,7 @@ from sqlalchemy import distinct, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from tradingbot.acoes.b3_setor import get_latest_b3_classification
 from tradingbot.acoes.cnpj_ticker_map import get_cnpj_as_of
 from tradingbot.acoes.models import CotahistPrice, UniversoElegivel, UniversoExclusao
 
@@ -172,11 +181,15 @@ def build_universo_elegivel(
             _excluir(ticker, "historico_insuficiente")
             continue
 
+        b3_classificacao = get_latest_b3_classification(session, cnpj)
         entry = UniversoElegivel(
             data_decisao=data_decisao,
             ticker=ticker,
             cnpj=cnpj,
             setor_ativ=setor_by_cnpj.get(cnpj),
+            setor_b3=b3_classificacao.setor if b3_classificacao else None,
+            subsetor_b3=b3_classificacao.subsetor if b3_classificacao else None,
+            segmento_b3=b3_classificacao.segmento if b3_classificacao else None,
             volume_mediano=liquidos[ticker],
         )
         try:

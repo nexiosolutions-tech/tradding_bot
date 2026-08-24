@@ -211,6 +211,12 @@ class UniversoElegivel(Base):
     lógica do filtro mude depois — reprodutibilidade exige que o universo de uma data
     passada continue sendo o que foi calculado naquele momento. `UniqueConstraint` é a
     garantia estrutural, não uma checagem de aplicação.
+
+    **Dois setores lado a lado, de propósito.** `setor_ativ` (CVM, granular, cobertura
+    de 100% sobre empresa com CNPJ resolvido) e `setor_b3`/`subsetor_b3`/`segmento_b3`
+    (B3, taxonomia de produção, só cobre empresa listada hoje — Seção 6.2) — a Seção 7
+    decide qual usar e como cair de um para o outro quando o B3 não cobrir; a Seção 6 só
+    materializa o que é conhecido de cada fonte, nunca escolhe por ela.
     """
 
     __tablename__ = "universo_elegivel"
@@ -223,6 +229,9 @@ class UniversoElegivel(Base):
     ticker: Mapped[str] = mapped_column(String, index=True)
     cnpj: Mapped[str] = mapped_column(String, index=True)
     setor_ativ: Mapped[str | None] = mapped_column(String, nullable=True)
+    setor_b3: Mapped[str | None] = mapped_column(String, nullable=True)
+    subsetor_b3: Mapped[str | None] = mapped_column(String, nullable=True)
+    segmento_b3: Mapped[str | None] = mapped_column(String, nullable=True)
     volume_mediano: Mapped[float] = mapped_column(Float)
 
 
