@@ -1090,6 +1090,73 @@ fabricado aqui só para fechar a pergunta.
 **Pendente**: correlação real sobre o universo de 115 empresas (a medição que decide se
 ROE adiciona informação genuína); demais famílias de fator; Seção 8 ainda sem código.
 
+### 7.4 Correlação real sobre as 115 empresas — a medição que fecha (ou não) a Seção 7 com três fatores (2026-08-25)
+
+Medição completa, não a amostra de `n=3` da Seção 7.3: as 115 empresas do universo de
+2016-02-29 (Seção 6.1), earnings yield e ROE calculados ponta a ponta para cada uma —
+mesmo `get_latest_filing_as_of`, mesma disciplina point-in-time, nenhum atalho.
+
+**Achado que confirma por que a rigor do point-in-time importa aqui, não só nos casos já
+conhecidos**: 62 das 114 empresas com algum filing visível em 2016-02-29 resolveram para
+o balanço do exercício **2014** (publicado 2015), não 2015 — a maioria das DFPs de 2015
+só foi publicada entre março e junho de 2016, depois da data de decisão. Confirma
+exatamente o que seria esperado de uma consulta point-in-time honesta: a maior parte do
+universo, numa data no início do ano, ainda está reportando o exercício anterior.
+
+**Achado novo de fonte, descoberto medindo, não hipotético**: os arquivos de item
+financeiro da CVM (`DRE_con_AAAA.csv`, `BPP_con_AAAA.csv` etc.) **só contêm a versão mais
+recente já retificada de cada filing — não as versões antigas que estavam vigentes numa
+data de decisão passada.** Confirmado contra o caso real do Banco do Brasil: o índice
+mestre mostra 3 versões do balanço de 2015 (`dt_receb` 2016-02-25/2016-03-28/2016-06-02);
+em 2016-02-29, só a versão 1 estava publicamente visível — mas o arquivo `DRE_con_2015.csv`
+baixável hoje só tem a versão 3. O módulo recusa corretamente usar a versão errada (isso
+seria vazamento de point-in-time disfarçado de dado disponível) — o resultado é `None`
+(faltante), não um número calculado com a versão errada. Distinto de "empresa não
+reportou": é "a CVM não disponibiliza mais o conteúdo da versão que estava vigente".
+Afeta qualquer consulta de fator (não só EPS/ROE) numa janela entre a publicação inicial
+e a retificação final de uma empresa — registrado como limitação de fonte, não bug.
+
+**Composição do `n` faltante** (34 de 115 empresas com pelo menos um dos dois fatores
+ausente): 10 por versão indisponível (achado acima), 6 sem nenhuma linha no arquivo de
+item para o `(CNPJ, dt_refer)` resolvido, 1 sem filing algum visível na data, e os ~17
+restantes por estrutura de conta (`DS_CONTA`) não encontrada apesar da versão certa
+estar disponível — a cauda que já era esperada de reporte heterogêneo.
+
+**`n` efetivo = 81 de 115 (70%)** — as empresas com earnings yield **e** ROE definidos ao
+mesmo tempo (nem faltante, nem indefinido, nem imputado), a única base sobre a qual a
+correlação tem significado.
+
+| | Bruta (valor cru) | **Demeaned (o que o score usa)** |
+|---|---|---|
+| Correlação (Pearson, `n=81`) | 0,28 | **0,40** |
+
+**A correlação demeaned veio mais alta que a bruta — direção oposta à hipótese de
+trabalho, e vale entender por quê em vez de forçar a leitura esperada.** A hipótese
+registrada na Seção 7.3 era que o demeaning poderia reduzir a correlação (qualidade e
+valor divergindo dentro do setor). O resultado real sugere o oposto: parte da correlação
+bruta pode estar sendo **amortecida** por efeito de setor — banco tem ROE
+estruturalmente alto mas também earnings yield próprio (mercado já precifica o setor
+diferente), um efeito de nível que empurra na direção contrária dentro do bruto. Depois
+do demeaning (comparação dentro do próprio setor), sobra mais puramente o efeito
+mecânico esperado — os dois fatores compartilham lucro no numerador, então alguma
+correlação positiva é estrutural, não evidência de que medem o mesmo conceito (Seção
+7.3). **0,40 é moderado**: acima de zero (não são estatisticamente independentes, nem
+deveriam ser), mas bem abaixo do limiar de 0,7 que sinalizaria redundância.
+
+**Decisão de escopo da Seção 7, conforme o critério pré-especificado**: correlação
+demeaned moderada (0,40, não baixa nem alta) — dentro da faixa que o usuário definiu como
+suficiente para fechar a Seção 7 com os três fatores implementados (earnings yield,
+dívida líquida/EBITDA, ROE — três famílias distintas: valor, alavancagem, qualidade) e
+seguir para o backtest (Seção 9), em vez de implementar as famílias restantes
+(Crescimento, Momentum — bloqueado por magnitude de evento, Dividendos — bloqueado por
+cobertura de proventos, Tamanho) antes de saber se a abordagem tem qualquer poder. É o
+backtest e o teste de nulidade (Seção 9/10) que decidem isso, não mais fatores.
+
+**Pendente**: correlação de três vias incluindo dívida líquida/EBITDA (parcialmente
+inaplicável a banco, precisa de tratamento diferente na matriz de correlação — não
+medido nesta rodada); demais famílias de fator, retomadas só se o backtest com os três
+fatores atuais não tiver poder suficiente.
+
 ## 8. Motor consciente da carteira
 
 É o que separa este sistema de um screener. O relatório mensal não responde "quais as melhores ações", e sim:
@@ -1326,7 +1393,7 @@ seletor de moedas — mas sem implementar nada além da B3 agora.
 |---|---|---|
 | 1 | Ingestão CVM + cotações, com camada point-in-time | consulta histórica em qualquer data retorna só o que era público naquela data, com teste automatizado provando — **índice mestre CVM + consulta as-of + preço bruto COTAHIST normalizado + eventos societários tipo/data + `cnpj_ticker_map` (identidade CNPJ↔ticker com vigência e consulta as-of) implementados e testados contra dado real, 2026-08-20** (`backend/src/tradingbot/acoes/`); ingestão de itens financeiros genéricos (todos os tipos de demonstração, todas as empresas) e magnitude de eventos societários (bloqueia só momentum, Seção 5.3.1) seguem pendentes — as três fundações point-in-time (identidade, publicação, preço) têm chão de código sob os pés para a Seção 6 (Fase 2) |
 | 2 | Universo elegível + eventos corporativos + survivorship | universo reconstruído corretamente para datas passadas — **`universo_elegivel` (junção real de identidade+preço+publicação, precedência de exclusão explícita, materialização append-only) implementado e testado contra dado real, 2026-08-20** (`backend/src/tradingbot/acoes/universo_elegivel.py`); teste de aceite materializando 2016-07-15 (`ITUB4`/`BBAS3`/`PETR4` com CNPJ, classe e filing corretos); **de-para para a taxonomia setorial real da B3 (`b3_setor.py`) fechado 2026-08-21** — 11 setores de nível 1, 5/11 abaixo de população 6 (85% de cobertura sobre o universo de 2016), confirmando com o número de produção a decisão de demeaning por média — série completa 2015-2026 segue pendente |
-| 3 | Cálculo de fatores + percentis setoriais | ficha do ativo funcional; camada de evidência já entrega valor — **três fatores ponta a ponta implementados e testados contra dado real** (`backend/src/tradingbot/acoes/fatores.py`, todos 2026-08-24): earnings yield (winsorização, demeaning hierárquico B3); dívida líquida/EBITDA (matriz de aplicabilidade, point-in-time de três demonstrações, renormalização de pesos); **ROE**, primeiro a cruzar duas demonstrações num quociente, categoria "indefinido" generalizada para um segundo gatilho (patrimônio ≤ 0), demeaning setorial provado com banco/industrial, correlação com earnings yield medida (≈0,92 sobre `n=3`, pendente confirmar sobre o universo de 115 empresas) — demais famílias de fator e o motor de carteira completo (Seção 8) seguem pendentes |
+| 3 | Cálculo de fatores + percentis setoriais | **fechada com três fatores, decisão de escopo tomada em 2026-08-25**: earnings yield, dívida líquida/EBITDA e ROE implementados ponta a ponta contra dado real (`backend/src/tradingbot/acoes/fatores.py`) — winsorização, demeaning hierárquico B3, matriz de aplicabilidade, renormalização de pesos, categoria "indefinido" generalizada. Correlação demeaned real sobre as 115 empresas de 2016 (`n` efetivo 81/115): **0,40, moderada** — dentro da faixa que fecha a Seção 7 com estes três fatores (valor/alavancagem/qualidade) e segue para o backtest (Seção 9), em vez de implementar as famílias restantes antes de medir se a abordagem tem poder. Demais famílias (Crescimento, Momentum, Dividendos, Tamanho) e o motor de carteira completo (Seção 8) ficam pendentes, retomados só se o backtest não tiver poder suficiente com os três atuais |
 | 4 | Backtest + benchmarks + teste de nulidade | régua honesta operando |
 | 5 | Score composto + gate de promoção | primeiro conjunto submetido ao gate (pode reprovar) |
 | 6 | Motor de carteira + painel do aporte | relatório mensal completo |
