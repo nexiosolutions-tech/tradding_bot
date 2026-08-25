@@ -1157,6 +1157,74 @@ inaplicável a banco, precisa de tratamento diferente na matriz de correlação 
 medido nesta rodada); demais famílias de fator, retomadas só se o backtest com os três
 fatores atuais não tiver poder suficiente.
 
+### 7.5 A limitação de versão retificada, medida — incidência, perfil, e a decisão de desenho que ela força (2026-08-25)
+
+O achado da Seção 7.4 (arquivos de item da CVM só têm a versão mais recente retificada,
+não a vigente numa data de decisão passada) foi medido em incidência, perfil de quem cai,
+e comparado com uma fonte alternativa antes de aceitar a limitação como estrutural.
+
+**Fonte alternativa verificada, não presumida indisponível.** O índice mestre tem
+`ID_DOC`/`LINK_DOC` por versão, apontando para `rad.cvm.gov.br` — em princípio, o
+documento específico de cada versão existe e é endereçável. Testado contra dado real
+(Banco do Brasil, versão 1, `NumeroSequencialDocumento=53614`): o sistema migrou para
+`ENETWeb`, uma aplicação ASP.NET WebForms orientada a sessão (`__VIEWSTATE`/
+`__EVENTVALIDATION` presentes, sem endpoint de download direto acessível por HTTP
+simples) — recuperar o conteúdo de uma versão antiga exigiria simular navegação
+interativa por empresa/documento, uma integração ordens de magnitude mais cara que o
+portal de dados abertos usado no resto da spec, e possivelmente um formato de documento
+diferente (XBRL/PDF) exigindo extração própria. **Não descartado por suposição — testado,
+e fechado com a mesma postura que fechou o código interno da CVM sem par derivável
+(Seção 5.6): existe em princípio, não é viável em lote dentro de esforço razoável.**
+
+**Medição de incidência, dois anos reais (2015-02-27 e 2016-02-29, universos já
+materializados na Seção 6.1/6.2)**:
+
+| | 2015 | 2016 |
+|---|---|---|
+| Universo (N) | 125 | 115 |
+| Versão divergente (qualquer fator) | 9 (7,2%) | 10 (8,7%) |
+| `n` efetivo — **os dois fatores** presentes | 88 (70,4%) | 81 (70,4%) |
+| `n` efetivo — **pelo menos um** fator presente | 106 (84,8%) | 97 (84,3%) |
+
+Incidência estável entre os dois anos adjacentes, não uma escalada — consistente com o
+mecanismo (o efeito cresce com o tempo decorrido *desde a data de decisão até hoje*, e
+os dois anos medidos estão igualmente distantes de 2026). Série completa 2015-2026 seria
+necessária para confirmar se anos mais recentes (2024-2026, menos tempo decorrido) têm
+incidência menor — não medida nesta rodada (depende da ingestão completa, Seção
+12/pendências).
+
+**Perfil de quem cai — o achado que importa mais que o número.** Tamanho (mediana de
+`VOLTOT`) das empresas com versão divergente **não** difere sistematicamente do universo
+geral (2015: R$11,4M vs. R$11,8M da mediana geral; 2016: R$21,2M vs. R$12,3M — se algo,
+mais líquidas, não menos) — não é o viés "empresa pequena e obscura" que a hipótese de
+trabalho cogitava. **Mas setor concentra fortemente: bancos são 5 dos 9 casos (2015) e 5
+dos 10 (2016) — mais da metade das ausências por este motivo, contra ~14% de
+participação de bancos no universo total.** Não aleatório. E atinge justamente o setor
+onde ROE (que se aplica a banco, Seção 7.3) mais precisaria de dado real: uma fração
+maior dos ROEs de banco no bucket setorial vem de imputação pela mediana, não de dado
+próprio — o bucket "Bancos" do demeaning tem menos observações reais do que o número
+bruto de bancos no universo sugere. Registrado como ressalva à interpretação da Seção
+7.3, não como invalidação — a direção do achado (banco tem ROE estruturalmente mais alto,
+demeaning neutraliza) continua válida, só com um pouco menos de dado real sustentando-a
+no lado bancário.
+
+**A decisão de desenho que os dois números de `n` efetivo forçam.** Exigir os dois
+fatores presentes trava em 70,4% nos dois anos — abaixo de qualquer piso de cobertura
+razoável (a Seção 5.6 já usa 85% para identidade). Permitir score composto parcial (pelo
+menos um fator, via a renormalização de pesos já implementada em `compute_score_composto`,
+Seção 7.2) sobe para 84,3-84,8% — na fronteira do piso de 85%, não folgado, mas muito
+mais perto. **Recomendação registrada, não decisão tomada aqui**: o desenho do gate de
+promoção (Seção 10) deveria aceitar score composto com fatores parciais como caminho
+padrão, não como exceção — a alternativa (exigir todos os fatores presentes) descarta
+~30% do universo em ambos os anos medidos por um motivo que não é sobre a qualidade da
+empresa, é sobre disponibilidade de versão retificada na fonte.
+
+**Pendente**: confirmar se 84,3-84,8% se sustenta (ou sobe) em anos mais recentes da era
+avaliável, antes de fechar o piso definitivo do gate; diagnóstico opcional (calcular
+ROE/earnings yield com a versão errada só para comparação, nunca para uso) não feito
+nesta rodada — a concentração setorial já é sinal suficiente para a ressalva registrada
+sem precisar dele.
+
 ## 8. Motor consciente da carteira
 
 É o que separa este sistema de um screener. O relatório mensal não responde "quais as melhores ações", e sim:
