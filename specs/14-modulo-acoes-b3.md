@@ -851,15 +851,21 @@ empresa em situação especial desloca a média e contamina o score das outras d
 as caudas de cada métrica (percentis 1/99) antes de calcular qualquer média setorial —
 rotina em fatores, implementada e testada (`fatores.py`, `winsorize`).
 
-**Piso de bucket com fallback hierárquico declarado.** Abaixo de `min_bucket_size`
-empresas (padrão 3) no bucket, a média não é confiável. Em vez de cair direto num bucket
-"outros" sem neutralização, o fallback sobe a hierarquia real da B3 que a Seção 6.2 já
-materializa — `segmento` → `subsetor` → `setor` → universo elegível inteiro (sem
-neutralização) — parando no primeiro nível que atinge a população mínima. Implementado e
-testado (`compute_demeaned_percentiles`): cada empresa registra qual nível de bucket foi
-de fato usado (`bucket_usado`), auditável por construção. Regra idêntica em backtest e
-produção — mesmo princípio já aplicado à regra de dado faltante abaixo e à regra de saída
-por liquidez (Seção 8).
+**Piso de bucket com fallback hierárquico declarado — população e média contam só dado
+real, nunca imputado (achado da Seção 7.5).** Abaixo de `min_bucket_size` empresas
+(padrão 3) **com dado real** no bucket, a média não é confiável. Em vez de cair direto
+num bucket "outros" sem neutralização, o fallback sobe a hierarquia real da B3 que a
+Seção 6.2 já materializa — `segmento` → `subsetor` → `setor` → universo elegível inteiro
+(sem neutralização) — parando no primeiro nível que atinge a população mínima **de
+empresas com dado real**, não de empresas total (real + imputada). Achado real que
+motivou essa exigência: um setor com alta incidência de dado faltante pode ter a maioria
+dos membros imputados pela mediana do universo — contar esses imputados na população do
+bucket faria a "média do setor" ser, na prática, a mediana do universo disfarçada de
+média setorial, deslocando o demeaned de toda empresa no bucket, inclusive as com dado
+real. Implementado e testado (`compute_demeaned_percentiles`): cada empresa registra qual
+nível de bucket foi de fato usado (`bucket_usado`), auditável por construção. Regra
+idêntica em backtest e produção — mesmo princípio já aplicado à regra de dado faltante
+abaixo e à regra de saída por liquidez (Seção 8).
 
 **Matriz de aplicabilidade de fator por setor.** Banco não tem EV/EBITDA, dívida líquida
 nem capital de giro no sentido usual das demais empresas — o balanço de uma instituição
@@ -1199,31 +1205,71 @@ geral (2015: R$11,4M vs. R$11,8M da mediana geral; 2016: R$21,2M vs. R$12,3M —
 mais líquidas, não menos) — não é o viés "empresa pequena e obscura" que a hipótese de
 trabalho cogitava. **Mas setor concentra fortemente: bancos são 5 dos 9 casos (2015) e 5
 dos 10 (2016) — mais da metade das ausências por este motivo, contra ~14% de
-participação de bancos no universo total.** Não aleatório. E atinge justamente o setor
-onde ROE (que se aplica a banco, Seção 7.3) mais precisaria de dado real: uma fração
-maior dos ROEs de banco no bucket setorial vem de imputação pela mediana, não de dado
-próprio — o bucket "Bancos" do demeaning tem menos observações reais do que o número
-bruto de bancos no universo sugere. Registrado como ressalva à interpretação da Seção
-7.3, não como invalidação — a direção do achado (banco tem ROE estruturalmente mais alto,
-demeaning neutraliza) continua válida, só com um pouco menos de dado real sustentando-a
-no lado bancário.
+participação de bancos no universo total.** Não aleatório.
 
-**A decisão de desenho que os dois números de `n` efetivo forçam.** Exigir os dois
-fatores presentes trava em 70,4% nos dois anos — abaixo de qualquer piso de cobertura
-razoável (a Seção 5.6 já usa 85% para identidade). Permitir score composto parcial (pelo
-menos um fator, via a renormalização de pesos já implementada em `compute_score_composto`,
-Seção 7.2) sobe para 84,3-84,8% — na fronteira do piso de 85%, não folgado, mas muito
-mais perto. **Recomendação registrada, não decisão tomada aqui**: o desenho do gate de
-promoção (Seção 10) deveria aceitar score composto com fatores parciais como caminho
-padrão, não como exceção — a alternativa (exigir todos os fatores presentes) descarta
-~30% do universo em ambos os anos medidos por um motivo que não é sobre a qualidade da
-empresa, é sobre disponibilidade de versão retificada na fonte.
+**Diagnóstico de nível, não só de cobertura — o ROE calculado com a versão errada
+(nunca usado como valor, só como sonda) mostra os bancos excluídos sistematicamente mais
+baixos que os incluídos, nos dois anos**: mediana dos incluídos 18,0% (2015)/17,6% (2016)
+contra mediana dos excluídos 14,4%/14,8% — direção consistente nos dois anos, amostra
+pequena (2 incluídos vs. 5 excluídos por ano, não robusto para magnitude, mas o
+sinal direcional se repete). **Achado mais específico embutido nele**: em ambos os anos,
+o setor "Bancos" tinha só 2 dos 7 membros com ROE real — os outros 5 imputados pela
+mediana do universo inteiro (bem mais baixa que o nível bancário típico).
 
-**Pendente**: confirmar se 84,3-84,8% se sustenta (ou sobe) em anos mais recentes da era
-avaliável, antes de fechar o piso definitivo do gate; diagnóstico opcional (calcular
-ROE/earnings yield com a versão errada só para comparação, nunca para uso) não feito
-nesta rodada — a concentração setorial já é sinal suficiente para a ressalva registrada
-sem precisar dele.
+**Bug real achado e corrigido a partir desse diagnóstico, antes de chegar ao backtest**:
+`compute_demeaned_percentiles` contava população e calculava média de bucket incluindo
+os valores **imputados** — com 5 dos 7 bancos imputados, `len(grupo)=7 >= 3` passava o
+piso de população, e a média "dos bancos" saía calculada com 5 valores que eram na
+verdade a mediana do universo inteiro, não dado bancário — diluindo o demeaned de *toda*
+empresa no bucket, inclusive as com ROE real. Corrigido: população e média de bucket
+usam só valores reais; um bucket com poucos membros reais sobe a hierarquia mesmo que a
+contagem total (real + imputada) pareça suficiente. Testado
+(`test_bucket_com_maioria_imputada_sobe_hierarquia_em_vez_de_diluir`).
+
+Com a correção, os dois bancos reais de cada ano (2015: `BBTG11`/`ITUB4`; 2016:
+`ITUB4`/`SANB11`) são demeaned contra a média do **universo inteiro** (nenhum nível da
+hierarquia bancária tem 3+ membros reais), não contra um bucket "Bancos" fantasma. Isso
+enfraquece a comparação banco-contra-banco que a Seção 7.3 demonstrou com dado real (que
+usava uma data diferente, 2016-07-15, onde a versão do BB já estava disponível) — a
+ressalva correta não é "a Seção 7.3 está errada", é "a comparação banco-contra-banco só
+funciona quando o setor tem massa real suficiente, e a versão retificada reduz essa massa
+justamente no setor onde ROE mais importa".
+
+**A decisão de desenho que os dois números de `n` efetivo forçam — corrigida após
+revisão.** Exigir os dois fatores presentes trava em 70,4% nos dois anos. Permitir score
+composto parcial (pelo menos um fator, via `compute_score_composto`, Seção 7.2) sobe para
+84,3% (2016) e 84,8% (2015). **Os dois ficam abaixo do piso de 85% de identidade — não
+"na fronteira, passando por pouco". Reusar ou afrouxar esse piso para caber seria o
+mesmo erro que a Seção 5.6 já corrigiu uma vez (piso de cobertura medindo o risco
+errado).** O piso de 85% foi desenhado para cobertura de **identidade**, onde o erro
+corrompe em silêncio (empresa errada inteira no ranking). Cobertura de **fator** é outra
+natureza — ausência visível, contável, e mitigada pela renormalização — então precisa de
+piso próprio, com sua própria justificativa, não o número emprestado.
+
+**Recomendação de desenho para a Seção 10, não decidida aqui**: em vez de inventar um
+piso de porcentagem novo para cobertura de fator, generalizar o critério de amostra
+transversal que a Seção 10 já usa (**N≥100** do universo elegível total, critério 2) para
+o **universo com score computável** — a mesma preocupação (amostra transversal pequena
+demais para poder estatístico) já é o motivo por trás do N=100 original; cobertura de
+fator só decide quantas empresas *de fato* entram nessa contagem. Aplicando isso aos dois
+anos medidos: 2015 tem 106 empresas com score computável (**passa** N≥100); **2016 tem
+97, abaixo de 100 — não passaria pelo critério 2 já existente, aplicado ao denominador
+certo.** Isso é mais rigoroso que qualquer piso percentual novo, e não precisa de número
+inventado — reusa o que já está pré-registrado, só corrige o denominador.
+
+**Requisito novo para o backtest (Seção 9/10): relatório segmentado por setor.** Se o
+conjunto de fatores parecer funcionar mas a vantagem estiver concentrada no setor
+financeiro — o setor mais afetado pela versão retificada e o único onde ROE tem massa
+real reduzida — não há como distinguir sinal genuíno de artefato da limitação de fonte.
+Mesmo espírito do critério de degradação por regime (Seção 10, critério 5: não concentrar
+a vantagem num único setor ou período) — aqui vira exigência de reportar, não só verificar
+no gate: o relatório do backtest precisa de uma linha própria para o desempenho do setor
+financeiro, separada do agregado.
+
+**Pendente**: confirmar se o `n` de score computável (não a fração) se sustenta acima de
+100 em anos mais recentes da era avaliável (2024-2026, onde a versão retificada deveria
+pesar menos); piso de cobertura de fator, se algum diferente do N≥100 generalizado for
+necessário, ainda como decisão de desenho separada e justificada, não tomada aqui.
 
 ## 8. Motor consciente da carteira
 
@@ -1375,9 +1421,22 @@ Um conjunto de fatores só vai a produção se, simultaneamente:
    mínimo de população da Seção 7 — o total de 113 escondia essa fragmentação inteira.
    Ver `changes/2026-08-19-modulo-acoes-b3-medicao-universo.md` e
    `changes/2026-08-19-modulo-acoes-b3-secao-8-e-piso-setorial.md`.
+
+   **Atualização (Seção 7.5): N=100 passa a morder de verdade quando aplicado ao
+   denominador certo.** O texto acima falava do universo elegível *total* (liquidez +
+   identidade). Com os fatores implementados, existe um universo mais estreito — o
+   subconjunto com **score composto computável** (pelo menos um fator presente,
+   descontando a limitação de versão retificada da CVM, Seção 7.5). Medido nos dois anos
+   reais já auditados: 2015 tem 106 empresas com score computável (passa); **2016 tem 97,
+   abaixo de 100 — reprovaria pelo critério 2 já existente, se aplicado a este
+   denominador em vez do universo bruto.** Recomendação registrada, decisão da Seção 10 a
+   confirmar: aplicar N≥100 ao universo com score computável, não ao universo elegível
+   bruto — generaliza o critério já pré-registrado em vez de inventar um piso de
+   cobertura de fator novo (que teria o risco de ser calibrado para caber, não
+   justificado por natureza de risco própria).
 3. Fica fora da nuvem nula com p < 0,05.
 4. Tem DSR positivo, contabilizando **todas** as configurações de peso testadas.
-5. Não concentra a vantagem inteira em um único setor ou em um único período — segmentação com piso de amostra mínima. Ver nota do critério 2: este é o critério com poder real de reprovação nesta frente, não o 2.
+5. Não concentra a vantagem inteira em um único setor ou em um único período — segmentação com piso de amostra mínima. Ver nota do critério 2: este é o critério com poder real de reprovação nesta frente, não o 2. **Setor financeiro exige linha própria no relatório do backtest (Seção 7.5/9)**: é o setor mais afetado pela limitação de versão retificada e o único onde o bucket de ROE tem massa real reduzida — sem reportar separado, não há como distinguir vantagem genuína de artefato da limitação de fonte.
 6. Turnover compatível com o orçamento de custo definido.
 
 Enquanto nenhum conjunto passar, o sistema entrega apenas a **camada de evidência** (dados consolidados, rastreáveis, decompostos) — que já é útil por si e não depende de nenhum modelo funcionar.

@@ -168,6 +168,44 @@ def test_compute_demeaned_percentiles_sobe_hierarquia_quando_bucket_fino_e_peque
     assert all(r.bucket_usado == "setor" for r in resultados.values())
 
 
+def test_bucket_com_maioria_imputada_sobe_hierarquia_em_vez_de_diluir():
+    """Achado real (Seção 7.5): setor "Bancos" no universo real de 2015/2016 tinha só 2
+    dos 7 membros com ROE real, os outros 5 imputados pela mediana do universo. Se a
+    contagem de população do bucket contasse os imputados, `len(grupo)=7 >= 3` passaria
+    o piso e a média "dos bancos" seria calculada com 5 valores que na verdade são a
+    mediana do universo inteiro, não dado bancário — diluindo a média para todo mundo no
+    bucket, inclusive quem tem dado real. Mecanismo isolado, valores ilustrativos (não
+    dado real de empresa): 2 bancos reais (ROE alto) + 5 bancos imputados (a mediana do
+    universo, muito mais baixa) — com o piso de população contando só dado real, os 2
+    bancos reais sobem a hierarquia (nenhum nível tem população real >= piso) em vez de
+    formarem um bucket "Bancos" fantasma dominado por valores imputados."""
+    itens = [
+        FactorInput("BANCO_REAL_1", 0.20, segmento="Bancos", subsetor="Bancos", setor="Financeiro"),
+        FactorInput("BANCO_REAL_2", 0.22, segmento="Bancos", subsetor="Bancos", setor="Financeiro"),
+        FactorInput("BANCO_IMPUTADO_1", None, segmento="Bancos", subsetor="Bancos", setor="Financeiro"),
+        FactorInput("BANCO_IMPUTADO_2", None, segmento="Bancos", subsetor="Bancos", setor="Financeiro"),
+        FactorInput("BANCO_IMPUTADO_3", None, segmento="Bancos", subsetor="Bancos", setor="Financeiro"),
+        FactorInput("BANCO_IMPUTADO_4", None, segmento="Bancos", subsetor="Bancos", setor="Financeiro"),
+        FactorInput("BANCO_IMPUTADO_5", None, segmento="Bancos", subsetor="Bancos", setor="Financeiro"),
+        # universo com mediana bem distante do nivel bancario, pra expor a diluicao se houver
+        FactorInput("IND_1", 0.03, segmento="Industria", subsetor="Industria", setor="Industria"),
+        FactorInput("IND_2", 0.04, segmento="Industria", subsetor="Industria", setor="Industria"),
+        FactorInput("IND_3", 0.05, segmento="Industria", subsetor="Industria", setor="Industria"),
+    ]
+    resultados = {r.ticker: r for r in compute_demeaned_percentiles(itens, min_bucket_size=3)}
+
+    # os dois bancos reais NAO devem cair num bucket "segmento"/"subsetor"/"setor" com
+    # so 2 membros reais - sobem para o universo (unico nivel com populacao real >= 3)
+    assert resultados["BANCO_REAL_1"].bucket_usado == "universo"
+    assert resultados["BANCO_REAL_2"].bucket_usado == "universo"
+
+    # a media usada para demear os bancos reais e a media REAL do universo (mediana
+    # baixa da industria, nao contaminada pelos 5 valores imputados do proprio bucket)
+    media_universo_real = (0.20 + 0.22 + 0.03 + 0.04 + 0.05) / 5
+    assert resultados["BANCO_REAL_1"].demeaned == pytest.approx(0.20 - media_universo_real)
+    assert resultados["BANCO_REAL_2"].demeaned == pytest.approx(0.22 - media_universo_real)
+
+
 def test_dado_faltante_imputado_pela_mediana_nao_excluido():
     """Empresa sem dado (`raw_value=None`) é imputada pela mediana do universo, não
     excluída — regra declarada da Seção 7, evita viés de seleção sistemático contra

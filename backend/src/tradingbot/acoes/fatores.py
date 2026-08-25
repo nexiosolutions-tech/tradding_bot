@@ -445,9 +445,18 @@ def compute_demeaned_percentiles(
     items: list[FactorInput],
     min_bucket_size: int = MIN_BUCKET_SIZE,
 ) -> list[FactorResult]:
-    """Winsoriza -> demeans pelo bucket mais fino com população mínima, subindo
-    `segmento` -> `subsetor` -> `setor` -> universo inteiro -> percentil da série
-    demeaned sobre o universo elegível inteiro (não sobre o bucket)."""
+    """Winsoriza -> demeans pelo bucket mais fino com população mínima **de dado real**,
+    subindo `segmento` -> `subsetor` -> `setor` -> universo inteiro -> percentil da
+    série demeaned sobre o universo elegível inteiro (não sobre o bucket).
+
+    **Bucket (população e média) usa só valores reais, nunca imputados** — achado real
+    (Seção 7.5): setor com alta incidência de dado faltante (bancos, no caso da
+    limitação de versão retificada) pode ter a maioria dos membros imputados pela
+    mediana do universo. Se a população/média do bucket contasse os imputados, a média
+    "do setor" ficaria diluída em direção à mediana do universo inteiro — não reflete o
+    setor real, e desloca o demeaned de *todas* as empresas do bucket, inclusive as com
+    dado real. Um bucket com poucas empresas reais sobe a hierarquia mesmo que a
+    contagem total (real + imputada) pareça suficiente."""
     preenchidos = _preencher_faltantes(items)
     imputados = {it.ticker for it, orig in zip(preenchidos, items) if orig.raw_value is None}
 
@@ -456,26 +465,33 @@ def compute_demeaned_percentiles(
         it.ticker: v for it, v in zip(preenchidos, valores_winsorizados)
     }
 
-    # agrupa por cada nivel de hierarquia, usando o valor ja winsorizado
-    grupos: dict[tuple[str, str], list[float]] = {}
+    # agrupa por cada nivel de hierarquia usando so tickers com dado real
+    grupos_reais: dict[tuple[str, str], list[float]] = {}
     for it in preenchidos:
+        if it.ticker in imputados:
+            continue
         for nivel, chave in _bucket_hierarquia(it):
-            grupos.setdefault((nivel, chave), []).append(winsorizado_por_ticker[it.ticker])
+            grupos_reais.setdefault((nivel, chave), []).append(winsorizado_por_ticker[it.ticker])
 
-    media_universo = sum(winsorizado_por_ticker.values()) / len(winsorizado_por_ticker)
+    valores_reais_winsorizados = [winsorizado_por_ticker[it.ticker] for it in preenchidos if it.ticker not in imputados]
+    media_universo_real = (
+        sum(valores_reais_winsorizados) / len(valores_reais_winsorizados)
+        if valores_reais_winsorizados
+        else sum(winsorizado_por_ticker.values()) / len(winsorizado_por_ticker)
+    )
 
     demeaned_por_ticker: dict[str, float] = {}
     bucket_usado_por_ticker: dict[str, str] = {}
     for it in preenchidos:
         valor = winsorizado_por_ticker[it.ticker]
         for nivel, chave in _bucket_hierarquia(it):
-            grupo = grupos[(nivel, chave)]
+            grupo = grupos_reais.get((nivel, chave), [])
             if len(grupo) >= min_bucket_size:
                 demeaned_por_ticker[it.ticker] = valor - (sum(grupo) / len(grupo))
                 bucket_usado_por_ticker[it.ticker] = nivel
                 break
         else:
-            demeaned_por_ticker[it.ticker] = valor - media_universo
+            demeaned_por_ticker[it.ticker] = valor - media_universo_real
             bucket_usado_por_ticker[it.ticker] = "universo"
 
     demeaned_ordenados = sorted(demeaned_por_ticker.values())
