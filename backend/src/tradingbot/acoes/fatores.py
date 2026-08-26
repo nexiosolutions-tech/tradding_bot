@@ -102,14 +102,15 @@ def get_eps_as_of(session: Session, cnpj: str, ticker: str, data_decisao: date) 
         return None
     cd_conta = _CD_CONTA_EPS_BASICO[classe]
 
-    stmt = select(CvmFinancialLineItem.vl_conta).where(
+    stmt = select(CvmFinancialLineItem).where(
         CvmFinancialLineItem.cnpj_cia == cnpj,
         CvmFinancialLineItem.dt_refer == filing.dt_refer,
         CvmFinancialLineItem.versao == filing.versao,
         CvmFinancialLineItem.ordem_exerc == "ÚLTIMO",
         CvmFinancialLineItem.cd_conta == cd_conta,
     )
-    return session.execute(stmt).scalar_one_or_none()
+    linha = _unica_por_conteudo(session.execute(stmt).scalars().all())
+    return linha.vl_conta if linha else None
 
 
 def earnings_yield_raw(eps: float, preco: float) -> float:
@@ -143,6 +144,22 @@ _CD_CONTA_DIVIDA_NAO_CIRCULANTE = "2.02.01"
 EBITDA_INDEFINIDO_LIMIAR = 0.0
 
 
+def _unica_por_conteudo(linhas: list[CvmFinancialLineItem]) -> CvmFinancialLineItem | None:
+    """Achado real (Seção 7.7): CVM às vezes repete a mesma linha idêntica várias vezes
+    no arquivo bruto (2 empresas reais, FY2023, `CD_CONTA "3.99.01.01"` — mesmo
+    `vl_conta`/`ds_conta` duplicado 2-3 vezes). Isso não é a mesma ambiguidade que já
+    forçava `None` em todo o resto do módulo (candidatos com conteúdo *diferente*, onde
+    adivinhar seria o erro) — é a mesma resposta repetida, então usar qualquer cópia dá
+    o valor certo. Deduplica por `(vl_conta, ds_conta)`; só cai em `None` quando as
+    cópias **divergem** de verdade."""
+    if not linhas:
+        return None
+    distintas = {(l.vl_conta, l.ds_conta) for l in linhas}
+    if len(distintas) != 1:
+        return None
+    return linhas[0]
+
+
 def _linha_unica(session: Session, cnpj: str, filing, cd_conta: str, base: str = "con"):
     stmt = select(CvmFinancialLineItem).where(
         CvmFinancialLineItem.cnpj_cia == cnpj,
@@ -152,7 +169,7 @@ def _linha_unica(session: Session, cnpj: str, filing, cd_conta: str, base: str =
         CvmFinancialLineItem.base == base,
         CvmFinancialLineItem.cd_conta == cd_conta,
     )
-    return session.execute(stmt).scalar_one_or_none()
+    return _unica_por_conteudo(session.execute(stmt).scalars().all())
 
 
 def get_ebit_as_of(session: Session, cnpj: str, data_decisao: date, base: str = "con") -> float | None:
@@ -190,9 +207,8 @@ def get_depreciacao_amortizacao_as_of(session: Session, cnpj: str, data_decisao:
         row for row in session.execute(stmt).scalars().all()
         if any(kw in row.ds_conta.upper() for kw in _DA_KEYWORDS)
     ]
-    if len(candidatos) != 1:
-        return None
-    return candidatos[0].vl_conta
+    linha = _unica_por_conteudo(candidatos)
+    return linha.vl_conta if linha else None
 
 
 def get_ebitda_as_of(session: Session, cnpj: str, data_decisao: date, base: str = "con") -> float | None:
@@ -316,7 +332,7 @@ def _linha_por_ds_conta(session: Session, cnpj: str, filing, prefixo_cd_conta: s
         CvmFinancialLineItem.cd_conta.startswith(prefixo_cd_conta),
         CvmFinancialLineItem.ds_conta == ds_conta_esperado,
     )
-    return session.execute(stmt).scalar_one_or_none()
+    return _unica_por_conteudo(session.execute(stmt).scalars().all())
 
 
 def get_lucro_liquido_controladores_as_of(session: Session, cnpj: str, data_decisao: date, base: str = "con") -> float | None:

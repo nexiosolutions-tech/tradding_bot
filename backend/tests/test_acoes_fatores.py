@@ -30,6 +30,7 @@ from tradingbot.acoes.fatores import (
     get_eps_as_of,
     winsorize,
 )
+from tradingbot.acoes.models import CvmFiling, CvmFinancialLineItem
 from tradingbot.acoes.persistence import get_session_factory
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -82,6 +83,56 @@ def test_get_eps_as_of_none_antes_da_publicacao(tmp_path):
     _setup(session)
 
     assert get_eps_as_of(session, ITAU_CNPJ, "ITUB4", date(2016, 2, 1)) is None
+
+
+def test_get_eps_as_of_duplicata_identica_nao_e_ambiguidade(tmp_path):
+    """Achado real (série completa 2015-2026, Seção 7.6): a CVM às vezes repete a mesma
+    linha idêntica várias vezes no arquivo bruto — 2 empresas reais, FY2023, mesmo
+    `CD_CONTA "3.99.01.01"` duplicado 2-3 vezes com o mesmo `vl_conta`/`ds_conta`. Isso
+    derrubava `get_eps_as_of` com `MultipleResultsFound` antes desta correção. Não é a
+    mesma ambiguidade que já força `None` em todo o resto do módulo (candidatos com
+    conteúdo *diferente*, onde adivinhar seria o erro) — é a mesma resposta repetida,
+    então qualquer cópia dá o valor certo."""
+    session = _session(tmp_path)
+    session.add(CvmFiling(
+        cnpj_cia="99.999.999/0001-99", dt_refer=date(2023, 12, 31), versao=1,
+        categ_doc="DFP", denom_cia="DUPLICATA TESTE", cd_cvm="99999", id_doc="1",
+        dt_receb=date(2024, 3, 1), link_doc="",
+    ))
+    for _ in range(3):
+        session.add(CvmFinancialLineItem(
+            cnpj_cia="99.999.999/0001-99", dt_refer=date(2023, 12, 31), versao=1,
+            ordem_exerc="ÚLTIMO", base="con", cd_conta="3.99.01.01",
+            ds_conta="ON", vl_conta=15.95,
+        ))
+    session.commit()
+
+    assert get_eps_as_of(session, "99.999.999/0001-99", "AAAA3", date(2024, 3, 15)) == pytest.approx(15.95)
+
+
+def test_get_eps_as_of_duplicata_com_valores_diferentes_fica_none(tmp_path):
+    """Ao contrário do caso acima: se as linhas duplicadas do mesmo `CD_CONTA` tiverem
+    valores diferentes, isso é ambiguidade real (não dá para saber qual está certo) —
+    mesma disciplina de nunca adivinhar do resto do módulo, `None`."""
+    session = _session(tmp_path)
+    session.add(CvmFiling(
+        cnpj_cia="88.888.888/0001-88", dt_refer=date(2023, 12, 31), versao=1,
+        categ_doc="DFP", denom_cia="AMBIGUA TESTE", cd_cvm="88888", id_doc="1",
+        dt_receb=date(2024, 3, 1), link_doc="",
+    ))
+    session.add(CvmFinancialLineItem(
+        cnpj_cia="88.888.888/0001-88", dt_refer=date(2023, 12, 31), versao=1,
+        ordem_exerc="ÚLTIMO", base="con", cd_conta="3.99.01.01",
+        ds_conta="ON", vl_conta=1.00,
+    ))
+    session.add(CvmFinancialLineItem(
+        cnpj_cia="88.888.888/0001-88", dt_refer=date(2023, 12, 31), versao=1,
+        ordem_exerc="ÚLTIMO", base="con", cd_conta="3.99.01.01",
+        ds_conta="ON", vl_conta=2.00,
+    ))
+    session.commit()
+
+    assert get_eps_as_of(session, "88.888.888/0001-88", "BBBB3", date(2024, 3, 15)) is None
 
 
 def test_earnings_yield_raw_petrobras_negativo_nao_invertido():
