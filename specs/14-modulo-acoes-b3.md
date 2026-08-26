@@ -1402,6 +1402,18 @@ mais estreito que a Seção 7.5 mediu. Não é uma divergência para corrigir, �
 lógica de sempre (categorias de ausência nunca confundidas) aplicada a uma métrica que
 cresceu de dois fatores para três depois que a medição original foi feita.
 
+**Registrado explicitamente para não virar "conserto" no sentido errado numa rodada
+futura**: "97" (Seção 7.5) é a métrica de **dois** fatores (earnings yield/ROE); "98"
+(`build_decisao`, esta seção) é a de **três**. Os dois números estão certos — cada um
+para o que mede. Se alguém, meses depois, notar a diferença entre os dois documentos e
+"corrigir" um para bater com o outro sem reler este parágrafo, o risco é ajustar
+`build_decisao` para trás (voltar a ignorar dívida líquida/EBITDA na contagem) só para
+reproduzir um número que já era, por definição, mais estreito que o que a produção usa.
+A partir desta rodada, "98" (três fatores) é a métrica de referência para daqui em
+diante — "97" fica arquivado como o que era: a medição de dois fatores da Seção 7.5,
+correta para a pergunta que aquela rodada fazia (impacto da versão retificada em
+earnings yield/ROE especificamente), não a métrica de score-computável de produção.
+
 **Achado colateral, corrigido durante a verificação**: a primeira tentativa usou
 identidade point-in-time simplificada (vigência "para sempre" em vez da vigência real
 derivada da COTAHIST) e produziu 116/99 — um ticker (`GETI4`) que tinha vigência real
