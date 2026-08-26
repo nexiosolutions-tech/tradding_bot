@@ -13,7 +13,9 @@ inventados).
 
 import pytest
 
+from tradingbot.acoes import cotahist_ingestion
 from tradingbot.acoes.cotahist_ingestion import (
+    IngestionCountMismatchError,
     ingest_cotahist_year,
     normalize_price,
     parse_cotahist_year,
@@ -22,7 +24,7 @@ from tradingbot.acoes.models import CorporateEventFlag, CotahistPrice
 from tradingbot.acoes.persistence import get_session_factory
 from tradingbot.acoes.price_sanity import find_implausible_returns
 from pathlib import Path
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "cotahist"
 FIXTURE = FIXTURES_DIR / "COTAHIST_A2024_real_extract.ZIP"
@@ -166,6 +168,72 @@ def test_ex_leve_nao_e_quebra_de_nivel(tmp_path):
         )
     ).scalar_one()
     assert ex.is_level_break is False
+
+
+def test_ingest_em_lote_com_batch_size_pequeno_insere_tudo(tmp_path):
+    """A troca de savepoint-por-linha para lote (spec 14, Seção 6.2/10) não pode perder
+    linha quando o arquivo cruza várias fronteiras de lote — `batch_size=3` força 3
+    lotes (3+3+2) para as 8 linhas da fixture, todos devem persistir."""
+    session = _session(tmp_path)
+    stats = ingest_cotahist_year(session, FIXTURE, batch_size=3)
+    assert stats.prices_inserted == 8
+    assert stats.prices_rejected_duplicate == 0
+
+    total = session.execute(select(func.count()).select_from(CotahistPrice)).scalar_one()
+    assert total == 8
+
+
+def test_lote_com_uma_duplicata_isola_so_a_linha_duplicada(tmp_path):
+    """O caminho comum é lote inteiro num só INSERT; só quando o lote falha (uma
+    duplicata real, por exemplo) o fallback refaz aquele lote linha por linha —
+    precisa separar corretamente a linha duplicada das novas no mesmo lote, sem
+    rejeitar ou perder nenhuma das novas."""
+    session = _session(tmp_path)
+    rows = list(parse_cotahist_year(FIXTURE))
+    dup = rows[0]
+    session.add(
+        CotahistPrice(
+            ticker=dup.ticker,
+            trade_date=dup.trade_date,
+            especi_raw=dup.especi_raw,
+            fatcot=dup.fatcot,
+            open=dup.open,
+            high=dup.high,
+            low=dup.low,
+            avg=dup.avg,
+            close=dup.close,
+            quantity=dup.quantity,
+            financial_volume=dup.financial_volume,
+        )
+    )
+    session.commit()
+
+    stats = ingest_cotahist_year(session, FIXTURE)
+    assert stats.prices_inserted == 7
+    assert stats.prices_rejected_duplicate == 1
+
+    total = session.execute(select(func.count()).select_from(CotahistPrice)).scalar_one()
+    assert total == 8
+
+
+def test_contagem_pos_commit_detecta_descarte_silencioso_de_linha(tmp_path, monkeypatch):
+    """A asserção de contagem (spec 14, Seção 6.2) existe para pegar exatamente o modo
+    de falha que a otimização em lote introduz: uma linha descartada em silêncio durante
+    o flush do lote. Simula esse bug diretamente no `_flush_price_batch` (em vez de tentar
+    provocá-lo organicamente) para provar que a rede de segurança dispara, e não confiar
+    que o código nunca vai regredir para esse padrão."""
+    session = _session(tmp_path)
+    original_flush = cotahist_ingestion._flush_price_batch
+
+    def _flush_descartando_uma_linha(session, batch, stats):
+        if batch:
+            batch.pop()
+        original_flush(session, batch, stats)
+
+    monkeypatch.setattr(cotahist_ingestion, "_flush_price_batch", _flush_descartando_uma_linha)
+
+    with pytest.raises(IngestionCountMismatchError):
+        ingest_cotahist_year(session, FIXTURE)
 
 
 def test_ex_extremo_e_quebra_de_nivel(tmp_path):

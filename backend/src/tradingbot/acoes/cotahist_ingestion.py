@@ -19,10 +19,30 @@ from datetime import date
 from pathlib import Path
 from typing import Iterator
 
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from tradingbot.acoes.models import CorporateEventFlag, CotahistPrice
+
+# Tamanho de lote para o INSERT de preço — não é o gargalo em si (medido: parsing puro é
+# ~7s/ano, savepoint-por-linha some o resto do tempo em overhead de transação, não em
+# I/O de disco por commit — SQLite só faz fsync no commit externo, não por SAVEPOINT).
+# Lote em vez de um commit por arquivo inteiro porque uma linha ruim no meio de ~65-75k
+# não pode derrubar o ano inteiro sem diagnóstico — só o lote em que ela caiu refaz por
+# linha (ver `_flush_price_batch`).
+PRICE_BATCH_SIZE = 2000
+
+
+class IngestionCountMismatchError(RuntimeError):
+    """Contagem de preços persistidos (lida do banco após o commit) não bate com a
+    contagem de chaves `(ticker, trade_date)` distintas obtidas do parsing do arquivo.
+
+    Existe para pegar dois modos de falha, não um: truncamento silencioso (linha nunca
+    chega a virar `INSERT`) e falha parcial de lote (uma exceção durante o lote derruba
+    ou pula linhas que deveriam ter sido persistidas). Deliberadamente lê do banco, não
+    de um contador incrementado no laço — um contador em memória mentiria exatamente no
+    caso que esta asserção existe para pegar."""
 
 EQUITY_ESPECI_PREFIXES = ("ON", "PN", "PR", "OR")
 EQUITY_ESPECI_EXACT = {"UNT"}
@@ -133,41 +153,87 @@ class CotahistIngestStats:
     events_rejected_duplicate: int = 0
 
 
-def ingest_cotahist_year(session: Session, zip_path: Path) -> CotahistIngestStats:
-    """Preço: um `INSERT` por linha, savepoint própria, duplicata rejeitada pela
-    `UniqueConstraint(ticker, trade_date)` — mesmo padrão de `cvm_ingestion.py`.
+def _flush_price_batch(
+    session: Session, batch: list[CotahistPrice], stats: CotahistIngestStats
+) -> None:
+    """Tenta o lote inteiro numa savepoint só (caminho comum: nenhuma duplicata, todo o
+    lote entra num único `INSERT` em lote). Só se o lote falhar — uma duplicata real de
+    reingestão, ou qualquer outra violação de integridade — refaz aquele lote específico
+    linha por linha, isolando exatamente a(s) linha(s) problemática(s) sem pagar o custo
+    de savepoint-por-linha no caso comum, e sem nunca descartar uma linha em silêncio."""
+    if not batch:
+        return
+    try:
+        with session.begin_nested():
+            session.add_all(batch)
+    except IntegrityError:
+        for price in batch:
+            try:
+                with session.begin_nested():
+                    session.add(price)
+            except IntegrityError:
+                stats.prices_rejected_duplicate += 1
+            else:
+                stats.prices_inserted += 1
+    else:
+        stats.prices_inserted += len(batch)
+    batch.clear()
 
-    Eventos: detectados por transição — o `ex_suffix` do dia comparado ao do pregão
-    anterior do mesmo ticker (não por posição fixa no arquivo, que já vem ordenado por
-    ticker e depois por data). Só a **primeira** data de uma nova sequência de sufixo
-    gera evento; a mesma sequência persistindo por vários pregões (confirmado no dado
-    real — `ON EJ` do BBAS3 durou ~8 pregões seguidos) não gera eventos repetidos.
+
+def ingest_cotahist_year(
+    session: Session, zip_path: Path, *, batch_size: int = PRICE_BATCH_SIZE
+) -> CotahistIngestStats:
+    """Preço: `INSERT` em lote (`batch_size` linhas por savepoint), com fallback
+    automático a linha por linha só no lote que falhar — ver `_flush_price_batch`.
+    Duplicata (reingestão do mesmo ano, ou do mesmo arquivo) rejeitada pela
+    `UniqueConstraint(ticker, trade_date)`, mesma garantia estrutural de sempre, banco
+    decidindo, não checagem de existência em código.
+
+    Eventos: mantidos em savepoint-por-linha — raros (algumas centenas por ano, não
+    ~65-75 mil), não são o custo medido, não valia complicar o caminho comum para algo
+    que não é o gargalo. Detectados por transição — o `ex_suffix` do dia comparado ao do
+    pregão anterior do mesmo ticker (não por posição fixa no arquivo, que já vem
+    ordenado por ticker e depois por data). Só a **primeira** data de uma nova sequência
+    de sufixo gera evento; a mesma sequência persistindo por vários pregões (confirmado
+    no dado real — `ON EJ` do BBAS3 durou ~8 pregões seguidos) não gera eventos
+    repetidos.
+
+    Depois do commit, `IngestionCountMismatchError` dispara se a contagem de preços
+    persistidos no intervalo de datas do arquivo (lida do banco) não bater com a
+    contagem de chaves `(ticker, trade_date)` distintas vistas no parsing — pega
+    truncamento silencioso e falha parcial de lote, os dois modos de falha que a troca
+    para lote introduz ou herda (spec 14, Seção 6.2).
     """
     stats = CotahistIngestStats()
     last_suffix_by_ticker: dict[str, str | None] = {}
     last_close_by_ticker: dict[str, float] = {}
+    price_batch: list[CotahistPrice] = []
+    expected_keys: set[tuple[str, date]] = set()
+    min_date: date | None = None
+    max_date: date | None = None
 
     for raw in parse_cotahist_year(zip_path):
-        price = CotahistPrice(
-            ticker=raw.ticker,
-            trade_date=raw.trade_date,
-            especi_raw=raw.especi_raw,
-            fatcot=raw.fatcot,
-            open=raw.open,
-            high=raw.high,
-            low=raw.low,
-            avg=raw.avg,
-            close=raw.close,
-            quantity=raw.quantity,
-            financial_volume=raw.financial_volume,
+        expected_keys.add((raw.ticker, raw.trade_date))
+        min_date = raw.trade_date if min_date is None else min(min_date, raw.trade_date)
+        max_date = raw.trade_date if max_date is None else max(max_date, raw.trade_date)
+
+        price_batch.append(
+            CotahistPrice(
+                ticker=raw.ticker,
+                trade_date=raw.trade_date,
+                especi_raw=raw.especi_raw,
+                fatcot=raw.fatcot,
+                open=raw.open,
+                high=raw.high,
+                low=raw.low,
+                avg=raw.avg,
+                close=raw.close,
+                quantity=raw.quantity,
+                financial_volume=raw.financial_volume,
+            )
         )
-        try:
-            with session.begin_nested():
-                session.add(price)
-        except IntegrityError:
-            stats.prices_rejected_duplicate += 1
-        else:
-            stats.prices_inserted += 1
+        if len(price_batch) >= batch_size:
+            _flush_price_batch(session, price_batch, stats)
 
         previous_suffix = last_suffix_by_ticker.get(raw.ticker)
         previous_close = last_close_by_ticker.get(raw.ticker)
@@ -194,5 +260,22 @@ def ingest_cotahist_year(session: Session, zip_path: Path) -> CotahistIngestStat
             else:
                 stats.events_inserted += 1
 
+    _flush_price_batch(session, price_batch, stats)
     session.commit()
+
+    if expected_keys:
+        persisted = session.execute(
+            select(func.count())
+            .select_from(CotahistPrice)
+            .where(CotahistPrice.trade_date >= min_date, CotahistPrice.trade_date <= max_date)
+        ).scalar_one()
+        if persisted != len(expected_keys):
+            raise IngestionCountMismatchError(
+                f"{zip_path.name}: {len(expected_keys)} chaves (ticker, trade_date) "
+                f"distintas no parsing, mas {persisted} linhas persistidas no banco para "
+                f"o intervalo {min_date}..{max_date} — falha de ingestão, não reingestão "
+                f"normal (duplicata seria rejeitada pela UniqueConstraint sem afetar a "
+                f"contagem final)."
+            )
+
     return stats

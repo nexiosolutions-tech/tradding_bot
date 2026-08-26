@@ -7,7 +7,7 @@ financeiro — toda linha de fundamento futura faz join com esta tabela por
 
 from __future__ import annotations
 
-from sqlalchemy import Date, Float, Integer, String, UniqueConstraint
+from sqlalchemy import Date, Float, Index, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from tradingbot.acoes.persistence import Base
@@ -73,9 +73,19 @@ class CvmFinancialLineItem(Base):
     pré-imposto) — instituição financeira usa um plano de contas DRE inteiramente
     diferente, fixo *dentro* da própria variante, não *entre* variantes. Toda consulta de
     fator que depende de `cd_conta` verifica `ds_conta` antes de aceitar o valor.
+
+    **Índice composto `(cnpj_cia, dt_refer, versao)`** (spec 14, Seção 6.2/10) — toda
+    consulta de fator em `fatores.py` filtra pelas três colunas juntas (mais
+    `ordem_exerc`/`cd_conta`), nunca por uma isolada; os índices de coluna única já
+    existentes obrigam o SQLite a escanear ou fazer merge de três índices por consulta,
+    em vez de um lookup composto direto — relevante na escala do backtest completo
+    (~130 datas de decisão × universo elegível de cada data).
     """
 
     __tablename__ = "cvm_financial_line_items"
+    __table_args__ = (
+        Index("ix_cvm_financial_line_items_as_of", "cnpj_cia", "dt_refer", "versao"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     cnpj_cia: Mapped[str] = mapped_column(String, index=True)

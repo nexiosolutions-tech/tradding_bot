@@ -811,19 +811,56 @@ nunca dispara); histórico mínimo é proxy de contagem de pregões, não amarra
 fator específico da Seção 7 (ainda não implementada); série completa 2015-2026 de N e
 distribuição setorial (só 2016-02-29 medido, por custo de ingestão — ver nota de
 performance abaixo); `b3_setor` não ligado a `build_universo_elegivel` — persiste separado,
-Seção 7 decide como consumir quando for implementada; ingestão via savepoint-por-linha é
-lenta (~300-400s por ano completo de COTAHIST) — funcionalmente correta e verificada
-(contagem de linhas bate exatamente contra o esperado nos dois anos ingeridos), mas o
-padrão certo para produção é lote com um commit por arquivo, não savepoint por linha;
-registrado como pendência de performance, não resolvido nesta rodada para não misturar
-mudança de mecanismo de escrita com validação de
-resultado na mesma passada. **Requisito para quando essa otimização for feita**: o
-padrão savepoint-por-linha foi o que produziu o truncamento silencioso na fronteira de
-sessão (Seção 5.1) — a troca para lote deve manter a conferência de contagem de linhas
-contra o arquivo bruto como **asserção de código dentro da própria rotina de ingestão**
-(falha alto e visível se a contagem não bater), não como passo de verificação manual
-pós-ingestão. O objetivo é tornar o truncamento impossível de não notar, não apenas algo
-que se lembrou de checar da última vez.
+Seção 7 decide como consumir quando for implementada.
+
+**Otimização da ingestão COTAHIST (2026-08-26): savepoint-por-linha → lote, medido antes
+e depois.** A pendência de performance registrada nas rodadas anteriores (~300-400s/ano)
+foi resolvida, não só relaxada. **Medido antes de otimizar** (a causa não era óbvia por
+suposição, era pergunta a responder): parsing puro do `COTAHIST_A2016.ZIP` real (66.706
+linhas de equity) leva **6,69s**; a ingestão completa (parsing + savepoint por linha +
+commit final) leva **526,27s** — o banco, não o parsing, é >98% do custo, e o processo
+fica em espera de I/O (estado `D`) durante quase toda a duração, consistente com overhead
+de transação por `SAVEPOINT`, não com volume de dado em si.
+
+`ingest_cotahist_year` (`cotahist_ingestion.py`) agora insere em **lote** (`PRICE_BATCH_SIZE
+= 2000`, uma savepoint por lote em vez de por linha), com **fallback automático a
+linha-por-linha só no lote que falhar** (`_flush_price_batch`) — uma duplicata real de
+reingestão (ou qualquer outra violação de integridade) isola exatamente a(s) linha(s)
+problemática(s) sem exigir savepoint-por-linha no caminho comum, e sem nunca descartar
+uma linha em silêncio. Eventos societários (`CorporateEventFlag`) continuam
+savepoint-por-linha — algumas centenas por ano, não ~65-75 mil, nunca foram o gargalo
+medido, não valia complicar o caminho comum por algo que não é o custo.
+
+**Resultado, mesmo arquivo, mesma máquina**: 526,27s → **22,35s** (≈23,5×), contagens
+idênticas nos dois lados (66.706 preços inseridos, 646 eventos, zero duplicata rejeitada
+— confirma que o lote não mudou o resultado, só o caminho).
+
+**Requisito atendido, não deixado para depois**: `IngestionCountMismatchError` dispara
+depois do commit final se a contagem de preços persistidos **lida do banco** (não um
+contador incrementado no laço, que mentiria exatamente no caso que esta asserção existe
+para pegar) não bater com a contagem de chaves `(ticker, trade_date)` distintas do
+parsing — pega tanto truncamento silencioso quanto falha parcial de lote, os dois modos
+de falha que a troca para lote introduz ou herda. É o mesmo padrão (savepoint-por-linha)
+que já produziu o truncamento silencioso na fronteira de sessão (Seção 5.1) — a asserção
+correndo dentro da própria rotina, e não como passo manual, é o que torna esse
+truncamento impossível de não notar desta vez. Testado
+(`test_contagem_pos_commit_detecta_descarte_silencioso_de_linha`, que simula o próprio
+bug que a asserção existe para pegar) e por dois testes de fallback de lote
+(`test_lote_com_uma_duplicata_isola_so_a_linha_duplicada`,
+`test_ingest_em_lote_com_batch_size_pequeno_insere_tudo`).
+
+**Índices as-of, verificados por consulta real, não adicionados por suposição.**
+`CvmFinancialLineItem` não tinha índice composto para `(cnpj_cia, dt_refer, versao)` — as
+únicas consultas da Seção 7 filtram pelas três colunas juntas, e `EXPLAIN QUERY PLAN`
+confirmou o SQLite escaneando pelo índice de `dt_refer` isolado (baixa seletividade, todas
+as empresas reportam nas mesmas poucas datas de referência) em vez de um lookup composto
+— corrigido com `ix_cvm_financial_line_items_as_of`, confirmado pelo mesmo
+`EXPLAIN QUERY PLAN` agora usando o índice novo. `CotahistPrice`, ao contrário, **já
+estava coberto** — o `UniqueConstraint(ticker, trade_date)` cria um índice único
+implícito que o SQLite já usava para a consulta as-of de preço (`ticker=? AND
+trade_date<?`), confirmado pelo mesmo comando antes de adicionar qualquer coisa; um
+índice composto novo ali seria redundante, e redundante significa custo de escrita extra
+exatamente na rotina que este trabalho acabou de acelerar.
 
 ## 7. Fatores
 
