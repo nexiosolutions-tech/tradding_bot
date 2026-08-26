@@ -1349,10 +1349,10 @@ a vantagem num único setor ou período) — aqui vira exigência de reportar, n
 no gate: o relatório do backtest precisa de uma linha própria para o desempenho do setor
 financeiro, separada do agregado.
 
-**Pendente**: confirmar se o `n` de score computável (não a fração) se sustenta acima de
-100 em anos mais recentes da era avaliável (2024-2026, onde a versão retificada deveria
-pesar menos); piso de cobertura de fator, se algum diferente do N≥100 generalizado for
-necessário, ainda como decisão de desenho separada e justificada, não tomada aqui.
+**Confirmado (Seção 7.7): sim, se sustenta.** A série completa 2015-2026 mostra `n` de
+score computável acima de 100 em 11 dos 12 anos — só 2016 (o vale do ciclo) fica abaixo,
+com 98. Não é mais uma pendência; ver Seção 7.7 para a tabela completa e a decisão de
+manter N≥100 sem recalibração.
 
 ### 7.6 `build_decisao` — o driver de uma data de decisão, infraestrutura de produção (2026-08-26)
 
@@ -1436,6 +1436,81 @@ quando na verdade é só um buraco de ingestão do fundamento, não da publicaç
 `backend/src/tradingbot/acoes/decisao.py`: `DecisaoEmpresa` (por ticker: fatores brutos,
 percentis demeaned, score composto), `DecisaoResultado` (lista de `DecisaoEmpresa` +
 `n_score_computavel`), `build_decisao`.
+
+### 7.7 Série completa 2015-2026: N≥100 reprova só o vale conhecido, cobertura sobe visivelmente a partir de 2020 (2026-08-26)
+
+Com `build_decisao` travado contra 2015/2016, os 10 anos restantes (2017-2026) foram
+execução, não montagem — rodados um de cada vez, com asserção de contagem entre
+exercícios fiscais, sanidade de universo contra a curva conhecida, e progresso
+registrado por ano para que uma interrupção fosse retomável sem reprocessar tudo (dois
+crashes reais aconteceram durante a execução — ver abaixo — e os dois foram retomados
+sem perda de trabalho já verificado).
+
+**Tabela completa** (universo elegível materializado / score computável pela definição
+de três fatores, Seção 7.6):
+
+| Ano | Universo | Score computável | Cobertura |
+|---|---|---|---|
+| 2015 | 125 | 106 | 84,8% |
+| 2016 | 115 | 98 | 85,2% |
+| 2017 | 129 | 105 | 81,4% |
+| 2018 | 135 | 115 | 85,2% |
+| 2019 | 146 | 121 | 82,9% |
+| 2020 | 169 | 147 | 87,0% |
+| 2021 | 177 | 154 | 87,0% |
+| 2022 | 194 | 175 | 90,2% |
+| 2023 | 210 | 188 | 89,5% |
+| 2024 | 206 | 195 | 94,7% |
+| 2025 | 190 | 176 | 92,6% |
+| 2026 | 178 | 165 | 92,7% |
+
+**N≥100 (recomendação da Seção 7.5/10, generalizado ao universo com score computável)
+reprova só 2016 (98) — 1 de 12 anos.** Exatamente o vale já identificado (recessão,
+universo bruto mais magro da série). Reprovar um ano de vale é o critério funcionando,
+não um sinal de que 100 está errado — a previsão registrada na Seção 7.5 ("reprovar dois
+ou três anos de vale é esperado; reprovar metade da série seria o número errado") se
+confirma no lado favorável: nem dois ou três, só um.
+
+**Cobertura sobe visivelmente a partir de ~2020 — a segunda "duas eras", agora no eixo
+de fator.** Média 2015-2019: 83,9%. Média 2020-2026: 90,5%. Não é um degrau único e
+abrupto como a fronteira de identidade de 2018 (Seção 5.6), mas uma subida real e
+sustentada — consistente com o FCA passando a popular ticker de forma mais confiável e
+com menos retificação acumulada pesando nos anos mais recentes (o mecanismo já
+antecipado na Seção 7.5). Registrado como achado, não como novo piso — o piso já
+declarado (N≥100 sobre score computável) não precisa de ajuste para capturar isso.
+
+**Padrão cíclico real, incluindo uma contração recente não antecipada**: o universo
+cresce de 125 (2015) a um pico de 210 (2023), depois **contrai** nos três anos
+seguintes (206 → 190 → 178, 2024-2026) — um padrão de baixa real nos anos mais recentes
+da série, não ruído de um ano isolado. Não investigado a fundo nesta rodada (o objetivo
+aqui era a série completa, não a causa da contração) — fica como observação para quando
+o backtest cruzar esse período com o resultado de mercado real.
+
+**Divergência em aberto, registrada sem forçar explicação**: o pico de universo medido
+aqui em 2022 é 194, não os "~235" citados em rodadas anteriores como referência da curva
+conhecida. A explicação mais provável é que o número anterior media só o filtro de
+liquidez (antes da resolução de identidade), enquanto `build_decisao` já materializa o
+universo **depois** de identidade resolvida (9-15 exclusões por `identidade_nao_
+resolvida` a cada ano) — mas isso não foi confirmado revisitando a medição antiga nesta
+rodada, então fica como divergência aberta, não como fato estabelecido.
+
+**Dois crashes reais durante a execução, os dois pegos pela estrutura de verificação por
+ano, nenhum silencioso**:
+
+1. **Linhas duplicadas idênticas da CVM** (FY2023, 2 empresas reais, mesmo `CD_CONTA`
+   repetido 2-3 vezes com o mesmo valor) derrubavam `get_eps_as_of` com
+   `MultipleResultsFound` — bug real em produção, não um problema da série. Corrigido
+   (`_unica_por_conteudo`, aplicado a todo lookup de linha única do módulo): duplicata
+   com o mesmo valor não é a mesma ambiguidade que já força `None` no resto do módulo
+   (conteúdo *diferente* — aí sim, nunca adivinhar); é a mesma resposta repetida.
+2. **`UniversoElegivel`/`UniversoExclusao` são append-only por desenho** — uma tentativa
+   que materializa o universo e só depois morre no laço de fatores deixa linhas
+   persistidas; reprocessar sem limpar faz todo `INSERT` falhar por duplicata e o
+   universo sair **zero** em silêncio (2024, primeira tentativa: sanidade pegou —
+   universo=0 está fora de qualquer banda razoável). Corrigido no script de execução:
+   limpa `UniversoElegivel`/`UniversoExclusao` daquela data de decisão antes de cada
+   tentativa, mesmo raciocínio já aplicado a `CvmFinancialLineItem` para os exercícios
+   fiscais.
 
 ## 8. Motor consciente da carteira
 
@@ -1611,6 +1686,11 @@ Um conjunto de fatores só vai a produção se, simultaneamente:
    explicitamente pendente até a série completa 2015-2026 mostrar quantos anos o critério
    reprova: reprovar alguns anos de vale de ciclo é o critério funcionando; reprovar
    metade da série é sinal de que 100 é o número errado para este denominador.
+
+   **Resolvido (Seção 7.7): série completa medida, 1 de 12 anos reprova.** Só 2016 (98)
+   fica abaixo de 100 — o vale já identificado, não uma fração relevante da série. N=100
+   fica confirmado como número certo para este denominador, não só herdado — decisão
+   fechada, não mais pendente de recalibração.
 3. Fica fora da nuvem nula com p < 0,05.
 4. Tem DSR positivo, contabilizando **todas** as configurações de peso testadas.
 5. Não concentra a vantagem inteira em um único setor ou em um único período — segmentação com piso de amostra mínima. Ver nota do critério 2: este é o critério com poder real de reprovação nesta frente, não o 2. **Setor financeiro exige linha própria no relatório do backtest (Seção 7.5/9)**: é o setor mais afetado pela limitação de versão retificada e o único onde o bucket de ROE tem massa real reduzida — sem reportar separado, não há como distinguir vantagem genuína de artefato da limitação de fonte.
