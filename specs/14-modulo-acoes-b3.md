@@ -1354,6 +1354,77 @@ financeiro, separada do agregado.
 pesar menos); piso de cobertura de fator, se algum diferente do N≥100 generalizado for
 necessário, ainda como decisão de desenho separada e justificada, não tomada aqui.
 
+### 7.6 `build_decisao` — o driver de uma data de decisão, infraestrutura de produção (2026-08-26)
+
+Até aqui, cada data de decisão (2016-07-15, 2016-02-29, 2015-02-27) foi materializada por
+script ad hoc, específico daquela rodada — correto para provar cada fator isoladamente,
+mas não reutilizável. **A Seção 9 (backtest) precisa chamar a mesma função uma vez por
+data de decisão do walk-forward** — não é utilitário de medição, é a peça que todo o
+resto depende de estar correta e estável.
+
+**Contrato**: `build_decisao(session, data_decisao, setor_by_cnpj, pesos=...)` — data de
+decisão entra, `DecisaoResultado` (universo materializado + score composto por empresa +
+`n_score_computavel`) sai. Determinística (mesma entrada, mesma saída — nenhuma leitura
+de relógio real, nenhum estado global), sem I/O de rede (assume que preço/identidade/
+fundamento já foram ingeridos pelas camadas correspondentes — a mesma separação que
+`universo_elegivel.py` já impõe entre ingestão e consulta).
+
+**Nunca reimplementa a composição de pesos** — chama `compute_score_composto` (Seção
+7.2) diretamente. É a peça que resolve o risco de divergência já registrado: enquanto
+existiam só scripts ad hoc por rodada, nada garantia que dois deles calculassem o score
+composto da mesma forma. Com o driver como única chamada, `compute_score_composto`
+deixa de ser "semente" testada isoladamente e passa a ser a fonte única de verdade,
+canonicamente — Seção 8 (motor de carteira) e Seção 9 (backtest) consomem o resultado do
+driver, nunca recomputam por conta própria.
+
+**Teste de aceite: travar contra dois anos conhecidos, não um — verificado contra dado
+real, não só contra fixture pequena.** Além do teste automatizado (3 empresas reais,
+`test_acoes_decisao.py`, que prova a fiação: delega em `compute_score_composto`, nunca
+reimplementa, respeita a matriz de aplicabilidade), o driver foi rodado contra o universo
+real inteiro dos dois anos já auditados — 125 empresas (2015-02-27) e 115 (2016-02-29),
+mesmo dado usado nas Seções 7.4/7.5. Não comitado como fixture de teste (a escala é de
+centenas de MB de CVM/COTAHIST reais, fora do padrão de fixture deste módulo) — resultado
+de verificação registrado aqui e em `changes/`, reproduzível a partir dos mesmos
+arquivos brutos já documentados nas seções anteriores.
+
+**Resultado**: universo materializado bate **exatamente** nos dois anos (125/125,
+115/115) — sinal forte de que a materialização está correta, porque um bug de fiação
+dificilmente preservaria o tamanho exato do universo por coincidência. Score computável
+bate exatamente em 2015 (106/106). Em 2016 saiu 98, não 97 — mas a diferença tem causa
+única, identificada e entendida, não um bug: `GOLL4` tem dado real de dívida
+líquida/EBITDA (terceiro fator), mas não de earnings yield nem ROE — e o "97" registrado
+na Seção 7.5 foi definido explicitamente como "pelo menos um dos **dois** fatores"
+(earnings yield/ROE, os dois afetados pela limitação de versão retificada medida
+naquela rodada), nunca incluindo dívida líquida/EBITDA na contagem. `build_decisao` usa
+a definição de produção correta — pelo menos um dos **três** fatores real —, então 98
+é o número certo para esse critério mais completo, e 97 continua certo para o critério
+mais estreito que a Seção 7.5 mediu. Não é uma divergência para corrigir, é a mesma
+lógica de sempre (categorias de ausência nunca confundidas) aplicada a uma métrica que
+cresceu de dois fatores para três depois que a medição original foi feita.
+
+**Achado colateral, corrigido durante a verificação**: a primeira tentativa usou
+identidade point-in-time simplificada (vigência "para sempre" em vez da vigência real
+derivada da COTAHIST) e produziu 116/99 — um ticker (`GETI4`) que tinha vigência real
+encerrada em 2015-12-30 (antes da decisão de 2016-02-29) apareceu incorretamente no
+universo de 2016. Corrigido recalculando vigência real via `compute_vigencia` sobre a
+COTAHIST — resultado final (125/106, 115/98) já reflete a correção. Registrado porque é
+exatamente o tipo de erro que a verificação contra dois anos conhecidos existe para
+pegar: sem o número de referência, 116 teria passado sem ninguém notar.
+
+**Consequência do achado da Seção 7.5 (FY2013) para o lookback de fundamento**: se a
+decisão de fevereiro de um ano resolve, na maioria dos casos, para o balanço de **dois**
+anos antes (não um), o lookback de fundamento da série completa precisa cobrir esse
+horizonte — para a série 2015-2026 decidir corretamente em 2015, o fundamento de 2013
+precisa estar ingerido, não só o de 2014. Vale conferir esse limite inferior a cada nova
+ponta da série (ex. 2012 para decisões muito antigas, se a série um dia se estender para
+trás) em vez de assumir "um ano de lookback" — o risco registrado é que uma cobertura
+baixa nos primeiros anos pareça um achado sobre "a era antiga ter menos dado publicado"
+quando na verdade é só um buraco de ingestão do fundamento, não da publicação em si.
+
+`backend/src/tradingbot/acoes/decisao.py`: `DecisaoEmpresa` (por ticker: fatores brutos,
+percentis demeaned, score composto), `DecisaoResultado` (lista de `DecisaoEmpresa` +
+`n_score_computavel`), `build_decisao`.
+
 ## 8. Motor consciente da carteira
 
 É o que separa este sistema de um screener. O relatório mensal não responde "quais as melhores ações", e sim:

@@ -105,3 +105,9 @@ dois modos de integração.
 Se uma regra de segurança nova for aprendida (via `learnings/`) e aprovada como
 mudança permanente, ela entra aqui, não só na spec técnica correspondente — este
 arquivo é o resumo executivo das invariantes do projeto.
+
+## Idioma
+
+Todas as respostas devem ser em português do Brasil, sempre. Isso inclui resumos de
+rodada, mensagens de commit, conteúdo de `changes/` e comentários de código. Não
+alternar para inglês em nenhuma circunstância, mesmo quando o conteúdo for técnico.
