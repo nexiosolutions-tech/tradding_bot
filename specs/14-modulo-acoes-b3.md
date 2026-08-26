@@ -817,7 +817,13 @@ lenta (~300-400s por ano completo de COTAHIST) — funcionalmente correta e veri
 padrão certo para produção é lote com um commit por arquivo, não savepoint por linha;
 registrado como pendência de performance, não resolvido nesta rodada para não misturar
 mudança de mecanismo de escrita com validação de
-resultado na mesma passada.
+resultado na mesma passada. **Requisito para quando essa otimização for feita**: o
+padrão savepoint-por-linha foi o que produziu o truncamento silencioso na fronteira de
+sessão (Seção 5.1) — a troca para lote deve manter a conferência de contagem de linhas
+contra o arquivo bruto como **asserção de código dentro da própria rotina de ingestão**
+(falha alto e visível se a contagem não bater), não como passo de verificação manual
+pós-ingestão. O objetivo é tornar o truncamento impossível de não notar, não apenas algo
+que se lembrou de checar da última vez.
 
 ## 7. Fatores
 
@@ -1235,6 +1241,15 @@ ressalva correta não é "a Seção 7.3 está errada", é "a comparação banco-
 funciona quando o setor tem massa real suficiente, e a versão retificada reduz essa massa
 justamente no setor onde ROE mais importa".
 
+**O padrão vale nomear**: um diagnóstico encomendado para investigar um viés (bancário)
+revelou um bug de código que produzia outro viés maior — o piso de população do bucket
+(a proteção de massa mínima discutida desde que a fragmentação setorial de 22/27 apareceu
+na Seção 8) estava sendo satisfeito com dado inventado. `len(grupo)=7 >= 3` passava com
+apenas 2 valores reais. **O bug não era específico de bancos** — atinge qualquer bucket
+pequeno com imputação, o que descreve metade dos setores da B3 (Seção 6.2: 5 de 11
+setores de produção abaixo de população 6). A correção generaliza para todo o módulo, não
+só para o caso que a expôs.
+
 **A decisão de desenho que os dois números de `n` efetivo forçam — corrigida após
 revisão.** Exigir os dois fatores presentes trava em 70,4% nos dois anos. Permitir score
 composto parcial (pelo menos um fator, via `compute_score_composto`, Seção 7.2) sobe para
@@ -1256,6 +1271,37 @@ anos medidos: 2015 tem 106 empresas com score computável (**passa** N≥100); *
 97, abaixo de 100 — não passaria pelo critério 2 já existente, aplicado ao denominador
 certo.** Isso é mais rigoroso que qualquer piso percentual novo, e não precisa de número
 inventado — reusa o que já está pré-registrado, só corrige o denominador.
+
+**Por que absoluto e não percentual, além de evitar inventar um número novo**: o poder
+estatístico transversal depende de massa absoluta, não de fração coberta — 90% de um
+universo de 60 empresas é pior amostra que 80% de um universo de 150. Como o universo
+elegível da B3 oscila fortemente entre anos (113 a 235, medido na Seção 6/8), um piso
+percentual ficaria frouxo justamente nos anos gordos e apertado nos magros — o inverso do
+que a proteção deveria fazer. N absoluto sobre o universo com score computável mede a
+coisa certa.
+
+**2016 reprovar não é um problema do critério — é o critério funcionando.** 2016 foi o
+vale do ciclo (recessão, universo bruto de 113). Um piso desenhado para proteger poder
+estatístico transversal que reprova justamente o ano mais magro está fazendo o trabalho
+para o qual foi desenhado. Isso reconecta com a tensão de folds já registrada no critério
+1 desta seção (folds fora da era avaliável não contam) — reprovar por critério declarado,
+em vez de por acaso, é a diferença que a Seção 5.6 já atravessou uma vez na fronteira de
+identidade.
+
+**Mas o próprio N=100 passa a fazer trabalho diferente, e merece ser revisto por isso —
+não necessariamente mudado.** Como registrado no critério 2 da Seção 10, N=100 foi
+calibrado contra o mínimo do universo **bruto** (113 em 2016) e explicitamente descrito
+como guarda contra degradação futura, não filtro calibrado — "por construção nunca
+reprova nada no histórico medido". Aplicado ao universo com score computável, ele passa a
+morder de verdade (reprova 2016) — deixou de ser guarda passiva e virou filtro ativo.
+Um número calibrado para uma função raramente é o número certo para outra por
+coincidência; ele pode continuar sendo 100, mas por um argumento novo sobre poder
+estatístico transversal do universo computável, não por herança do universo bruto.
+**Decisão registrada por ora**: manter 100, mas marcado explicitamente como herdado e não
+recalibrado — a recalibração fica pendente até a série completa 2015-2026 mostrar quantos
+anos o critério reprova. Reprovar dois ou três anos de vale é o critério funcionando;
+reprovar metade da série é sinal de que o número está errado, e a série mostrará qual dos
+dois é o caso.
 
 **Requisito novo para o backtest (Seção 9/10): relatório segmentado por setor.** Se o
 conjunto de fatores parecer funcionar mas a vantagem estiver concentrada no setor
@@ -1433,7 +1479,18 @@ Um conjunto de fatores só vai a produção se, simultaneamente:
    confirmar: aplicar N≥100 ao universo com score computável, não ao universo elegível
    bruto — generaliza o critério já pré-registrado em vez de inventar um piso de
    cobertura de fator novo (que teria o risco de ser calibrado para caber, não
-   justificado por natureza de risco própria).
+   justificado por natureza de risco própria). Preferível a um piso percentual pela mesma
+   razão de sempre: poder estatístico transversal depende de massa absoluta, não de
+   fração coberta, e o universo elegível oscila demais entre anos (113-235) para uma
+   fração fixa proteger a coisa certa em todos eles.
+
+   **Mas o número 100 em si passa a ser herdado, não recalibrado, para esta função nova.**
+   Foi calibrado contra o mínimo do universo *bruto*; aplicado ao universo *computável*
+   ele deixa de ser guarda passiva (nunca reprova) e passa a ser filtro ativo (reprova
+   2016). Mantido em 100 por ora — decisão registrada, não fechada — com a recalibração
+   explicitamente pendente até a série completa 2015-2026 mostrar quantos anos o critério
+   reprova: reprovar alguns anos de vale de ciclo é o critério funcionando; reprovar
+   metade da série é sinal de que 100 é o número errado para este denominador.
 3. Fica fora da nuvem nula com p < 0,05.
 4. Tem DSR positivo, contabilizando **todas** as configurações de peso testadas.
 5. Não concentra a vantagem inteira em um único setor ou em um único período — segmentação com piso de amostra mínima. Ver nota do critério 2: este é o critério com poder real de reprovação nesta frente, não o 2. **Setor financeiro exige linha própria no relatório do backtest (Seção 7.5/9)**: é o setor mais afetado pela limitação de versão retificada e o único onde o bucket de ROE tem massa real reduzida — sem reportar separado, não há como distinguir vantagem genuína de artefato da limitação de fonte.
