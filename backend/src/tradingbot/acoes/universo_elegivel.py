@@ -49,12 +49,20 @@ from sqlalchemy.orm import Session
 
 from tradingbot.acoes.b3_setor import get_latest_b3_classification
 from tradingbot.acoes.cnpj_ticker_map import get_cnpj_as_of
+from tradingbot.acoes.ipca import deflacionar_piso
 from tradingbot.acoes.models import CotahistPrice, UniversoElegivel, UniversoExclusao
 
 ROOT_LEN = 4
 JANELA_PREGOES_PADRAO = 63
 MIN_VOLUME_MEDIANO_PADRAO = 500_000.0
 MIN_PREGOES_HISTORICO_PADRAO = 252
+
+# Ancora do piso de liquidez (Seção 6.3) — primeira data de decisão confirmada da série,
+# mesma âncora que fecha a fronteira de identidade (Seção 5.6). R$500 mil vale isso em
+# reais de 2015-02-27; para qualquer outra data_decisao, o piso é reexpresso pelo IPCA
+# acumulado desde então, para não afrouxar sozinho ao longo de uma série que atravessa
+# mais de uma década de inflação.
+DATA_BASE_LIQUIDEZ = date(2015, 2, 27)
 
 EXCLUSION_PRECEDENCE = (
     "iliquido",
@@ -134,13 +142,18 @@ def build_universo_elegivel(
 
     candidatos = _candidatos(session, data_decisao)
 
-    # 1. liquidez
+    # 1. liquidez — piso deflacionado pelo IPCA (Seção 6.3): min_volume_mediano é sempre
+    # em reais de DATA_BASE_LIQUIDEZ, reexpresso em nominais de data_decisao aqui, uma
+    # vez só (não depende do ticker). Degrada para min_volume_mediano sem ajuste se o
+    # IPCA não estiver ingerido.
+    piso_liquidez = deflacionar_piso(min_volume_mediano, DATA_BASE_LIQUIDEZ, data_decisao, session)
+
     liquidos: dict[str, float] = {}
     for ticker in candidatos:
         volume = _volume_mediano(session, ticker, data_decisao, janela_pregoes)
         if volume is None:
             continue  # nunca negociado ate a data: nao e candidato, nao e exclusao
-        if volume < min_volume_mediano:
+        if volume < piso_liquidez:
             _excluir(ticker, "iliquido")
             continue
         liquidos[ticker] = volume

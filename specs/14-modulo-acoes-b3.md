@@ -862,6 +862,46 @@ trade_date<?`), confirmado pelo mesmo comando antes de adicionar qualquer coisa;
 índice composto novo ali seria redundante, e redundante significa custo de escrita extra
 exatamente na rotina que este trabalho acabou de acelerar.
 
+### 6.3 O piso de liquidez é nominal — deflacionado por IPCA (2026-08-26)
+
+**Achado real, revisão da série completa (Seção 7.7)**: `MIN_VOLUME_MEDIANO_PADRAO =
+R$ 500.000` é um valor nominal fixo, comparado sem ajuste contra o volume mediano de
+qualquer data de decisão entre 2015 e 2026. Com inflação acumulada de mais de uma
+década, R$500 mil de 2026 vale muito menos, em termos reais, que R$500 mil de 2015 — o
+piso **afrouxa sozinho** ao longo da série, sem nenhuma decisão de desenho pedindo isso.
+Duas consequências diretas: a curva de universo (Seção 7.7) carrega uma tendência de
+alta que não é inteiramente de mercado, e a contração real medida em 2024-2026 (206 →
+190 → 178) é mais forte do que os números brutos mostram, porque aconteceu apesar do
+afrouxamento, não sem ele.
+
+**Correção**: piso expresso em reais de **2015-02-27** (a primeira data de decisão da
+série confirmada, mesma âncora que fecha a fronteira de identidade na Seção 5.6) e
+reexpresso em reais nominais de cada `data_decisao` via IPCA, mantendo o mesmo poder de
+compra em toda a série — o piso nominal *sobe* ao longo do tempo, na mesma proporção que
+os preços em geral, em vez de ficar estático enquanto tudo ao redor sobe.
+
+**Fonte**: Banco Central — SGS, série 433 (IPCA, variação mensal) — já a fonte declarada
+para Selic/CDI/câmbio na Seção 4.3, cobre IPCA também, sem precisar de uma integração
+nova com o IBGE. Verificado contra dado real antes de implementar: `https://api.bcb.gov.br/
+dados/serie/bcdata.sgs.433/dados` devolve 139 meses reais, janeiro/2015 a julho/2026,
+cobrindo a série inteira sem lacuna.
+
+`backend/src/tradingbot/acoes/ipca.py`: `build_indice_acumulado` (encadeia as variações
+mensais num número-índice, base 100 no primeiro mês), `ingest_ipca_series` (persiste,
+append-only por `data_referencia`), `get_ipca_as_of` (mesma convenção point-in-time do
+resto da spec — última publicação `<= data`), `deflacionar_piso` (reexpressa um valor
+nominal ancorado numa data-base para o poder de compra de outra data). **Degrada para o
+piso nominal sem ajuste se o IPCA não estiver ingerido** (`get_ipca_as_of` devolve
+`None`) — nunca inventa inflação para uma data sem dado publicado, e mantém todo teste
+existente que não ingere IPCA funcionando exatamente como antes (comportamento antigo é
+o caso degenerado do novo, não um caminho separado).
+
+**Pendente**: reexecutar a série completa (Seção 7.7) com o piso deflacionado e comparar
+a nova curva contra a atual — não feito nesta rodada porque o objetivo aqui era corrigir
+o mecanismo e prová-lo contra dado real, não reprocessar doze anos de novo. A
+reexecução é barata (nenhum dado novo de CVM/COTAHIST precisa ser baixado, só
+`build_universo_elegivel` reexecutado com o piso corrigido).
+
 ## 7. Fatores
 
 Nenhum fator inventado. Cada um precisa de referência na literatura e de justificativa econômica documentada na spec — se não há explicação de *por que* deveria funcionar, é mineração de dado.
@@ -1512,7 +1552,103 @@ ano, nenhum silencioso**:
    tentativa, mesmo raciocínio já aplicado a `CvmFinancialLineItem` para os exercícios
    fiscais.
 
+### 7.8 Correções pós-Seção 7.7, revisão contra a série: IPCA, consistência de identidade, reconciliação do pico (2026-08-26)
+
+Revisão da Seção 7.7 levantou três pontos antes do backtest. Os três investigados contra
+dado real, não aceitos nem descartados por suposição.
+
+**1. Piso de liquidez deflacionado por IPCA (Seção 6.3), série reexecutada.** Barato
+reexecutar — nenhum dado novo de CVM/COTAHIST precisa ser baixado, só
+`build_universo_elegivel` reprocessado com o piso corrigido. Resultado, isolando o efeito
+puro do IPCA (mesma identidade, antes/depois):
+
+| Ano | Sem IPCA | Com IPCA | Efeito |
+|---|---|---|---|
+| 2015 | 128 | 128 | 0 (data-base, sem ajuste por definição) |
+| 2016 | 117 | 116 | -1 |
+| 2020 | 169 | 164 | -5 |
+| 2022 | 194 | 190 | -4 |
+| 2024 | 206 | 196 | -10 |
+| 2026 | 178 | 168 | -10 |
+
+Efeito cresce com o tempo decorrido desde a âncora (2015-02-27), exatamente como
+esperado de um piso que vinha afrouxando sozinho — pequeno nos primeiros anos, de
+dois dígitos nos últimos. **A contração 2023-2026 é mais forte depois da correção**: 210
+→ 178 (-15,2%) sem IPCA, **200 → 168 (-16,0%) com IPCA** — aconteceu apesar do
+afrouxamento, não sem ele, confirmando a hipótese registrada na Seção 6.3.
+
+**2. 2015/2016 recomputados com a mesma identidade de 2017-2026 — inconsistência real,
+pequena, corrigida.** A Seção 7.6 travou o driver contra 2015/2016 usando identidade
+reconstruída *antes* do pipeline de produção completo (`load_fca_identity` +
+`compute_vigencia` sobre a COTAHIST inteira) ter sido montado para a Seção 7.7 — 2017-2026
+já usavam a identidade completa, 2015/2016 não. Recomputados: 2015 sobe de 125→128
+(3 empresas), 2016 sobe de 115→117 (2 empresas) — pequeno, mas real, e os dois anos
+originalmente reportados (Seção 7.6/7.7) estavam levemente subestimados por essa
+inconsistência, não por erro de fiação do driver.
+
+**Tabela final, identidade consistente + IPCA — a que vale a partir de agora**:
+
+| Ano | Universo | Score computável | Cobertura | N≥100 |
+|---|---|---|---|---|
+| 2015 | 128 | 104 | 81,2% | passa |
+| 2016 | 116 | 97 | 83,6% | **falha** |
+| 2017 | 127 | 104 | 81,9% | passa |
+| 2018 | 132 | 112 | 84,8% | passa |
+| 2019 | 144 | 120 | 83,3% | passa |
+| 2020 | 164 | 143 | 87,2% | passa |
+| 2021 | 174 | 152 | 87,4% | passa |
+| 2022 | 190 | 172 | 90,5% | passa |
+| 2023 | 200 | 178 | 89,0% | passa |
+| 2024 | 196 | 186 | 94,9% | passa |
+| 2025 | 181 | 168 | 92,8% | passa |
+| 2026 | 168 | 156 | 92,9% | passa |
+
+**N≥100 continua reprovando só 2016 — 1 de 12, robusto às duas correções.** Nem a
+correção de identidade nem o IPCA mudaram a conclusão da Seção 7.7/10: o piso confirmado
+sobrevive a ambas. Cobertura mantém o mesmo formato de "duas eras" (81-85% em 2015-2019,
+87%+ a partir de 2020, 90%+ a partir de 2022) — números levemente diferentes, achado
+igual.
+
+**3. Divergência do pico (Seção 7.7) reconciliada — não era identidade, era o piso de
+histórico mínimo.** A hipótese registrada na Seção 7.7 ("provavelmente identidade não
+resolvida") **estava errada, verificado contra o número exato**: a medição antiga
+(`changes/2026-08-19-modulo-acoes-b3-medicao-universo.md`) exigia só 20 pregões na
+janela para o ticker entrar na conta; `build_universo_elegivel` exige
+`MIN_PREGOES_HISTORICO_PADRAO = 252` (ano cheio) — filtro de histórico muito mais
+rigoroso, não comparável ao da medição antiga. A diferença bate quase exatamente com a
+contagem de `historico_insuficiente` do próprio ano (41 empresas excluídas por esse
+motivo em 2022, contra uma diferença de pico de 235-194=41 na comparação original) —
+não prova formal, mas correspondência forte o bastante para substituir a explicação
+errada por esta. **A curva de sanidade usada para validar cada ano da Seção 7.7 foi
+calibrada contra a medição antiga (desatualizada)** — deve ser substituída pela tabela
+acima em qualquer reexecução futura, para não validar anos novos contra um padrão que a
+própria spec já superou.
+
+**O que ficou registrado**: `backend/src/tradingbot/acoes/ipca.py` (novo módulo),
+`IpcaIndice` (novo modelo), `universo_elegivel.py` deflaciona o piso automaticamente
+quando IPCA está ingerido (degrada para nominal sem ajuste caso contrário — nenhum teste
+existente precisou mudar). 6 testes novos (`test_acoes_ipca.py`), todos com variação
+mensal real do IPCA (BCB SGS 433, jan/2015-fev/2016).
+
 ## 8. Motor consciente da carteira
+
+**Ordem de implementação decidida (2026-08-26): formação mínima de carteira + backtest
+(Seção 9) antes do motor completo desta seção.** Esta seção — tetos por ativo/setor,
+sobra não alocada, lote padrão vs. fracionário, decomposição por fator — só compensa
+construir se os fatores tiverem poder preditivo real; o backtest não precisa dela para
+responder essa pergunta. Formação mínima suficiente para a Seção 9: top-N por score
+composto, peso igual, rebalanceada mensalmente. Se o backtest for positivo, o motor
+completo é construído sabendo que há sobre o que operar; se for negativo, esta seção
+inteira fica sem necessidade — a conversa vira sobre fatores, não sobre alocação. Mesma
+lógica que já levou a provar um fator ponta a ponta (Seção 7.1) antes de escrever os
+outros dois.
+
+**Uma exceção não adia**: a regra de saída por perda de liquidez (abaixo) é sobre
+survivorship, não sobre alocação — sem ela, *qualquer* backtest, mínimo ou completo,
+carrega o mesmo viés otimista de deixar uma posição desaparecer no mês em que daria o
+pior resultado. A formação mínima da Seção 9 já precisa dela; só o resto desta seção
+(tetos, sobra, lote, decomposição por fator) fica de fato para depois do backtest
+validar sinal.
 
 É o que separa este sistema de um screener. O relatório mensal não responde "quais as melhores ações", e sim:
 
@@ -1594,7 +1730,11 @@ Saídas:
 
 ## 9. Backtest e validação
 
-Mesmo rigor do bot, com as adaptações do domínio.
+Mesmo rigor do bot, com as adaptações do domínio. **Formação de carteira aqui é a
+mínima descrita na Seção 8** (top-N por score composto, peso igual, rebalanceada
+mensalmente, com a regra de saída por perda de liquidez) — o motor completo (tetos,
+sobra não alocada, lote fracionário) é decisão de implementação posterior à Seção 9,
+não pré-requisito dela.
 
 **Simulação:** rebalanceamento mensal, custo de corretagem e emolumentos B3 parametrizados, slippage por faixa de liquidez. Dividendos reinvestidos **só quando houver cobertura de proventos para 100% do universo elegível na data** (regra de consistência da Seção 5.3/6) — do contrário a simulação roda price-only, nunca com reinvestimento parcial.
 
@@ -1687,13 +1827,23 @@ Um conjunto de fatores só vai a produção se, simultaneamente:
    reprova: reprovar alguns anos de vale de ciclo é o critério funcionando; reprovar
    metade da série é sinal de que 100 é o número errado para este denominador.
 
-   **Resolvido (Seção 7.7): série completa medida, 1 de 12 anos reprova.** Só 2016 (98)
-   fica abaixo de 100 — o vale já identificado, não uma fração relevante da série. N=100
-   fica confirmado como número certo para este denominador, não só herdado — decisão
-   fechada, não mais pendente de recalibração.
+   **Resolvido (Seção 7.7/7.8): série completa medida, 1 de 12 anos reprova, robusto a
+   duas correções posteriores (IPCA, consistência de identidade — Seção 7.8).** Só 2016
+   (97) fica abaixo de 100 — o vale já identificado, não uma fração relevante da série.
+   N=100 fica confirmado como número certo para este denominador, não só herdado —
+   decisão fechada, não mais pendente de recalibração.
+
+   **Mas reprovar 1 de 12 (por margem de 3, 97 contra 100) é evidência fraca de
+   calibração, não forte — a distinção importa.** O piso funcionou como guarda: a série
+   está saudável, e o único ano que reprova é exatamente o vale de recessão que já se
+   esperava que reprovasse. Isso não é o mesmo que dizer que 100 é o valor ótimo — é
+   dizer que 100 não quebrou nada observável até aqui. Se a cobertura degradar no
+   futuro (menos anos passando, mais reprovações), *aí sim* vai haver evidência real
+   sobre se 100 é alto ou baixo o suficiente — o piso continua sendo, estritamente, uma
+   guarda contra uma degradação futura que ainda não aconteceu de fato.
 3. Fica fora da nuvem nula com p < 0,05.
 4. Tem DSR positivo, contabilizando **todas** as configurações de peso testadas.
-5. Não concentra a vantagem inteira em um único setor ou em um único período — segmentação com piso de amostra mínima. Ver nota do critério 2: este é o critério com poder real de reprovação nesta frente, não o 2. **Setor financeiro exige linha própria no relatório do backtest (Seção 7.5/9)**: é o setor mais afetado pela limitação de versão retificada e o único onde o bucket de ROE tem massa real reduzida — sem reportar separado, não há como distinguir vantagem genuína de artefato da limitação de fonte.
+5. Não concentra a vantagem inteira em um único setor ou em um único período — segmentação com piso de amostra mínima. Ver nota do critério 2: este é o critério com poder real de reprovação nesta frente, não o 2. **Setor financeiro exige linha própria no relatório do backtest (Seção 7.5/9)**: é o setor mais afetado pela limitação de versão retificada e o único onde o bucket de ROE tem massa real reduzida — sem reportar separado, não há como distinguir vantagem genuína de artefato da limitação de fonte. **Cobertura de fator por era exige a mesma linha própria** (Seção 7.7/7.8): 2015-2019 (~83% de cobertura média) e 2020-2026 (~89%) não têm a mesma qualidade de dado — um fold de 2015-2019 tem proporcionalmente mais empresas com score imputado que um fold de 2020+. Uma vantagem concentrada na era de cobertura melhor pode ser sinal genuíno (fatores funcionam melhor com mais dado real) ou artefato (menos ruído de imputação, não mais poder preditivo) — sem reportar as duas eras separadas, as duas leituras ficam indistinguíveis, mesmo problema que motivou a linha do setor financeiro.
 6. Turnover compatível com o orçamento de custo definido.
 
 Enquanto nenhum conjunto passar, o sistema entrega apenas a **camada de evidência** (dados consolidados, rastreáveis, decompostos) — que já é útil por si e não depende de nenhum modelo funcionar.

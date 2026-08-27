@@ -318,3 +318,24 @@ class B3IndustryClassification(Base):
     subsetor: Mapped[str] = mapped_column(String)
     segmento: Mapped[str] = mapped_column(String)
     data_coleta: Mapped[Date] = mapped_column(Date, index=True)
+
+
+class IpcaIndice(Base):
+    """Número-índice IPCA encadeado a partir da variação mensal — spec 14, Seção 6.3.
+    Existe para deflacionar o piso de liquidez (nominal, Seção 6.1) ao longo de uma
+    série que atravessa mais de uma década de inflação acumulada — sem isso, o piso
+    afrouxa sozinho conforme o tempo passa, sem nenhuma decisão de desenho pedindo isso.
+
+    `data_referencia` é sempre o primeiro dia do mês (convenção do BCB SGS 433). Base
+    100 no primeiro mês da série ingerida — arbitrária, cancela na razão usada por
+    `deflacionar_piso`, nunca comparada em valor absoluto fora deste módulo.
+    """
+
+    __tablename__ = "ipca_indice"
+    __table_args__ = (
+        UniqueConstraint("data_referencia", name="uq_ipca_indice_identity"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    data_referencia: Mapped[Date] = mapped_column(Date, index=True)
+    numero_indice: Mapped[float] = mapped_column(Float)
