@@ -14,11 +14,20 @@ um **par dentro do módulo cripto** — não serve para o módulo de Ações
 (`14-modulo-acoes-b3.md`), que é um módulo inteiro diferente, com seu próprio conjunto de
 telas e seu próprio dado (`specs/00`, disclaimer de independência: os dois módulos
 compartilham fundação de engenharia — este mesmo shell de dashboard — mas nunca estado,
-dado, modelo ou runtime). Precisa de um seletor de nível acima do `CoinSelector`, que troca
-o conteúdo inteiro da sidebar: as 4 views abaixo quando em modo Cripto, as 5 telas de `14-modulo-acoes-b3.md` (Seção 11) quando em modo Ações. Mesmo espírito do
-`CoinSelector` quando foi introduzido — placeholder estrutural primeiro, sem lógica de
-troca real até o módulo de Ações ter dado pra mostrar (Fase 1-3 de `14-modulo-acoes-b3.md`
-antes de qualquer tela de Ações ficar funcional).
+dado, modelo ou runtime). Seletor de nível acima do `CoinSelector` (`ModuleSwitch`),
+que troca o conteúdo inteiro da sidebar: as 4 views abaixo quando em modo Cripto, as 5
+telas de `14-modulo-acoes-b3.md` (Seção 11) quando em modo Ações.
+
+**Implementado com troca real (2026-08-27)** — não é mais o placeholder estrutural
+inerte descrito na versão anterior desta seção. A condição que adiava a lógica de
+troca (Fase 1-3 de `14-modulo-acoes-b3.md` com dado funcional) já estava satisfeita;
+`ModuleSwitch` (componente compartilhado, `src/components/ModuleSwitch.tsx`) renderiza
+com uma variante de tema por módulo (`dark` para o `Sidebar` cripto existente, `light`
+para o novo `AcoesSidebar`), e `App.tsx` desmonta um shell inteiro e monta o outro —
+nunca os dois convivem na mesma árvore React, mesma disciplina de isolamento do
+`CLAUDE.md` aplicada também no frontend. O engine WebSocket do módulo cripto
+(`useEngineState`) permanece vivo em `App.tsx` mesmo com o módulo Ações ativo, para não
+perder a conexão a cada troca — só a UI é trocada, não o estado de conexão.
 
 ## Views (módulo Cripto)
 

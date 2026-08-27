@@ -11,12 +11,18 @@ def client(tmp_path, monkeypatch):
     monkeypatch.delenv("DASHBOARD_API_KEY", raising=False)
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path}/api-test.db")
 
+    import tradingbot.acoes.api as acoes_api
     import tradingbot.api.app as api_app
 
     monkeypatch.setattr(api_app, "RESULTS_DIR", tmp_path / "results")
     monkeypatch.setattr(api_app, "MODELS_DIR", tmp_path / "results" / "models")
     monkeypatch.setattr(api_app, "LEARNINGS_DIR", tmp_path / "learnings")
     monkeypatch.setattr(api_app, "CHANGES_DIR", tmp_path / "changes")
+    # este arquivo testa só a API do bot — sem isso, o lifespan dispararia a thread de
+    # aquecimento do módulo de Ações (Seção 11) contra o banco real de produção
+    # (`results/acoes.db`) a cada teste, um efeito colateral sem relação nenhuma com o
+    # que este arquivo verifica.
+    monkeypatch.setattr(acoes_api, "WARMUP_HABILITADO", False)
 
     with TestClient(api_app.app) as test_client:
         yield test_client

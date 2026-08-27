@@ -108,6 +108,36 @@ code {
   height: 100dvh;
 }
 
+/* -- seletor de módulo (Cripto/Ações) — spec 08, "Seletor de módulo" ------ */
+
+.sidebar__module-switch {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--bg);
+  border-radius: 8px;
+  margin-bottom: 18px;
+}
+
+.sidebar__module-switch__item {
+  flex: 1;
+  text-align: center;
+  padding: 6px 0;
+  border-radius: 6px;
+  border: none;
+  background: none;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: var(--font-ui);
+  color: var(--text-muted);
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.sidebar__module-switch__item--active {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
 .sidebar__brand {
   display: flex;
   align-items: center;

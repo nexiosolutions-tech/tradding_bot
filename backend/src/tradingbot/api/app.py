@@ -17,6 +17,8 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, WebSocket, W
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from tradingbot.acoes.api import router as acoes_router
+from tradingbot.acoes.api import warm_up_cache_em_background
 from tradingbot.backtesting.runner import NoKlinesFetchedError, run_and_save_backtest
 from tradingbot.execution.bootstrap import MissingCredentialsError, build_orchestrator
 from tradingbot.ingestion.binance_ws import BinanceKlineStream
@@ -61,6 +63,12 @@ async def lifespan(app: FastAPI):
 
         app.state.ingestion_task = asyncio.create_task(_consume())
 
+    # Módulo de Ações: pré-aquece o cache de decisões point-in-time em background —
+    # nunca bloqueia o startup do bot (é uma thread separada, não uma corrotina desta
+    # função), e os dois módulos continuam sem compartilhar estado (a thread só toca o
+    # banco próprio de Ações, `acoes/persistence.py`).
+    warm_up_cache_em_background()
+
     yield
 
     if app.state.ingestion_task is not None:
@@ -68,6 +76,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Trading Bot API", lifespan=lifespan)
+app.include_router(acoes_router)
 app.add_middleware(
     CORSMiddleware,
     # `or` (not dict.get's default=) so an empty-but-set DASHBOARD_ORIGIN — e.g. left

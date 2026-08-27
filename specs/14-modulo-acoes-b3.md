@@ -2090,73 +2090,329 @@ Enquanto nenhum conjunto passar, o sistema entrega apenas a **camada de evidênc
 
 ## 11. Interface — menu Ações
 
+> Substitui o esboço original desta seção (2026-08-20) — reescrita em 2026-08-27 depois
+> do primeiro resultado do backtest (Seção 9.6, nulo). Registrado como arquivo de
+> proposta separado (`14-modulo-acoes-b3-secao-11-interface.md`) antes de fundir aqui;
+> a versão canônica passa a ser esta.
+
 Estende o mesmo dashboard descrito em `08-dashboard-e-visualizacao.md` — não é uma
 aplicação separada, mesmo backend FastAPI + frontend React/Vite/TypeScript. Mas não é o
 mesmo padrão do `CoinSelector` existente: aquele seleciona um **par dentro do módulo
 cripto** (BTC/USDT vs. ETH/USDT); Ações é um **módulo inteiro diferente**, com seu próprio
 conjunto de telas e dado próprio (specs/00, disclaimer de independência). Precisa de um
 seletor de nível acima — módulo (Cripto | Ações), não par — que troca o conjunto de itens
-da sidebar inteiro. Ver `08-dashboard-e-visualizacao.md`, nova seção sobre isso.
+da sidebar inteiro (`08-dashboard-e-visualizacao.md`, seção "Seletor de módulo").
 
-Todas as 5 telas abaixo carregam o disclaimer de `specs/00`/`CLAUDE.md` — "o sistema
-ordena e evidencia, quem decide o aporte é o usuário", nunca recomendação — com destaque
-visual próprio na tela 1 (Painel do aporte), que é a mais decision-facing das cinco.
+**Depende de:** camada de evidência (Seções 5-7) funcional. **Não depende** de score
+validado — o backtest da Seção 9 voltou nulo, e a interface precisa refletir isso.
 
-### 11.1 Painel do aporte do mês (tela principal)
+### 11.0 Princípio reitor
 
-- Input do usuário: valor do aporte do mês (a carteira atual vem da tela "Minha carteira",
-  não é redigitada aqui).
-- Ranking do universo elegível (Seção 6): ticker, empresa, setor, score composto,
-  variação do score desde o mês anterior.
-- **Decomposição por fator** por linha do ranking (Seção 7): um indicador visual por
-  família (Valor/Qualidade/Saúde financeira/Crescimento/Momentum/Dividendos/Tamanho) —
-  responde "por que subiu, por que caiu", não só o número final.
-- Para os candidatos no topo: exposição setorial resultante da carteira **se comprado**
-  (antes/depois lado a lado), e o alerta de concentração da Seção 8 quando aplicável —
-  evidência de tensão, não bloqueio (o usuário decide mesmo assim, se quiser).
-- Sugestão de aporte respeitando tetos por ativo/setor (Seção 8) — quanto de cada
-  candidato, não só a ordem do ranking.
-- Nota fiscal-tributária informativa (Seção 8) — lembrete das regras vigentes, rodapé ou
-  tooltip, nunca um cálculo de imposto devido.
+Isso não esvazia a tela — muda o que ela é. Este não é um painel de recomendação; é um
+**painel de evidência**. A tela não diz "compre X". Ela responde:
 
-### 11.2 Ficha do ativo
+> *"O que se sabe hoje sobre as empresas elegíveis, quando cada número ficou público, e
+> como isso se compara dentro do setor?"*
 
-- Cabeçalho: ticker, razão social, CNPJ, classe (ON/PN/UNIT via `cnpj_ticker_map`,
-  Seção 5.1), setor (classificação B3, Seção 7).
-- Série de fundamentos com **`data_publicacao` visível ao lado de cada número, não só o
-  valor** — a garantia point-in-time da Seção 5 precisa ser legível pelo usuário, não só
-  correta internamente.
-- Histórico de proventos (dividendos/JCP).
-- Posição do ativo em cada fator ao longo do tempo — série temporal do percentil setorial
-  por família de fator (Seção 7), não só o valor do mês corrente.
-- Preço ajustado por eventos corporativos (Seção 5) — mesmo componente de chart do módulo
-  cripto (`lightweight-charts` já é dependência do frontend, spec 08) é infraestrutura de
-  UI compartilhada; o dado por trás não é.
+O usuário decide. A tela informa e mostra a origem de cada informação.
 
-### 11.3 Minha carteira
+**Consequência de projeto:** nenhum elemento pode sugerir autoridade preditiva que o
+sistema não tem. Sem "top picks", sem estrelas, sem selo de "recomendado", sem seta
+verde apontando para cima ao lado de um score. Ordenação é uma ferramenta de navegação,
+não um veredito — e a tela precisa dizer isso onde a ordenação aparece, não numa página
+de termos.
 
-- Composição: ticker, quantidade, preço médio, valor atual, peso — **entrada manual**, não
-  há corretora integrada (o sistema não custodia nem executa, Seção 2).
-- Exposição setorial e concentração (peso do maior ativo, dos 5 maiores, índice de
-  concentração — Seção 8).
-- Evolução vs. os 4 benchmarks obrigatórios (Seção 9: IBOV, IBrX-100, SMLL, CDI) — mesma
-  régua honesta usada na validação, agora sobre a carteira real do usuário.
+### 11.1 Direção visual
 
-### 11.4 Transparência
+Ferramenta de trabalho, não produto de consumo. Registro de dado, não aplicativo de
+finanças pessoais — três desvios deliberados do padrão de dashboard financeiro comum:
+acento sóbrio (verde-tinta, não neon), número sempre em monoespaçada (colunas de
+múltiplos só comparam a olho quando os dígitos alinham), e o carimbo de proveniência
+(Seção 11.3) como elemento assinatura, sem equivalente em nenhuma ferramenta do
+mercado.
 
-- Fontes (CVM/preço/macro), timestamp da última coleta, idade de cada dado — herda a
-  asserção de frescor do bot (`run_daily_learning.py`, padrão já existente).
-- Falhas de coleta recentes. Equivalente funcional da view "Aprendizado" do bot (spec 08),
-  mas sobre proveniência de dado em vez de aprendizado de modelo.
+#### Tokens
 
-### 11.5 Histórico de decisões
+```
+--fundo:          #EFF1EC   /* cinza-papel, levemente esverdeado */
+--superficie:     #FFFFFF   /* cards */
+--borda:          #E1E5DE
+--tinta:          #16191C   /* texto primário */
+--tinta-2:        #626B73   /* rótulos, metadados */
+--acento:         #1F5F4B   /* verde-tinta: ações, links, ênfase */
+--acento-fraco:   #D7E8DF   /* preenchimento de barra, fundo de chip */
+--atencao:        #B4541F   /* identidade reconciliada, dado antigo, era degradada */
+--negativo:       #9E2B2B   /* valores negativos, exclusões */
+--neutro-vazio:   #F5F6F3   /* célula sem dado — nunca branca, nunca zero */
+```
 
-- Snapshot congelado do ranking + sugestão de cada mês (precisa ser persistido no momento
-  da geração — não é recalculável depois, porque o universo elegível e os fundamentos
-  point-in-time de hoje não são os mesmos de um mês atrás).
-- Retorno realizado do que foi sugerido vs. do que não foi, comparado ao mês seguinte.
-- Sem isso não há como auditar o próprio sistema com o tempo — é o que torna a Seção 14
-  ("expectativa calibrada") verificável, não só uma afirmação de propósito.
+**Tipografia — família IBM Plex nas três funções.** Plex foi desenhada para contexto de
+engenharia e dado; a coerência entre as três variantes reforça a leitura de instrumento.
+Não usar Inter (o padrão de qualquer dashboard).
+
+- **Plex Serif** — títulos de seção e nome de empresa. Só onde há hierarquia real.
+- **Plex Sans** — corpo, rótulos, navegação.
+- **Plex Mono** — **toda** cifra, percentual, data, ticker e CNPJ. Sempre com
+  `font-variant-numeric: tabular-nums`.
+
+Escala: 32/24/18/15/13/11. Peso 600 para títulos, 400 para corpo, 500 para números em
+destaque.
+
+**Layout.** Sidebar fixa à esquerda (240px), conteúdo em grade de 12 colunas, gutter de
+20px, raio de canto 10px, sombra mínima (`0 1px 2px rgba(0,0,0,.04)`) — o card se
+distingue pelo fundo, não pela sombra.
+
+**Movimento.** Praticamente nenhum. Transição de 120ms em hover e em troca de aba. Nada
+que anime números — cifra que sobe animada sugere movimento de mercado onde há só
+carregamento de tela. Respeitar `prefers-reduced-motion`.
+
+### 11.2 Navegação
+
+```
+┌────────────────┐
+│  Ações · B3    │
+├────────────────┤
+│ ▸ Mês atual    │  ← tela principal
+│ ▸ Empresas     │
+│ ▸ Minha carteira│
+│ ▸ Saúde do dado│
+│ ▸ Histórico    │
+├────────────────┤
+│ Dado até       │
+│ 27/08/2026     │  ← frescor global, sempre visível
+│ ● 4 fontes ok  │
+└────────────────┘
+```
+
+O rodapé da sidebar carrega o estado do dado em toda tela. Se alguma fonte estiver
+desatualizada, ele fica âmbar e a tela principal exibe o aviso antes de qualquer número.
+
+### 11.3 Componentes transversais
+
+Estes quatro componentes aparecem em todas as telas e são o que diferencia esta
+interface.
+
+#### Carimbo de proveniência (elemento assinatura)
+
+Todo número derivado de balanço carrega um chip discreto em monoespaçada com a data em
+que ficou público:
+
+```
+ROE          17,04%  ⌗ 19/02/2025 · v1
+```
+
+Ao passar o mouse (ou tocar), abre a linha do tempo daquele número: quais versões
+existiram, quando cada uma foi entregue à CVM, e qual estava vigente na data
+selecionada. Nenhuma ferramenta brasileira mostra isso, e é a tradução direta da camada
+point-in-time.
+
+**Regra:** número de balanço sem carimbo não pode ser renderizado. Se a data de
+publicação não for conhecida, o número não aparece.
+
+#### Selo de confiança de identidade
+
+Marcador ao lado do ticker, três estados:
+
+- **Sem marcador** — identidade resolvida pelo FCA (era 2018+), confiança alta
+- **Ponto âmbar** — resolvida por propagação de CNPJ ou reconciliação (era 2015-2017)
+- **Contorno vazado** — não resolvida; a empresa está fora do universo e aparece apenas
+  na tela de Saúde do dado
+
+#### Célula vazia honesta
+
+Nunca zero, nunca branco. Quatro estados distintos, com rótulo curto e explicação no
+hover:
+
+| Estado | Rótulo | Significado |
+|---|---|---|
+| Inaplicável | `n/a` | O fator não se aplica ao setor (banco não tem dívida líquida/EBITDA) |
+| Indefinido | `—` | Aplicável, mas indefinido para esta empresa (EBITDA ≤ 0, patrimônio ≤ 0) |
+| Sem dado | `s/d` | A empresa não reportou o campo |
+| Versão indisponível | `⌗?` | A versão vigente na data não está no arquivo público da CVM |
+
+O quarto estado é específico deste sistema e vale ser visível: ele explica por que uma
+empresa conhecida some do ranking.
+
+#### Faixa de contexto do método
+
+Uma tarja discreta, fixa no topo da tela principal, com o texto que a Seção 9 obriga:
+
+> A ordenação abaixo organiza dados públicos por critérios explícitos. **Ela não foi
+> validada como preditiva** — no teste de 2015-2026 não se distinguiu do acaso. Use como
+> ponto de partida de análise, não como recomendação.
+
+Não é modal, não é descartável, não é rodapé. Fica onde o olho passa antes da tabela.
+
+### 11.4 Tela 1 — Mês atual
+
+A tela de trabalho. Responde: *o que existe hoje, e o que está diferente do mês
+passado.*
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  Fevereiro 2026                          [ ◀ mês ]  [ mês ▶ ] │
+├──────────────┬──────────────┬──────────────┬─────────────────┤
+│ ELEGÍVEIS    │ COM SCORE    │ EXCLUÍDAS    │ COBERTURA       │
+│ 178          │ 161          │ 17           │ 90,4%           │
+│ ▼ 12 vs jan  │ 90,4% do uni │ ver detalhe →│ era confiável   │
+├──────────────┴──────────────┴──────────────┴─────────────────┤
+│  ⚠ A ordenação não foi validada como preditiva. [ler mais]   │
+├───────────────────────────────────────────────────────────────┤
+│  Empresas elegíveis                    [ordenar por ▾] [⚙]   │
+│  ┌─────────────────────────────────────────────────────────┐ │
+│  │ Empresa      Setor      E.Yield  DL/EBITDA  ROE   Score │ │
+│  │ ─────────────────────────────────────────────────────── │ │
+│  │ PETR4        Petróleo    12,4%     1,8x    18,2%   +1,4 │ │
+│  │              ⌗14/03/25   ▓▓▓░░     ▓▓░░░    ▓▓▓▓░       │ │
+│  │ ITUB4 ●      Financeiro   8,1%      n/a    22,9%   +0,9 │ │
+│  │              ⌗19/02/25   ▓▓░░░       —     ▓▓▓▓▓       │ │
+│  └─────────────────────────────────────────────────────────┘ │
+├────────────────────────────┬─────────────────────────────────┤
+│  Distribuição por setor    │  Mudanças do mês                │
+│  ▓▓▓▓▓▓▓ Financeiro   24%  │  ↑ 6 entraram no universo       │
+│  ▓▓▓▓▓   Utilidades   16%  │  ↓ 3 saíram por liquidez        │
+│  ▓▓▓▓    Consumo      14%  │  ⌗ 12 balanços novos publicados │
+│  ▓▓░ 4 setores < 6 empresas│  ⚠ 1 retificação detectada      │
+└────────────────────────────┴─────────────────────────────────┘
+```
+
+**Detalhes que decidem:**
+
+Cada célula de fator mostra **o valor absoluto e a barra do percentil dentro do setor**,
+lado a lado. O absoluto é o que o usuário reconhece; o percentil é o que o sistema
+calcula. Mostrar só um dos dois esconde metade da informação.
+
+A coluna Score exibe o composto **demeaned**, com sinal — não uma nota de 0 a 100. Nota
+em escala arbitrária sugere precisão que não existe; desvio em relação à média setorial
+é o que o número de fato é.
+
+O card **"4 setores com menos de 6 empresas"** é clicável e lista quais. É a limitação
+estrutural do mercado brasileiro exposta em vez de escondida — e o usuário precisa dela
+para saber quando o percentil setorial significa pouco.
+
+**Mudanças do mês** é o painel que dá utilidade recorrente. Quem entrou, quem saiu e por
+quê, quantos balanços novos, e — o mais interessante — **retificações detectadas**, que
+é sinal de governança que nenhuma outra ferramenta expõe.
+
+### 11.5 Tela 2 — Empresa
+
+Uma empresa por vez, com a história do que se sabia sobre ela ao longo do tempo.
+
+**Cabeçalho:** nome, ticker com selo de identidade, setor/subsetor/segmento B3, CNPJ em
+monoespaçada, e vigência do ticker (com a troca marcada quando houve — ex.: `KROT3 até
+10/10/2019 · COGN3 desde 11/10/2019`).
+
+**Três blocos:**
+
+**a) Fatores hoje** — os três valores com carimbo, o percentil setorial de cada um, e a
+barra comparativa contra o setor. Quando um fator é inaplicável ou indefinido, o motivo
+aparece por extenso, não como célula vazia.
+
+**b) Linha do tempo de conhecimento** — o bloco mais original da interface. Um gráfico
+onde o eixo x é a data de decisão e a linha mostra **o valor que estava público naquela
+data**, não o valor final. Balanço publicado em março aparece como degrau em março, não
+em dezembro do ano anterior. Retificações aparecem como saltos, com marcador. É a
+visualização direta do point-in-time, e ela ensina o usuário por que o dado "de 2015"
+não estava disponível em janeiro de 2016.
+
+**c) Histórico de entregas à CVM** — tabela com `DT_REFER`, `VERSAO`, `DT_RECEB` e o
+intervalo em que cada versão esteve vigente. Empresa com três retificações do mesmo
+exercício tem uma história aqui. **Vale um indicador agregado: número de retificações
+nos últimos cinco anos** — o sistema mediu que empresas que retificam têm ROE mediano
+mais baixo, e esse é um sinal de qualidade contábil derivado de metadado que
+praticamente nenhum provedor expõe.
+
+### 11.6 Tela 3 — Minha carteira
+
+Responde: *o que eu tenho, e o que uma compra faria com isso.*
+
+**Composição** — tabela de posições com peso, e cada ativo linkado à sua ficha.
+
+**Exposição setorial** — barras horizontais comparando a carteira contra a distribuição
+do universo elegível. Não contra o Ibovespa: o índice ainda não tem fonte verificada, e
+comparar contra o universo é honesto com o que existe.
+
+**Concentração** — peso do maior ativo, dos cinco maiores, e número efetivo de
+posições. Três números, sem gráfico — eles são pequenos demais para merecer uma
+visualização.
+
+**Simulação de aporte** — o usuário informa um valor, escolhe candidatos, e a tela
+mostra **o antes e o depois** da exposição setorial e da concentração. Sem sugerir o que
+comprar (isso seria a Seção 8, ainda não validada) — apenas mostrando a consequência de
+uma escolha que o usuário fez.
+
+> Nota: enquanto a Seção 8 não estiver implementada e validada, esta tela **não** sugere
+> alocação. Ela responde "e se eu comprar isto?", não "o que devo comprar?".
+
+### 11.7 Tela 4 — Saúde do dado
+
+A tela que sustenta a confiança nas outras três. Nenhuma ferramenta comercial tem
+equivalente, porque nenhuma quer mostrar o que exclui.
+
+**Fontes** — cada uma com última coleta, período coberto e status: CVM (DFP/ITR/FCA),
+COTAHIST, classificação setorial B3, BCB (CDI e IPCA). Fonte atrasada fica âmbar aqui e
+acende o indicador da sidebar.
+
+**Cobertura por era** — o gráfico das duas eras: identidade e cobertura de fator ao
+longo de 2015-2026, com a fronteira de 2018 marcada. É honesto e educativo: mostra que
+os anos recentes são mais confiáveis que os antigos.
+
+**Exclusões deste mês** — tabela de quem ficou de fora e por qual motivo, na ordem de
+precedência do sistema (ilíquido → classe secundária → identidade não resolvida →
+recuperação judicial → histórico insuficiente → versão indisponível). Com contagem por
+motivo.
+
+**Resultado do backtest** — o número honesto, exibido sem eufemismo: os três fatores não
+se distinguiram do acaso na janela testada (p=0,52), o CDI superou as três carteiras
+simuladas. Com link para a metodologia. **Publicar o próprio resultado nulo é a coisa
+mais diferenciadora que esta interface faz** — é o oposto do que todo produto de
+carteira recomendada no Brasil faz.
+
+### 11.8 Tela 5 — Histórico
+
+O que o sistema mostrava em cada mês passado, e o que aconteceu depois.
+
+Linha do tempo mensal; ao selecionar um mês, a tela reconstrói o painel **exatamente
+como ele era naquela data** — mesmo universo, mesmos fatores, mesmos carimbos. Ao lado,
+o retorno subsequente de 1, 3, 6 e 12 meses das empresas que estavam no topo e na base
+da ordenação.
+
+É a auto-auditoria do sistema, e a única tela que pode, com o tempo, produzir evidência
+a favor ou contra o método — sem prometer nada.
+
+### 11.9 O que não construir
+
+Registrado explicitamente para não voltar em revisões futuras:
+
+- **Nota de 0 a 100, estrelas, ou "recomendação".** O score é um desvio em relação à
+  média setorial, e não foi validado.
+- **Gráfico de preço com indicadores técnicos.** Não é o propósito do módulo e sugere
+  uso de curto prazo.
+- **Projeção, preço-alvo, ou qualquer número sobre o futuro.**
+- **Comparação contra Ibovespa** até a fonte de índice estar verificada.
+- **Rentabilidade simulada da carteira sugerida** — o backtest deu nulo; exibir uma
+  curva simulada seria a exata prática que o projeto rejeita.
+- **Animação de número subindo.**
+
+### 11.10 Qualidade de base
+
+Responsivo até 380px (a tabela de fatores vira lista de cards empilhados, um fator por
+linha). Foco de teclado visível em todo elemento interativo. Contraste mínimo AA — o
+âmbar de atenção precisa ser testado sobre o fundo claro. `prefers-reduced-motion`
+respeitado. Nenhuma informação transmitida só por cor: o selo de identidade tem forma
+além de cor, e valores negativos têm sinal além de tom.
+
+### 11.11 Critérios de aceite
+
+- [ ] Nenhum número de balanço renderizado sem carimbo de proveniência
+- [ ] Os quatro estados de célula vazia visualmente distintos, nunca zero ou branco
+- [ ] Faixa de contexto do método visível acima da ordenação, não descartável
+- [ ] Tela de Saúde do dado exibindo exclusões com motivo e contagem
+- [ ] Resultado nulo do backtest publicado na interface, sem eufemismo
+- [ ] Linha do tempo de conhecimento reconstruindo valores por data de publicação
+- [ ] Nenhuma comparação contra índice sem fonte verificada
+- [ ] Todos os números em face tabular
+- [ ] Navegação por teclado completa e contraste AA
 
 Preparar a estrutura para múltiplos mercados desde o início, como já foi feito com o
 seletor de moedas — mas sem implementar nada além da B3 agora.
@@ -2264,6 +2520,28 @@ As fases 1–3 entregam valor mesmo que nenhum score jamais passe no gate. Isso 
 - **Regimes longos** — fatores passam anos sem funcionar. Um resultado ruim em 12 meses não invalida, e um bom não valida.
 - **Mudança regulatória e tributária** — regras de tributação de proventos e ganho de capital mudam. O sistema informa, não calcula obrigação fiscal.
 - **Overfitting de pesos** — o risco mais provável nesta frente. Mitigado pelo log de experimentos e pelo DSR.
+- **EPS extraído da CVM tem valores implausíveis, não isolados — achado da interface,
+  ainda sem causa raiz confirmada (2026-08-27).** Construindo a "linha do tempo de
+  conhecimento" da Seção 11.5 (que exibe o valor bruto de cada fator, não só o
+  percentil), earnings yield/ROE implausíveis (|razão| > 300%) apareceram em **28
+  ocorrências ao longo das 12 datas de decisão da série completa** — não um caso
+  isolado. A maioria é plausível (empresas em distress real, ex. `RSID3`/`PDGR3`,
+  prejuízo por ação grande contra preço já deprimido), mas pelo menos quatro são
+  claramente artefato de escala: `AMAR3` (earnings yield ≈ -4×10¹⁶), `MEAL3` (≈
+  -1,4×10⁸), `PTBL3` (≈ 178×), e **`ITUB4`** em 2020-02-28 (≈ 87×, EPS aparente de
+  R$2.780 — um dos bancos mais líquidos e escrutinados do país, o que descarta
+  "empresa pequena com dado ruim" como explicação completa). Investigado um caso
+  (`EVEN3`, 2023-02-28): duas linhas de item financeiro para contas de EPS distintas
+  (`3.99.01.01` = 1123,0; `3.99.02.01` = 1,123) — mil vezes de diferença, sugerindo
+  problema de escala/unidade em pelo menos uma conta da CVM para aquele filing, não
+  erro do pipeline de ingestão em si. **Não investigado ainda**: se é sempre a mesma
+  conta com o mesmo problema (corrigível com uma regra), se afeta `score_composto` o
+  bastante para mudar alguma leitura do backtest (Seção 9.6 já é nula; dado ruim
+  tende a adicionar ruído, não a inflar artificialmente uma vantagem, mas não
+  verificado), e se o mesmo padrão aparece em ROE (`get_lucro_liquido_controladores_
+  as_of`/`get_patrimonio_liquido_controladores_as_of`) por uma causa distinta. Registrado
+  aqui, não corrigido nesta rodada — é mudança de lógica de fator (`fatores.py`),
+  passa pelo fluxo `changes/` com investigação própria antes de qualquer alteração.
 
 ## 14. Expectativa calibrada
 

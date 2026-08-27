@@ -1,4 +1,5 @@
 import { IconBars, IconBook, IconNode, IconPulse, IconSpark } from "./Icons";
+import { ModuleSwitch, type ModuleKey } from "./ModuleSwitch";
 import { StateBadge } from "./StateBadge";
 import type { EngineStateValue } from "../api/types";
 
@@ -15,13 +16,17 @@ export function Sidebar({
   active,
   onSelect,
   engineState,
+  onSelectModule,
 }: {
   active: ViewKey;
   onSelect: (view: ViewKey) => void;
   engineState?: EngineStateValue;
+  onSelectModule: (module: ModuleKey) => void;
 }) {
   return (
     <aside className="sidebar">
+      <ModuleSwitch active="cripto" onSelect={onSelectModule} variant="dark" />
+
       <div className="sidebar__brand">
         <div className="sidebar__brand-mark">
           <IconSpark width={15} height={15} />
