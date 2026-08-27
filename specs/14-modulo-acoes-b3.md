@@ -1938,6 +1938,22 @@ todos os anos avaliados (`n_transversal` mínimo 117). Bate exatamente a expecta
 calibrada registrada na Seção 9.1 antes de qualquer resultado existir — resposta
 legítima, obtida honestamente, não um problema a esconder.
 
+**Ressalva registrada depois (2026-08-27, mesmo dia — achado da interface, Seção
+11.5/13):** este resultado foi obtido com um **erro de escala conhecido no earnings
+yield** ainda não corrigido — 28 valores implausíveis (|razão| > 300%) ao longo da
+série, não isolados, incluindo `ITUB4` (banco grande e líquido, descartando "só
+empresa pequena com dado ruim"). Earnings yield é o único dos três fatores aplicável
+ao universo inteiro (dívida líquida/EBITDA neutraliza bancos, Seção 7.2; ROE tem seus
+indefinidos) — é o que sustenta a maior cobertura do score composto. Ruído de escala
+1000x nesses pontos empurra o ranking na direção de empresas com dado errado, o que
+tende a **degradar**, não inflar, a performance de um candidato ranqueado por score —
+não invalida o "nulo" (a direção do viés não favorece um resultado positivo
+espúrio), mas significa que **este resultado não pode ainda ser lido como "os três
+fatores, limpos, não funcionam"** — só como "não funcionaram, com este erro dentro".
+Não reabrir o backtest agora só por essa ressalva (a decisão de encerrar a iteração de
+fatores, registrada acima, continua de pé) — se o fator for corrigido no futuro, aí
+sim uma nova rodada única se justifica, não como reabertura de busca.
+
 **Achado adicional, não pré-registrado**: nenhuma das três carteiras de ações (candidato,
 equal-weight, ponderada por liquidez) superou o CDI no período — o custo de
 oportunidade real bateu todas.
