@@ -51,9 +51,11 @@ PESOS_PADRAO = (
 )
 
 
-def _preco_as_of(session: Session, ticker: str, data_decisao: date) -> float | None:
+def preco_as_of(session: Session, ticker: str, data_decisao: date) -> float | None:
     """Fechamento mais recente com `trade_date <= data_decisao` — mesma fronteira
-    inclusiva de todo o resto da spec."""
+    inclusiva de todo o resto da spec. Pública (não só uso interno de `build_decisao`)
+    porque `backtest.py` (Seção 9) precisa da mesma consulta point-in-time para marcar
+    posições a mercado mês a mês — nunca reimplementada lá."""
     stmt = (
         select(CotahistPrice.close)
         .where(CotahistPrice.ticker == ticker, CotahistPrice.trade_date <= data_decisao)
@@ -76,6 +78,7 @@ class DecisaoEmpresa:
     roe_percentil: float | None
     score_composto: float | None
     tem_fator_real: bool
+    volume_mediano: float
 
 
 @dataclass
@@ -137,7 +140,7 @@ def build_decisao(
     for linha in linhas:
         bucket = (linha.segmento_b3, linha.subsetor_b3, linha.setor_b3)
 
-        preco = _preco_as_of(session, linha.ticker, data_decisao)
+        preco = preco_as_of(session, linha.ticker, data_decisao)
         eps = get_eps_as_of(session, linha.cnpj, linha.ticker, data_decisao)
         earnings_yield = (
             earnings_yield_raw(eps, preco) if eps is not None and preco else None
@@ -198,6 +201,7 @@ def build_decisao(
                 roe_percentil=percentis[FATOR_ROE],
                 score_composto=score,
                 tem_fator_real=tem_fator_real,
+                volume_mediano=linha.volume_mediano,
             )
         )
 

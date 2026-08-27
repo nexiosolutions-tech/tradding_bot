@@ -4,6 +4,12 @@ Este arquivo rege como qualquer agente de IA (Claude Code, dentro do Cursor ou f
 dele) deve operar neste repositório. Regras aqui têm precedência sobre conveniência
 ou velocidade de entrega.
 
+## Idioma (Restrição dura)
+
+Todas as respostas devem ser em português do Brasil, sempre. Isso inclui resumos de
+rodada, mensagens de commit, conteúdo de `changes/` e comentários de código. Não
+alternar para inglês em nenhuma circunstância, mesmo quando o conteúdo for técnico.
+
 ## O que este projeto é
 
 Um sistema de day trade algorítmico para cripto (Binance) com quatro capacidades:
@@ -106,8 +112,3 @@ Se uma regra de segurança nova for aprendida (via `learnings/`) e aprovada como
 mudança permanente, ela entra aqui, não só na spec técnica correspondente — este
 arquivo é o resumo executivo das invariantes do projeto.
 
-## Idioma
-
-Todas as respostas devem ser em português do Brasil, sempre. Isso inclui resumos de
-rodada, mensagens de commit, conteúdo de `changes/` e comentários de código. Não
-alternar para inglês em nenhuma circunstância, mesmo quando o conteúdo for técnico.

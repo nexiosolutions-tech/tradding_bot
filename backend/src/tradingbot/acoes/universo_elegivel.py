@@ -98,7 +98,10 @@ def _candidatos(session: Session, data_decisao: date) -> list[str]:
     return [row[0] for row in session.execute(stmt).all()]
 
 
-def _volume_mediano(session: Session, ticker: str, data_decisao: date, janela_pregoes: int) -> float | None:
+def volume_mediano_as_of(session: Session, ticker: str, data_decisao: date, janela_pregoes: int) -> float | None:
+    """Pública (não só uso interno do filtro de liquidez) — `backtest.py` (Seção 9)
+    reusa a mesma consulta para a checagem mensal da regra de saída por perda de
+    liquidez (Seção 8), nunca reimplementada lá."""
     stmt = (
         select(CotahistPrice.financial_volume)
         .where(CotahistPrice.ticker == ticker, CotahistPrice.trade_date <= data_decisao)
@@ -150,7 +153,7 @@ def build_universo_elegivel(
 
     liquidos: dict[str, float] = {}
     for ticker in candidatos:
-        volume = _volume_mediano(session, ticker, data_decisao, janela_pregoes)
+        volume = volume_mediano_as_of(session, ticker, data_decisao, janela_pregoes)
         if volume is None:
             continue  # nunca negociado ate a data: nao e candidato, nao e exclusao
         if volume < piso_liquidez:

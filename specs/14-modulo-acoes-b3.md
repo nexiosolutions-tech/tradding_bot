@@ -1742,10 +1742,20 @@ não pré-requisito dela.
 
 **Benchmarks obrigatórios** (todos no mesmo período e com o mesmo custo):
 
-1. IBOV, IBrX-100, SMLL — índices
+1. IBOV, IBrX-100, SMLL — índices (fonte ainda não verificada para o período completo
+   2015-2026, ver Seção 9.4 — o motor de simulação é indiferente a quais séries o
+   alimentam, então este benchmark liga depois, sem redesenhar nada)
 2. Carteira equal-weight do universo elegível — controla se o score adiciona algo além do filtro de liquidez
 3. Carteira aleatória do universo elegível (N sorteios) — a nuvem nula
 4. CDI — o custo de oportunidade real no Brasil
+5. Carteira ponderada por liquidez do universo elegível (2026-08-26, não bloqueada por
+   fonte externa) — pondera cada empresa pelo volume médio negociado (o mesmo dado já
+   usado no piso de liquidez, Seção 6) em vez de peso igual. Aproxima o comportamento de
+   um índice ponderado por tamanho/negociabilidade sem depender de ações em circulação
+   (bloqueado pelo FRE, Seção 5.3) nem de fonte externa nenhuma. **Não é o IBOV e nunca
+   deve ser rotulado como tal na interface nem em relatório** — cobre parte do papel que
+   um índice ponderado cobriria (mostrar o "mercado", não só o "universo médio"), com
+   dado já verificado nesta spec.
 
 **Métricas:** retorno total, volatilidade, drawdown máximo, retorno/volatilidade, retorno/drawdown, turnover (proxy direto de custo), exposição setorial média. **Cada fold reporta também o tamanho do universo elegível (N transversal, mínimo/mediano/máximo no período do fold)** — sem isso não dá para o gate (Seção 10) distinguir um fold com poder estatístico real de um fold num vale de liquidez.
 
@@ -1800,6 +1810,152 @@ de seleção do módulo de ações"). Arquivo físico separado (`learnings/exper
 acoes.jsonl`, não o mesmo arquivo do bot) — mesma disciplina de "fundação de engenharia
 compartilhada, nunca estado ou dado" do `CLAUDE.md`: o *código* é reutilizado, o *log*
 de cada domínio não se mistura fisicamente com o do outro.
+
+### 9.3 Consistência price-only/total-return (registrado 2026-08-26, antes de o índice existir)
+
+Armadilha a fechar **antes** de qualquer benchmark de índice (IBOV/IBrX-100/SMLL) ser
+ligado ao motor, para não ser descoberta só ao ler um resultado que parece ruim e na
+verdade é só assimétrico: **IBOV é índice de retorno total** — reinveste proventos no
+próprio cálculo do índice — enquanto a série de preço deste módulo (COTAHIST, Seção 5.3)
+é **price-only**, porque a magnitude de evento de provento segue pendente (Seção 5.3,
+nota de dividendos). Comparar uma estratégia price-only contra um índice total-return
+subestima a estratégia sistematicamente — na ordem de 4 a 6 pontos percentuais ao ano no
+mercado brasileiro (dividend yield médio histórico do Ibovespa), magnitude maior que
+qualquer vantagem que os três fatores desta spec plausivelmente produzam (Seção 9.1,
+expectativa calibrada). Um resultado nulo lido sem essa correção não seria "os fatores
+não têm poder" — seria "o benchmark tinha uma vantagem estrutural não contabilizada".
+
+Regra, mesma disciplina já aplicada ao tratamento de deslistados (Seção 5.3) e ao dado
+faltante (Seção 7): **consistência acima de completude.** Os dois lados da comparação
+saem sempre no mesmo regime —
+
+- Se existir versão price-only do índice (ou o índice puder ser desreinvestido pela
+  série de proventos do próprio índice, quando publicada), o motor compara price-only
+  contra price-only.
+- Senão, o motor só compara contra o índice total-return se a própria simulação da
+  carteira também reinvestir proventos — e isso já está condicionado, na simulação
+  (acima), a 100% de cobertura de proventos no universo elegível, condição que hoje não
+  está satisfeita.
+- **Nunca** price-only de um lado e total-return do outro. Se nenhum dos dois regimes
+  consistentes for alcançável, o benchmark de índice fica fora da leitura até que um
+  deles seja, e a lacuna é reportada explicitamente — não aproximada em silêncio.
+
+### 9.4 Status da fonte de dado por benchmark (2026-08-26)
+
+Registrado para que a ordem de construção (Seção 9 antes da Seção 8, decidida
+2026-08-26) não vire licença para silenciosamente trocar uma fonte real por uma
+aproximação não verificada:
+
+| Benchmark | Fonte | Status |
+|---|---|---|
+| CDI | BCB SGS série 12 | Verificado — dado real, diário, cobertura completa 2015-2026 |
+| Equal-weight do universo | COTAHIST + `universo_elegivel` (já ingerido nesta spec) | Verificado — nenhuma fonte nova |
+| Ponderada por liquidez do universo | idem | Verificado — nenhuma fonte nova |
+| Nuvem nula (aleatória) | derivada por permutação, sem fonte externa | N/A — não depende de dado externo |
+| IBOV | BCB SGS série 7845 | **Descontinuada em ago/2019** (confirmado por HTTP 404 em janelas posteriores e por `/dados/ultimos/1` devolver o mesmo valor de ago/2019) — não cobre 2015-2026 sozinha |
+| IBrX-100, SMLL | ainda não sondadas | Não verificado |
+
+`yfinance` já foi rejeitado nesta spec (Seção 4.4) para preço individual — a razão de
+série pré-ajustada por provento não se transfere inteira para dado de nível de índice,
+mas o risco de termos de uso continua valendo integralmente; não é um precedente
+automático em nenhuma direção, é decisão nova a tomar deliberadamente quando a Seção
+9.4 for revisitada. Canais oficiais da B3 estão sendo sondados como alternativa; até
+confirmação, os benchmarks 1 (IBOV/IBrX-100/SMLL) ficam fora de qualquer leitura de
+resultado — a leitura roda com os benchmarks 2-5, que não dependem dessa fonte.
+
+### 9.5 Achado estrutural antes do primeiro resultado: quebra de nível virando retorno (2026-08-27)
+
+Motor construído (`backtest.py`) e a primeira rodada real (top-20, peso igual, 2015-2026)
+devolveu retorno total de **931% em 11 anos** — implausível por construção (≈23,4%
+a.a., ~3x o Ibovespa, com três fatores simples). Em vez de aceitar (Seção 9.1 já pedia
+ceticismo para qualquer vantagem robusta), o achado foi verificado antes de qualquer
+benchmark: distribuição dos retornos mensais da carteira, cauda superior — os 5 maiores
+meses somavam +310 pontos percentuais sozinhos, e **todos os 15 maiores meses coincidiam
+no calendário com pelo menos um evento `is_level_break=True`** (bonificação/grupamento,
+Seção 5.3) em alguma ação do banco, o maior deles (`BRPR3 EG`, 2023-02-24) explicando
+sozinho o mês de +186,85% que dominava o resultado.
+
+**Causa raiz, confirmada por leitura de código antes de qualquer medição**:
+`CotahistPrice.close` é preço bruto, nunca ajustado por evento societário — a própria
+docstring do modelo já dizia isso ("responsabilidade da consulta point-in-time,
+cruzando com `CorporateEventFlag`, nunca da ingestão", Seção 5.3). `preco_as_of`
+(Seção 7.6) foi desenhada para avaliação **point-in-time** (earnings yield = EPS/preço
+numa única data — nunca precisa de ajuste, é uma razão, não uma variação) e reusada em
+`backtest.py` para calcular **retorno entre duas datas** (razão de preço), o único uso
+que de fato precisa de ajuste por evento societário. Um grupamento 10:1 no meio da
+janela produz uma razão de preço bruta ~10x maior sem nenhum retorno real por trás —
+exatamente o padrão que `price_sanity.find_implausible_returns` (Seção 5.3) já existia
+para detectar num contexto diferente (sanidade da série de ingestão), nunca antes
+aplicado ao cálculo de retorno de uma simulação.
+
+**Correção**: `CorporateEventFlag` não carrega magnitude (a COTAHIST não tem razão de
+bonificação/grupamento) — não é possível *ajustar* o preço numericamente, só
+*detectar* que o intervalo atravessa uma quebra. `tem_quebra_de_nivel(ticker,
+data_inicio, data_fim)`, nova função em `backtest.py`, checada em toda marcação a
+mercado (`_marcar_e_ajustar_mes`) e todo retorno anual do teste de nulidade
+(`_retorno_anual_por_ticker`): quando o intervalo atravessa uma quebra, o valor da
+posição fica **congelado** nesse passo — mesma disciplina já usada para preço ausente
+("nunca inventa retorno"), estendida ao caso de retorno não-interpretável.
+
+**Efeito medido, mesma seleção, único fator variado (ablação controlada)**: retorno
+total do candidato caiu de 931% para **119%** em 11 anos (~7,4% a.a.) — queda de ~8x
+confirmando que a maior parte do número original era artefato de dado bruto não
+ajustado, não sinal.
+
+**Padrão generalizado**: qualquer cálculo de **retorno entre duas datas** sobre
+`CotahistPrice.close` (não apenas em `backtest.py` — qualquer código futuro que precise
+de retorno, não de valor pontual) precisa desta checagem. `preco_as_of` permanece segura
+para avaliação point-in-time (Seção 7.6, earnings yield), nunca para retorno sem passar
+por `tem_quebra_de_nivel` primeiro — registrado aqui para não ser redescoberto.
+
+### 9.6 Primeiro resultado do backtest (2026-08-27): nulo nos três critérios pré-registrados
+
+Rodado sobre a série completa 2015-2026 já materializada (Seção 7.7/7.8), com a correção
+da Seção 9.5 aplicada, CDI real ingerido (BCB SGS 12, cobertura completa), IPCA real já
+ingerido (Seção 6.3). Benchmarks 1 (IBOV/IBrX-100/SMLL) fora da leitura (Seção 9.4,
+fonte ainda não verificada) — leitura roda sobre os benchmarks 2-5.
+
+| | Retorno total (11 anos) | Retorno/Volatilidade | Retorno/Drawdown |
+|---|---|---|---|
+| Candidato (top-20, peso igual) | 119,0% | 16,42 | 2,72 |
+| Equal-weight do universo | 129,3% | **18,81** | **3,21** |
+| Ponderada por liquidez do universo | 115,7% | 17,52 | 3,06 |
+| CDI | **177,6%** | — | — |
+
+Contra os três critérios da Seção 9.1, os três precisando bater juntos:
+
+1. **Bate o equal-weight em risco-ajustado?** Não — perde nas duas métricas (16,42 vs.
+   18,81 retorno/volatilidade; 2,72 vs. 3,21 retorno/drawdown).
+2. **Fica fora da nuvem nula com p<0,05?** Não — permutação score×retorno futuro,
+   N=200, p=0,52 (métrica real dentro da distribuição nula, não na cauda).
+3. Critério 3 (concentração setorial/de era) não avaliado — os dois primeiros já
+   reprovam, os três são conjuntos, não há vantagem para checar se está concentrada.
+
+**Resultado: nulo.** Os três fatores (earnings yield, dívida líquida/EBITDA, ROE) neste
+desenho (top-20, peso igual, rebalance mensal, custo parametrizado — Seção 9) não têm
+poder preditivo detectável sobre a B3 no período 2015-2026, com N≥100 satisfeito em
+todos os anos avaliados (`n_transversal` mínimo 117). Bate exatamente a expectativa
+calibrada registrada na Seção 9.1 antes de qualquer resultado existir — resposta
+legítima, obtida honestamente, não um problema a esconder.
+
+**Achado adicional, não pré-registrado**: nenhuma das três carteiras de ações (candidato,
+equal-weight, ponderada por liquidez) superou o CDI no período — o custo de
+oportunidade real bateu todas.
+
+**Por fold** (walk-forward, 3 folds de ~4 decisões, Seção 9): quase toda a vantagem
+aparente do candidato vem de um único fold antigo —
+
+| Fold | N transversal (min/med/máx) | Retorno/Volatilidade |
+|---|---|---|
+| 2015-2019 | 117/129/135 | 12,60 |
+| 2019-2023 | 146/177/194 | 0,75 |
+| 2023-2026 | 190/206/210 | 1,80 |
+
+Consistente com "sem vantagem robusta e estável" — não um sinal concentrado numa era
+recente de melhor cobertura (Seção 7.8), nem no sentido contrário.
+
+Experimento registrado em `learnings/experiments_acoes.jsonl` (Seção 9.2,
+`domain="acoes"`) — primeira entrada do domínio, N=1 para efeito de DSR futuro.
 
 ## 10. Gate de promoção
 

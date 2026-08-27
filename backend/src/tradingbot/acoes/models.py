@@ -339,3 +339,22 @@ class IpcaIndice(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     data_referencia: Mapped[Date] = mapped_column(Date, index=True)
     numero_indice: Mapped[float] = mapped_column(Float)
+
+
+class CdiTaxa(Base):
+    """Taxa CDI diária — spec 14, Seção 9 (benchmark 4: custo de oportunidade real).
+
+    Fonte: Banco Central — SGS, série 12 (CDI, taxa diária, % ao dia) — mesma fonte já
+    declarada para IPCA/Selic/câmbio (Seção 4.3). Guardada como taxa diária bruta, não
+    como número-índice — `cdi.py` encadeia a partir daqui sob demanda, para o intervalo
+    exato de cada curva de equity simulada, em vez de fixar uma base arbitrária aqui.
+    """
+
+    __tablename__ = "cdi_taxa"
+    __table_args__ = (
+        UniqueConstraint("data_referencia", name="uq_cdi_taxa_identity"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    data_referencia: Mapped[Date] = mapped_column(Date, index=True)
+    taxa_diaria_pct: Mapped[float] = mapped_column(Float)

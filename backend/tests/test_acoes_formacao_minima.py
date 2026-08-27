@@ -22,6 +22,7 @@ def _empresa(ticker, score):
         roe_percentil=None,
         score_composto=score,
         tem_fator_real=score is not None,
+        volume_mediano=1_000_000.0,
     )
 
 
