@@ -17,15 +17,17 @@ export function Sidebar({
   onSelect,
   engineState,
   onSelectModule,
+  acoesDisponivel,
 }: {
   active: ViewKey;
   onSelect: (view: ViewKey) => void;
   engineState?: EngineStateValue;
   onSelectModule: (module: ModuleKey) => void;
+  acoesDisponivel?: boolean;
 }) {
   return (
     <aside className="sidebar">
-      <ModuleSwitch active="cripto" onSelect={onSelectModule} variant="dark" />
+      <ModuleSwitch active="cripto" onSelect={onSelectModule} variant="dark" acoesDisponivel={acoesDisponivel} />
 
       <div className="sidebar__brand">
         <div className="sidebar__brand-mark">

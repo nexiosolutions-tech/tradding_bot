@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
-import { acoesApi } from "../api/client";
+import { acoesApi, AcoesIndisponivelError } from "../api/client";
 import type { EmpresaDetalhe, EmpresaRanking } from "../api/types";
 import { FatorCell } from "../components/FatorCell";
 import { IdentityBadge } from "../components/IdentityBadge";
+import { IndisponivelLocal } from "../components/IndisponivelLocal";
 import { formatDataBr, formatMultiplo, formatPct } from "../format";
 
 export function EmpresasView() {
   const [lista, setLista] = useState<EmpresaRanking[] | null>(null);
+  const [indisponivel, setIndisponivel] = useState(false);
   const [busca, setBusca] = useState("");
   const [selecionado, setSelecionado] = useState<string | null>(null);
 
@@ -17,7 +19,10 @@ export function EmpresasView() {
         setLista(dado.ranking);
         if (dado.ranking.length > 0) setSelecionado((atual) => atual ?? dado.ranking[0].ticker);
       })
-      .catch(() => setLista([]));
+      .catch((err) => {
+        if (err instanceof AcoesIndisponivelError) setIndisponivel(true);
+        setLista([]);
+      });
   }, []);
 
   const filtrada = (lista ?? []).filter(
@@ -30,13 +35,15 @@ export function EmpresasView() {
         <h1>Empresas</h1>
       </div>
 
-      {lista === null && (
+      {indisponivel && <IndisponivelLocal />}
+
+      {!indisponivel && lista === null && (
         <div className="acoes-panel">
           <div className="acoes-skeleton" />
         </div>
       )}
 
-      {lista !== null && (
+      {!indisponivel && lista !== null && (
         <div className="acoes-split">
           <div className="acoes-panel acoes-split-list">
             <input
@@ -70,18 +77,19 @@ export function EmpresasView() {
 
 function FichaEmpresa({ ticker }: { ticker: string }) {
   const [ficha, setFicha] = useState<EmpresaDetalhe | null>(null);
-  const [erro, setErro] = useState(false);
+  const [erro, setErro] = useState<"nenhum" | "generico" | "indisponivel">("nenhum");
 
   useEffect(() => {
     setFicha(null);
-    setErro(false);
+    setErro("nenhum");
     acoesApi
       .empresa(ticker)
       .then(setFicha)
-      .catch(() => setErro(true));
+      .catch((err) => setErro(err instanceof AcoesIndisponivelError ? "indisponivel" : "generico"));
   }, [ticker]);
 
-  if (erro) return <div className="acoes-panel">Não foi possível carregar {ticker}.</div>;
+  if (erro === "indisponivel") return <IndisponivelLocal />;
+  if (erro === "generico") return <div className="acoes-panel">Não foi possível carregar {ticker}.</div>;
   if (!ficha) {
     return (
       <div className="acoes-panel">

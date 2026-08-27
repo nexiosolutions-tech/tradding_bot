@@ -88,6 +88,64 @@ crash entre confirmação da exchange e persistência local ainda não é tratad
 (`../results/tradingbot.db`, gitignored), PostgreSQL em produção via
 `DATABASE_URL` (Railway). Nenhuma query muda entre os dois.
 
+## Módulo de Ações (spec 14) — rodar localmente
+
+**Mesmo comando de cima** (`uvicorn tradingbot.api.app:app --reload`) já serve
+`/api/acoes/*` — é o mesmo processo FastAPI, `acoes/api.py` é só um
+`APIRouter` a mais montado nele (nunca reusa `session_factory`/`orchestrator`
+do bot). O frontend é o mesmo dashboard (`frontend/dashboard`, `npm run dev`)
+— a aba "Ações" troca a sidebar inteira, ver `specs/08`.
+
+**Persistência é local por escolha, não por omissão** — decisão registrada em
+`specs/14-modulo-acoes-b3.md`, Seção 11.12. `../results/acoes.db` (SQLite,
+gitignored, **mesmo padrão e mesmo diretório** de `../results/tradingbot.db`
+acima — raiz do repo, irmão de `backend/`, não `backend/results/`; confirme
+com `python -c "from tradingbot.acoes.persistence import DEFAULT_SQLITE_PATH;
+print(DEFAULT_SQLITE_PATH)"` antes de assumir onde ele está, achado real desta
+rodada: uma checagem no caminho errado quase virou um relato de "dado
+perdido" que não era verdade). Sem volume persistente ou Postgres no Railway,
+o deploy em produção sobe com o banco vazio (ver "Comportamento sem dado"
+abaixo) — isso é esperado, não um bug.
+
+**Comportamento sem dado**: toda rota de `/api/acoes/*` detecta banco vazio e
+responde `503` com uma mensagem clara (`"módulo de Ações sem dado neste
+ambiente"`), nunca um 500 mudo. `GET /api/acoes/disponivel` é a checagem
+barata que o frontend usa para desabilitar a aba antes de o erro acontecer.
+
+**Se precisar popular `../results/acoes.db` do zero** (banco corrompido,
+apagado por engano, ou primeira vez numa máquina nova): não existe hoje um
+script único e commitado que reconstrói a série completa 2015-2026 — a
+ingestão real (COTAHIST, DFP/ITR da CVM, FCA, CDI, IPCA) foi orquestrada em
+scripts ad hoc de sessão de agente (nunca promovidos a `scripts/`), que vivem
+em `/tmp` e **não sobrevivem entre sessões** — achado real (2026-08-27): isso
+quase foi confundido com o próprio banco de dados tendo sumido, e não tinha.
+As *funções* de ingestão são todas testadas e reais
+(`acoes/cotahist_ingestion.py`, `acoes/cvm_ingestion.py`,
+`acoes/cnpj_ticker_map.py`, `acoes/ipca.py`, `acoes/cdi.py`) — falta só a
+orquestração ano a ano (Seção 7.7 da spec 14 documenta o que ela fazia:
+ingestão point-in-time por ano fiscal, `UniversoElegivel` idempotente com
+guarda de retry, sanidade contra `n_transversal` conhecido). Reescrever isso
+como script commitado (não ad hoc) é a forma de nunca mais depender de uma
+sessão de agente para popular o banco de novo.
+
+**Para só confirmar que a interface funciona** sem precisar do banco de
+produção, a fixture real pequena já commitada em `backend/tests/fixtures/`
+(ITUB4/BBAS3/PETR4, 2016) basta — reusa `test_acoes_api.py::_popular_fixture`
+num banco à parte (nunca aponte para `../results/acoes.db` ao fazer isso, ou
+vai sobrescrever o de produção):
+
+```bash
+cd backend
+uv run python -c "
+import sys; sys.path.insert(0, 'tests')
+from tradingbot.acoes.persistence import get_session_factory
+import test_acoes_api as t
+session = get_session_factory('sqlite:////tmp/acoes-fixture.db')()
+t._popular_fixture(session)
+"
+ACOES_DATABASE_URL=sqlite:////tmp/acoes-fixture.db uvicorn tradingbot.api.app:app --reload
+```
+
 ## Deploy no Railway
 
 Projeto usa 5 serviços no mesmo ambiente Railway: `tradding_bot` (esta API),

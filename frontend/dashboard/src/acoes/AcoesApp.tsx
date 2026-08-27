@@ -10,7 +10,13 @@ import { MesAtualView } from "./views/MesAtualView";
 import { SaudeDoDadoView } from "./views/SaudeDoDadoView";
 import "./acoes.css";
 
-export function AcoesApp({ onSelectModule }: { onSelectModule: (module: ModuleKey) => void }) {
+export function AcoesApp({
+  onSelectModule,
+  acoesDisponivel,
+}: {
+  onSelectModule: (module: ModuleKey) => void;
+  acoesDisponivel?: boolean;
+}) {
   const [active, setActive] = useState<AcoesViewKey>("mes-atual");
   const [saude, setSaude] = useState<SaudeDoDado | null>(null);
 
@@ -22,7 +28,13 @@ export function AcoesApp({ onSelectModule }: { onSelectModule: (module: ModuleKe
 
   return (
     <div className="acoes-shell" data-module="acoes">
-      <AcoesSidebar active={active} onSelect={setActive} onSelectModule={onSelectModule} saude={saude} />
+      <AcoesSidebar
+        active={active}
+        onSelect={setActive}
+        onSelectModule={onSelectModule}
+        saude={saude}
+        acoesDisponivel={acoesDisponivel}
+      />
       <main className="acoes-content">
         {active === "mes-atual" && <MesAtualView />}
         {active === "empresas" && <EmpresasView />}

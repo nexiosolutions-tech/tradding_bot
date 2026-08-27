@@ -8,10 +8,16 @@ export function ModuleSwitch({
   active,
   onSelect,
   variant,
+  acoesDisponivel = true,
 }: {
   active: ModuleKey;
   onSelect: (module: ModuleKey) => void;
   variant: "dark" | "light";
+  // Seção 11.12: desabilita a aba Ações antes do erro acontecer, quando o banco está
+  // vazio/inacessível neste ambiente (produção sem volume/Postgres) — nunca esconde a
+  // aba (o usuário ainda precisa entender por que ela sumiria), só impede o clique e
+  // explica no título.
+  acoesDisponivel?: boolean;
 }) {
   const prefix = variant === "light" ? "acoes-module-switch" : "sidebar__module-switch";
   return (
@@ -24,7 +30,10 @@ export function ModuleSwitch({
       </button>
       <button
         className={active === "acoes" ? `${prefix}__item ${prefix}__item--active` : `${prefix}__item`}
-        onClick={() => onSelect("acoes")}
+        onClick={() => acoesDisponivel && onSelect("acoes")}
+        disabled={!acoesDisponivel}
+        title={acoesDisponivel ? undefined : "Módulo de Ações disponível apenas localmente neste ambiente"}
+        style={acoesDisponivel ? undefined : { opacity: 0.45, cursor: "default" }}
       >
         Ações
       </button>

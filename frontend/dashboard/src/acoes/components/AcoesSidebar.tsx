@@ -20,18 +20,20 @@ export function AcoesSidebar({
   onSelect,
   onSelectModule,
   saude,
+  acoesDisponivel,
 }: {
   active: AcoesViewKey;
   onSelect: (view: AcoesViewKey) => void;
   onSelectModule: (module: ModuleKey) => void;
   saude: SaudeDoDado | null;
+  acoesDisponivel?: boolean;
 }) {
   const fontesOk = saude ? Object.values(saude.fontes).filter((f) => f.status === "ok").length : null;
   const totalFontes = saude ? Object.keys(saude.fontes).length : null;
 
   return (
     <aside className="acoes-sidebar">
-      <ModuleSwitch active="acoes" onSelect={onSelectModule} variant="light" />
+      <ModuleSwitch active="acoes" onSelect={onSelectModule} variant="light" acoesDisponivel={acoesDisponivel} />
 
       <div className="acoes-sidebar__brand">Ações · B3</div>
 

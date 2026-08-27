@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { acoesApi } from "../api/client";
+import { acoesApi, AcoesIndisponivelError } from "../api/client";
 import type { HistoricoDetalhe } from "../api/types";
 import { IdentityBadge } from "../components/IdentityBadge";
+import { IndisponivelLocal } from "../components/IndisponivelLocal";
 import { formatDataBr, formatPct, formatScore } from "../format";
 
 export function HistoricoView() {
@@ -53,18 +54,19 @@ export function HistoricoView() {
 
 function DetalheData({ data }: { data: string }) {
   const [detalhe, setDetalhe] = useState<HistoricoDetalhe | null>(null);
-  const [erro, setErro] = useState(false);
+  const [erro, setErro] = useState<"nenhum" | "generico" | "indisponivel">("nenhum");
 
   useEffect(() => {
     setDetalhe(null);
-    setErro(false);
+    setErro("nenhum");
     acoesApi
       .historicoDetalhe(data)
       .then(setDetalhe)
-      .catch(() => setErro(true));
+      .catch((err) => setErro(err instanceof AcoesIndisponivelError ? "indisponivel" : "generico"));
   }, [data]);
 
-  if (erro) return <div className="acoes-panel">Não foi possível reconstruir o painel desta data.</div>;
+  if (erro === "indisponivel") return <IndisponivelLocal />;
+  if (erro === "generico") return <div className="acoes-panel">Não foi possível reconstruir o painel desta data.</div>;
   if (!detalhe) {
     return (
       <div className="acoes-panel">

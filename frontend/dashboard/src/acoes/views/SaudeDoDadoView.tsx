@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { acoesApi } from "../api/client";
+import { acoesApi, AcoesIndisponivelError } from "../api/client";
 import type { SaudeDoDado } from "../api/types";
+import { IndisponivelLocal } from "../components/IndisponivelLocal";
 import { formatDataBr, formatMultiplo, formatPct } from "../format";
 
 const RÓTULO_FONTE: Record<string, string> = {
@@ -21,13 +22,13 @@ const RÓTULO_MOTIVO: Record<string, string> = {
 
 export function SaudeDoDadoView() {
   const [dado, setDado] = useState<SaudeDoDado | null>(null);
-  const [erro, setErro] = useState(false);
+  const [erro, setErro] = useState<"nenhum" | "generico" | "indisponivel">("nenhum");
 
   useEffect(() => {
     acoesApi
       .saudeDoDado()
       .then(setDado)
-      .catch(() => setErro(true));
+      .catch((err) => setErro(err instanceof AcoesIndisponivelError ? "indisponivel" : "generico"));
   }, []);
 
   return (
@@ -36,9 +37,10 @@ export function SaudeDoDadoView() {
         <h1>Saúde do dado</h1>
       </div>
 
-      {erro && <div className="acoes-panel">Não foi possível carregar a saúde do dado.</div>}
+      {erro === "indisponivel" && <IndisponivelLocal />}
+      {erro === "generico" && <div className="acoes-panel">Não foi possível carregar a saúde do dado.</div>}
 
-      {!dado && !erro && (
+      {!dado && erro === "nenhum" && (
         <div className="acoes-panel">
           <div className="acoes-skeleton" style={{ marginBottom: 10 }} />
           <div className="acoes-skeleton" style={{ width: "70%" }} />

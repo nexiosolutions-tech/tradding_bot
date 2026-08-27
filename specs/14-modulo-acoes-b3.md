@@ -2475,6 +2475,46 @@ além de cor, e valores negativos têm sinal além de tom.
 Preparar a estrutura para múltiplos mercados desde o início, como já foi feito com o
 seletor de moedas — mas sem implementar nada além da B3 agora.
 
+### 11.12 Hospedagem — local por escolha, não por omissão (2026-08-27)
+
+Registrado para que o comportamento sem dado em produção (abaixo) nunca seja lido como
+bug — é a consequência direta de uma decisão já tomada, não uma lacuna esquecida.
+
+**Três opções existiam, e a decisão foi a primeira:**
+
+1. **Local (escolhida)** — `results/acoes.db` (SQLite, mesmo padrão de
+   `results/tradingbot.db` do bot) só existe na máquina onde alguém rodou a ingestão.
+   Sem custo de infraestrutura, sem outra conta/serviço para manter, e o uso real deste
+   módulo (Seção 1: apoio a uma decisão de aporte **mensal**, um usuário, sem
+   concorrência) não precisa de mais que isso. Custo: o Railway (onde o bot já roda,
+   Seção do bot em `specs/10`) não tem disco persistente por padrão — um deploy novo do
+   `dashboard` ali sobe com o banco de Ações vazio.
+2. **Volume persistente no Railway** — resolveria o deploy vazio, mas amarra o módulo
+   à infraestrutura do bot só para guardar 500MB de SQLite que ninguém mais além do
+   operador local precisa acessar. Custo de infraestrutura sem benefício de uso real
+   hoje.
+3. **Postgres** (mesmo padrão que o bot já usa via `DATABASE_URL`) — a opção certa se
+   o critério abaixo disparar, mas overkill para um banco lido por uma pessoa, um
+   dispositivo, uma vez por mês.
+
+**Critério explícito para reconsiderar**: **querer acessar o módulo de outro
+dispositivo** (celular durante o aporte, notebook diferente, etc.) — hoje o acesso é
+sempre pela máquina que tem `results/acoes.db`. Se isso deixar de ser suficiente na
+prática, a opção 3 (Postgres) é a que resolve sem reabrir a decisão de infraestrutura
+do zero — reusa o mesmo addon e o mesmo padrão `DATABASE_URL`/SQLite-por-padrão já
+provado pelo bot (`persistence.py` do bot troca de backend sem mudar nenhuma query;
+`acoes/persistence.py` segue exatamente o mesmo desenho, então a migração é
+mecânica quando/se o critério disparar).
+
+**Comportamento de produção sem dado, consequência da escolha acima**: toda rota de
+`/api/acoes/*` que precisaria de dado real detecta banco vazio e responde `503`
+estruturado (nunca um 500 mudo — achado real, 2026-08-27: antes desta checagem, banco
+vazio caía no caso degenerado de `compute_demeaned_percentiles`, Seção 13, e virava um
+500 sem corpo, indistinguível de um bug de dado de verdade). `GET /api/acoes/disponivel`
+deixa o frontend desabilitar a aba Ações antes do erro acontecer — o `ModuleSwitch`
+mostra a aba visivelmente inativa com o motivo no título, em vez de deixar a pessoa
+clicar e só descobrir o problema tela por tela.
+
 ## 12. Fases de entrega
 
 | Fase | Entrega | Critério de conclusão |
@@ -2628,12 +2668,25 @@ As fases 1–3 entregam valor mesmo que nenhum score jamais passe no gate. Isso 
   `cvm_ingestion.py`, e decidir uma regra seguindo o número de ações implícito, não
   o campo sozinho) segue pendente para quem quiser reduzir a taxa de exclusão.
 
-  **Achado colateral**: `compute_demeaned_percentiles`/`winsorize` quebra
-  (`TypeError`) se um fator não tiver nenhum valor real em todo o universo de uma data
-  — caso degenerado nunca antes exercitado (precisa de 100% de exclusão para
-  disparar), encontrado testando o limiar acima com um valor artificialmente agressivo.
-  Baixa probabilidade em produção (o limiar real de 1000% nunca chegou perto de excluir
-  um universo inteiro), registrado mas não corrigido nesta rodada.
+  **Achado colateral**: `compute_demeaned_percentiles`/`winsorize` quebra se um fator
+  não tiver nenhum valor real em todo o universo de uma data — caso degenerado nunca
+  antes exercitado (precisa de 100% de exclusão para disparar), encontrado testando o
+  limiar acima com um valor artificialmente agressivo (`TypeError` no `sort` do
+  `winsorize`, universo não-vazio mas todo `None`). Baixa probabilidade em produção com
+  dado real (o limiar de 1000% nunca chegou perto de excluir um universo inteiro),
+  registrado mas não corrigido nesta rodada.
+
+  **Segunda manifestação da mesma classe de bug, achada depois (2026-08-27, Seção
+  11.12)**: universo genuinamente **vazio** (banco sem nenhum dado ingerido — o caso
+  real de um deploy em produção sem volume/Postgres) dispara a mesma família de
+  degenerado, mas por um caminho diferente — `ZeroDivisionError` em
+  `compute_demeaned_percentiles` (divisão por `len(winsorizado_por_ticker)`, zero
+  quando não há nenhuma empresa). Mitigado na Seção 11.12 **por evitar o caminho**
+  (checagem de disponibilidade antes de qualquer rota chamar `build_decisao`), não por
+  corrigir a função em si — a correção de fundo (`compute_demeaned_percentiles` nunca
+  deveria dividir por zero nem ordenar `None`, universo vazio ou fator 100% ausente
+  deveriam devolver lista vazia de resultados) segue pendente, mesmo achado, dois
+  gatilhos.
 
 ## 14. Expectativa calibrada
 

@@ -1,6 +1,10 @@
 // Espelha os dicts devolvidos por `acoes/api.py` (spec 14, Seção 11) — tipagem manual,
 // mesmo padrão do módulo cripto (../../api/types.ts), sem geração automática.
 
+export interface Disponibilidade {
+  disponivel: boolean;
+}
+
 export type MotivoCelulaVazia = "inaplicavel" | "indefinido" | "sem_dado" | "versao_indisponivel";
 
 export interface Carimbo {

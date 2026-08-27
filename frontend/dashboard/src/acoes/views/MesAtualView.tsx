@@ -1,12 +1,17 @@
 import { useEffect, useState } from "react";
-import { acoesApi } from "../api/client";
+import { acoesApi, AcoesIndisponivelError } from "../api/client";
 import type { MesAtual } from "../api/types";
 import { FatorCell } from "../components/FatorCell";
 import { IdentityBadge } from "../components/IdentityBadge";
+import { IndisponivelLocal } from "../components/IndisponivelLocal";
 import { MethodBanner } from "../components/MethodBanner";
 import { formatMesAno, formatPct, formatScore, formatMultiplo } from "../format";
 
-type Carregamento = { status: "carregando" } | { status: "erro"; mensagem: string } | { status: "ok"; dado: MesAtual };
+type Carregamento =
+  | { status: "carregando" }
+  | { status: "indisponivel" }
+  | { status: "erro"; mensagem: string }
+  | { status: "ok"; dado: MesAtual };
 
 function proximoMes(ano: number, mes: number, direcao: 1 | -1): { ano: number; mes: number } {
   const m = mes + direcao;
@@ -26,7 +31,13 @@ export function MesAtualView() {
     acoesApi
       .mesAtual(ano, mes)
       .then((dado) => setEstado({ status: "ok", dado }))
-      .catch((err) => setEstado({ status: "erro", mensagem: String(err) }));
+      .catch((err) =>
+        setEstado(
+          err instanceof AcoesIndisponivelError
+            ? { status: "indisponivel" }
+            : { status: "erro", mensagem: String(err) }
+        )
+      );
   }, [ano, mes]);
 
   return (
@@ -54,6 +65,8 @@ export function MesAtualView() {
           </div>
         </div>
       )}
+
+      {estado.status === "indisponivel" && <IndisponivelLocal />}
 
       {estado.status === "erro" && (
         <div className="acoes-panel">

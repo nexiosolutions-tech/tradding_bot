@@ -1,4 +1,5 @@
 import type {
+  Disponibilidade,
   EmpresaDetalhe,
   HistoricoDetalhe,
   HistoricoLista,
@@ -10,8 +11,18 @@ import type {
 // `/api/acoes/*` diferentes (Seção 11: "não é uma aplicação separada").
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
+// Distinto de qualquer outro erro (Seção 11.12) — banco vazio (produção sem volume/
+// Postgres) é esperado, não um bug de dado. As views checam `instanceof` para mostrar
+// "disponível apenas localmente" em vez de "não foi possível carregar este mês", a
+// mesma disciplina de estado vazio honesto da Seção 11.3, agora para o módulo inteiro.
+export class AcoesIndisponivelError extends Error {}
+
 async function getJSON<T>(path: string): Promise<T> {
   const response = await fetch(`${BASE_URL}${path}`);
+  if (response.status === 503) {
+    const corpo = await response.json().catch(() => null);
+    throw new AcoesIndisponivelError(corpo?.detail ?? "Módulo de Ações indisponível neste ambiente.");
+  }
   if (!response.ok) {
     throw new Error(`${path} -> ${response.status}`);
   }
@@ -46,6 +57,11 @@ function mesAtualCacheado(ano?: number, mes?: number): Promise<MesAtual> {
 }
 
 export const acoesApi = {
+  // Checagem barata, nunca 503 (o backend nunca gateia esta rota atrás dela mesma) —
+  // é o que o `App.tsx` usa para desabilitar a aba Ações antes do erro acontecer
+  // (Seção 11.12). Falha de rede aqui (backend fora do ar) também é tratada como
+  // indisponível pelo chamador, não propagada como exceção não pega.
+  disponibilidade: () => getJSON<Disponibilidade>("/api/acoes/disponivel"),
   mesAtual: mesAtualCacheado,
   empresa: (ticker: string, ano?: number, mes?: number) => {
     const params = new URLSearchParams();

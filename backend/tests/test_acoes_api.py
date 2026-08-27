@@ -70,8 +70,9 @@ def _popular_fixture(session):
     ingest_line_items_for_cnpj(session, DIVIDA_2015, PETR_CNPJ)
 
 
-@pytest.fixture
-def client(tmp_path, monkeypatch):
+def _preparar_ambiente(tmp_path, monkeypatch):
+    """Setup comum aos dois clientes de teste (com e sem dado, Seção 11.12) — só
+    difere em popular ou não o banco de Ações depois de chamar isto."""
     monkeypatch.setenv("ACOES_DATABASE_URL", f"sqlite:///{tmp_path}/acoes-api-test.db")
 
     import tradingbot.acoes.api as acoes_api
@@ -87,10 +88,9 @@ def client(tmp_path, monkeypatch):
     # a thread de aquecimento correria contra as asserções deste arquivo sobre o
     # estado do cache logo após o startup (race de timing, não determinístico).
     monkeypatch.setattr(acoes_api, "WARMUP_HABILITADO", False)
-
-    session = acoes_persistence.get_session()
-    _popular_fixture(session)
-    session.close()
+    # cache de disponibilidade (Seção 11.12) e um só booleano por processo - sem
+    # resetar, o resultado de um teste anterior (banco diferente) vaza para este.
+    monkeypatch.setattr(acoes_api, "_disponibilidade_cache", None)
 
     monkeypatch.delenv("BINANCE_API_KEY", raising=False)
     monkeypatch.delenv("BINANCE_API_SECRET", raising=False)
@@ -102,6 +102,28 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(api_app, "MODELS_DIR", tmp_path / "results" / "models")
     monkeypatch.setattr(api_app, "LEARNINGS_DIR", tmp_path / "learnings")
     monkeypatch.setattr(api_app, "CHANGES_DIR", tmp_path / "changes")
+    return acoes_api, acoes_persistence, api_app
+
+
+@pytest.fixture
+def client(tmp_path, monkeypatch):
+    acoes_api, acoes_persistence, api_app = _preparar_ambiente(tmp_path, monkeypatch)
+
+    session = acoes_persistence.get_session()
+    _popular_fixture(session)
+    session.close()
+
+    with TestClient(api_app.app) as test_client:
+        yield test_client
+
+    acoes_api._cache_decisao.clear()
+
+
+@pytest.fixture
+def client_sem_dado(tmp_path, monkeypatch):
+    """Ambiente idêntico ao `client`, mas nunca popula o banco — reproduz produção
+    sem volume/Postgres (Seção 11.12): `results/acoes.db` sobe vazio."""
+    acoes_api, _acoes_persistence, api_app = _preparar_ambiente(tmp_path, monkeypatch)
 
     with TestClient(api_app.app) as test_client:
         yield test_client
@@ -249,3 +271,44 @@ def test_precos_devolve_ultima_cotacao_conhecida_por_ticker(client):
     assert body["PETR4"] is not None
     assert body["BBAS3"] is not None
     assert body["NAOEXISTE9"] is None
+
+
+# ---------------------------------------------------------------------------
+# Disponibilidade (Seção 11.12) — banco vazio (produção sem volume/Postgres) precisa
+# de 503 com mensagem clara, nunca um 500 mudo (achado real, 2026-08-27).
+# ---------------------------------------------------------------------------
+
+
+def test_disponivel_devolve_false_com_banco_vazio(client_sem_dado):
+    resp = client_sem_dado.get("/api/acoes/disponivel")
+    assert resp.status_code == 200
+    assert resp.json() == {"disponivel": False}
+
+
+def test_disponivel_devolve_true_com_banco_populado(client):
+    resp = client.get("/api/acoes/disponivel")
+    assert resp.status_code == 200
+    assert resp.json() == {"disponivel": True}
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/acoes/mes-atual",
+        "/api/acoes/empresas/PETR4",
+        "/api/acoes/saude-do-dado",
+        "/api/acoes/historico/2016-07-15",
+        "/api/acoes/precos?tickers=PETR4",
+    ],
+)
+def test_rotas_com_dado_devolvem_503_estruturado_sem_banco(client_sem_dado, path):
+    resp = client_sem_dado.get(path)
+    assert resp.status_code == 503
+    assert "sem dado" in resp.json()["detail"].lower()
+
+
+def test_historico_lista_nao_e_gateada_por_disponibilidade(client_sem_dado):
+    """`/historico` (sem data) só devolve as datas conhecidas, nunca toca o banco —
+    não precisa do gate, e continua respondendo mesmo com o banco vazio."""
+    resp = client_sem_dado.get("/api/acoes/historico")
+    assert resp.status_code == 200

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { acoesApi } from "../api/client";
+import { acoesApi, AcoesIndisponivelError } from "../api/client";
 import type { EmpresaRanking } from "../api/types";
+import { IndisponivelLocal } from "../components/IndisponivelLocal";
 import { useCarteira } from "../hooks/useCarteira";
 import { formatPct } from "../format";
 
@@ -51,9 +52,16 @@ export function CarteiraView() {
 
   const [valorAporte, setValorAporte] = useState("");
   const [candidatosSelecionados, setCandidatosSelecionados] = useState<string[]>([]);
+  const [indisponivel, setIndisponivel] = useState(false);
 
   useEffect(() => {
-    acoesApi.mesAtual().then((d) => setUniverso(d.ranking)).catch(() => setUniverso([]));
+    acoesApi
+      .mesAtual()
+      .then((d) => setUniverso(d.ranking))
+      .catch((err) => {
+        if (err instanceof AcoesIndisponivelError) setIndisponivel(true);
+        setUniverso([]);
+      });
   }, []);
 
   useEffect(() => {
@@ -121,6 +129,17 @@ export function CarteiraView() {
       concentracao: calcularConcentracao(pesosLista.map((p) => p.peso)),
     };
   }, [aporte, candidatosSelecionados, linhas, setorPorTicker, universo, valorTotal]);
+
+  if (indisponivel) {
+    return (
+      <>
+        <div className="acoes-page-header">
+          <h1>Minha carteira</h1>
+        </div>
+        <IndisponivelLocal />
+      </>
+    );
+  }
 
   return (
     <>

@@ -65,6 +65,51 @@ def _session() -> Session:
     return get_session()
 
 
+# ---------------------------------------------------------------------------
+# Disponibilidade do módulo — persistência é local por escolha, não por omissão
+# (Seção 11.12). Sem volume/Postgres em produção, `results/acoes.db` sobe vazio a
+# cada deploy — achado real (2026-08-27): antes desta checagem, isso caía direto no
+# caso degenerado de `compute_demeaned_percentiles` (universo vazio) e virava um 500
+# mudo, indistinguível de um bug de dado de verdade. Checagem barata (uma contagem,
+# nunca chama `build_decisao`) para toda rota nunca devolver isso — 503 com mensagem
+# clara, mesma disciplina de estado vazio honesto da Seção 11.3.
+# ---------------------------------------------------------------------------
+
+_disponibilidade_cache: bool | None = None
+
+MENSAGEM_INDISPONIVEL = (
+    "Módulo de Ações sem dado neste ambiente — o banco (results/acoes.db) está vazio "
+    "ou não existe. Isso é esperado em produção sem volume persistente/Postgres "
+    "configurado (Seção 11.12 da spec 14): o módulo é local por escolha. Rode "
+    "localmente para usá-lo."
+)
+
+
+def _acoes_disponivel(session: Session) -> bool:
+    global _disponibilidade_cache
+    if _disponibilidade_cache is None:
+        contagem = session.execute(select(func.count()).select_from(CvmFiling)).scalar()
+        _disponibilidade_cache = bool(contagem and contagem > 0)
+    return _disponibilidade_cache
+
+
+def _exigir_acoes_disponivel(session: Session) -> None:
+    if not _acoes_disponivel(session):
+        raise HTTPException(status_code=503, detail=MENSAGEM_INDISPONIVEL)
+
+
+@router.get("/disponivel")
+def disponivel():
+    """Checagem barata e nunca-gateada (o frontend chama isso antes de decidir se
+    mostra a aba Ações, Seção 11.12) — nunca materializa universo, só conta linhas já
+    ingeridas."""
+    session = _session()
+    try:
+        return {"disponivel": _acoes_disponivel(session)}
+    finally:
+        session.close()
+
+
 # `build_decisao` materializa o universo elegível + computa os três fatores para cada
 # empresa (centenas de consultas point-in-time) — medido em ~15-60s por data (Seção 9,
 # mesma ordem de grandeza do backtest completo). As telas de Empresa/Histórico chamam
@@ -121,6 +166,8 @@ def warm_up_cache_em_background() -> None:
     def _aquecer():
         session = _session()
         try:
+            if not _acoes_disponivel(session):
+                return  # banco vazio (Seção 11.12) — nunca gasta tempo aquecendo o vazio
             for data in DATAS_DECISAO_SERIE:
                 if date.today() >= data:
                     _build_decisao_cacheada(session, data)
@@ -338,6 +385,7 @@ def _mudancas_do_mes(
 def mes_atual(ano: int | None = None, mes: int | None = None):
     session = _session()
     try:
+        _exigir_acoes_disponivel(session)
         data_decisao = _resolver_data_decisao(session, ano, mes)
         resultado = _build_decisao_cacheada(session, data_decisao)
 
@@ -417,6 +465,7 @@ def _retificacoes_ultimos_5_anos(historico: list[dict], data_decisao: date) -> i
 def empresa_detalhe(ticker: str, ano: int | None = None, mes: int | None = None):
     session = _session()
     try:
+        _exigir_acoes_disponivel(session)
         data_decisao = _resolver_data_decisao(session, ano, mes)
         resultado = _build_decisao_cacheada(session, data_decisao)
         empresa = next((e for e in resultado.empresas if e.ticker == ticker), None)
@@ -485,6 +534,7 @@ def _status_fonte(ultima_data: date | None, hoje: date) -> dict:
 def saude_do_dado(ano: int | None = None, mes: int | None = None):
     session = _session()
     try:
+        _exigir_acoes_disponivel(session)
         hoje = date.today()
         data_decisao = _resolver_data_decisao(session, ano, mes)
 
@@ -589,6 +639,7 @@ def historico_detalhe(data_decisao: str):
 
     session = _session()
     try:
+        _exigir_acoes_disponivel(session)
         resultado = _build_decisao_cacheada(session, data)
         ranking = [_empresa_para_ranking(session, e, data) for e in resultado.empresas]
         ranking.sort(key=lambda e: (e["score_composto"] is None, -(e["score_composto"] or 0), e["ticker"]))
@@ -626,6 +677,7 @@ def historico_detalhe(data_decisao: str):
 def precos(tickers: str):
     session = _session()
     try:
+        _exigir_acoes_disponivel(session)
         hoje = date.today()
         lista = [t.strip().upper() for t in tickers.split(",") if t.strip()]
         return {ticker: preco_as_of(session, ticker, hoje) for ticker in lista}
