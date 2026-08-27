@@ -1742,9 +1742,10 @@ não pré-requisito dela.
 
 **Benchmarks obrigatórios** (todos no mesmo período e com o mesmo custo):
 
-1. IBOV, IBrX-100, SMLL — índices (fonte ainda não verificada para o período completo
-   2015-2026, ver Seção 9.4 — o motor de simulação é indiferente a quais séries o
-   alimentam, então este benchmark liga depois, sem redesenhar nada)
+1. IBOV, IBrX-100, SMLL — índices (fonte real encontrada e verificada, Seção 9.4;
+   falta confirmar price-only vs. total-return antes de ligar aos benchmarks — o motor
+   de simulação é indiferente a quais séries o alimentam, então isso liga depois, sem
+   redesenhar nada)
 2. Carteira equal-weight do universo elegível — controla se o score adiciona algo além do filtro de liquidez
 3. Carteira aleatória do universo elegível (N sorteios) — a nuvem nula
 4. CDI — o custo de oportunidade real no Brasil
@@ -1840,7 +1841,7 @@ saem sempre no mesmo regime —
   consistentes for alcançável, o benchmark de índice fica fora da leitura até que um
   deles seja, e a lacuna é reportada explicitamente — não aproximada em silêncio.
 
-### 9.4 Status da fonte de dado por benchmark (2026-08-26)
+### 9.4 Status da fonte de dado por benchmark (2026-08-26, fonte de índice resolvida em 2026-08-27)
 
 Registrado para que a ordem de construção (Seção 9 antes da Seção 8, decidida
 2026-08-26) não vire licença para silenciosamente trocar uma fonte real por uma
@@ -1852,16 +1853,41 @@ aproximação não verificada:
 | Equal-weight do universo | COTAHIST + `universo_elegivel` (já ingerido nesta spec) | Verificado — nenhuma fonte nova |
 | Ponderada por liquidez do universo | idem | Verificado — nenhuma fonte nova |
 | Nuvem nula (aleatória) | derivada por permutação, sem fonte externa | N/A — não depende de dado externo |
-| IBOV | BCB SGS série 7845 | **Descontinuada em ago/2019** (confirmado por HTTP 404 em janelas posteriores e por `/dados/ultimos/1` devolver o mesmo valor de ago/2019) — não cobre 2015-2026 sozinha |
-| IBrX-100, SMLL | ainda não sondadas | Não verificado |
+| IBOV, IBrX-100, SMLL | B3 oficial — ver abaixo | **Verificado, dado real, cobertura 2015-2026 confirmada** |
 
-`yfinance` já foi rejeitado nesta spec (Seção 4.4) para preço individual — a razão de
-série pré-ajustada por provento não se transfere inteira para dado de nível de índice,
-mas o risco de termos de uso continua valendo integralmente; não é um precedente
-automático em nenhuma direção, é decisão nova a tomar deliberadamente quando a Seção
-9.4 for revisitada. Canais oficiais da B3 estão sendo sondados como alternativa; até
-confirmação, os benchmarks 1 (IBOV/IBrX-100/SMLL) ficam fora de qualquer leitura de
-resultado — a leitura roda com os benchmarks 2-5, que não dependem dessa fonte.
+`yfinance` já foi rejeitado nesta spec (Seção 4.4) para preço individual, mas não
+precisou ser reconsiderado aqui — a fonte encontrada é a própria B3.
+
+**Fonte confirmada (2026-08-27)**: canal interno usado pela própria página oficial de
+estatísticas de índices da B3 (`b3.com.br/.../ibovespa-historic-statistics.htm`), sob
+`https://sistemaswebb3-listados.b3.com.br/indexStatisticsProxy/IndexCall/GetPortfolioDay/
+{base64(JSON)}` — mesmo endpoint que já era conhecido por servir a composição diária de
+carteira (achado anterior, "GetPortfolioDay" parecia só isso), mas com parâmetros
+diferentes (`{"index": "<código>", "language": "en-us", "year": "<ano>"}` em vez de
+`pageNumber`/`pageSize`/`segment`) devolve uma **tabela de evolução diária do nível do
+índice para o ano inteiro** — achado só depois de capturar a requisição real feita pelo
+próprio site (Playwright), não deduzido do nome do endpoint, que induzia ao engano.
+
+Verificado com dado real, três índices, código correto de cada um confirmado por
+tentativa direta (não documentado publicamente):
+
+- **IBOVESPA** (`index=IBOVESPA`) — 2015: 43.199,95-58.051,61 (plausível, IBOV real do
+  período); 2026: ~160.000-198.000 (plausível, nível atual). `IBOV` sozinho não
+  funciona, precisa ser `IBOVESPA` por extenso.
+- **IBrX-100** (`index=IBXX`, não `IBRX`) — 2020: 26.895-48.065 (cobre a queda e
+  recuperação do COVID, plausível).
+- **SMLL** (`index=SMLL`) — 2020: 1.480-2.853 (plausível para a escala do índice de
+  small caps).
+
+**Não verificado ainda, próximo passo antes de ligar aos benchmarks**: se esta série é
+price-only ou total-return — a distinção que a Seção 9.3 já registrou como obrigatória
+verificar **antes** de comparar contra a carteira simulada (hoje price-only). O
+Ibovespa é historicamente descrito como já incorporando o efeito de proventos na
+metodologia do índice oficial, mas isso é uma lembrança a confirmar contra a
+documentação metodológica da B3, não uma suposição a carregar adiante — mesma
+disciplina do resto desta spec. Até essa verificação, os benchmarks 1 continuam fora de
+qualquer leitura de resultado publicada (a fonte existir não basta, Seção 9.3 já
+condiciona o uso à consistência de regime).
 
 ### 9.5 Achado estrutural antes do primeiro resultado: quebra de nível virando retorno (2026-08-27)
 
@@ -1912,8 +1938,9 @@ por `tem_quebra_de_nivel` primeiro — registrado aqui para não ser redescobert
 
 Rodado sobre a série completa 2015-2026 já materializada (Seção 7.7/7.8), com a correção
 da Seção 9.5 aplicada, CDI real ingerido (BCB SGS 12, cobertura completa), IPCA real já
-ingerido (Seção 6.3). Benchmarks 1 (IBOV/IBrX-100/SMLL) fora da leitura (Seção 9.4,
-fonte ainda não verificada) — leitura roda sobre os benchmarks 2-5.
+ingerido (Seção 6.3). Benchmarks 1 (IBOV/IBrX-100/SMLL) fora da leitura — no momento
+desta rodada a fonte de índice ainda não tinha sido encontrada (resolvida depois, mesmo
+dia, Seção 9.4) — leitura roda sobre os benchmarks 2-5.
 
 | | Retorno total (11 anos) | Retorno/Volatilidade | Retorno/Drawdown |
 |---|---|---|---|
