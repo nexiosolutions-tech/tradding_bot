@@ -1957,6 +1957,40 @@ recente de melhor cobertura (Seção 7.8), nem no sentido contrário.
 Experimento registrado em `learnings/experiments_acoes.jsonl` (Seção 9.2,
 `domain="acoes"`) — primeira entrada do domínio, N=1 para efeito de DSR futuro.
 
+**Autoridade do resultado**: a ablação controlada (Seção 9.5 — mesma seleção, único
+fator variado, 931%→119%) é o que separa "o número caiu porque corrigi um bug" de
+"o número caiu para o que se espera de uma carteira de ações no período" — se tivesse
+caído para, digamos, 800%, restaria dúvida sobre se havia mais artefato não achado. Não
+restou: p=0,52 é o centro exato da nuvem nula, não uma borda duvidosa, e o CDI batendo
+as três carteiras de ações confirma o que a aritmética já dizia (juro real ~9% ao ano é
+uma barra brutal para qualquer fator de ações no Brasil).
+
+**Decisão registrada (2026-08-27): a pergunta "estes três fatores têm poder preditivo
+na B3?" está respondida por ora — não, nesta janela, neste desenho.** Não é fracasso do
+projeto: é a infraestrutura de ponta-in-time construída nas Seções 5-8 dando essa
+resposta com honestidade, em vez do resultado contaminado (931%) que quase toda
+ferramenta de mercado mostraria sem a mesma disciplina de verificação. A camada de
+evidência (fundamentos datados, universo elegível, fatores comparáveis dentro do setor,
+tudo rastreável — Seções 5-8) continua valendo integralmente e não depende de nenhum
+ranking validado — é produto real, entregável independentemente deste resultado.
+
+**Não iterar em busca de configuração agora** — trocar pesos, testar top-10/top-30,
+adicionar um quarto fator até algo passar infla o viés de seleção que o DSR (Seção 10,
+critério 4) existe para punir; um resultado positivo obtido na décima quinta
+configuração vale muito menos do que parece, e `experiment_log` (Seção 9.2) é o freio
+para isso, não um placar a maximizar. Se um redesenho de fatores for retomado no
+futuro, a direção com fundamento econômico (não garimpagem) é **momentum** — família
+mais ortogonal aos três atuais (earnings yield e ROE compartilham lucro no numerador),
+mas bloqueado hoje pela mesma lacuna de magnitude de evento societário que gerou o
+achado da Seção 9.5 (`CorporateEventFlag` não carrega razão de bonificação/grupamento,
+logo não dá para calcular retorno ajustado, que é o que momentum precisa). Resolver
+essa fonte é pré-requisito, não o próximo fator a testar direto.
+
+Próximo foco de maior valor, com o resultado desta seção fechado: camada de evidência e
+interface (Seção 11) — entregam utilidade sem depender de sinal validado. Fatores/
+motor de carteira completo (Seção 8) ficam parados até uma decisão explícita de
+retomar, com a infraestrutura e o gate honesto já no lugar para quando isso acontecer.
+
 ## 10. Gate de promoção
 
 Dois eixos de amostra diferentes decidem este gate, e não podem ser confundidos entre

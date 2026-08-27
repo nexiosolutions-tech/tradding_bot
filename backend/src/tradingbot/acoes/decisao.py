@@ -55,7 +55,15 @@ def preco_as_of(session: Session, ticker: str, data_decisao: date) -> float | No
     """Fechamento mais recente com `trade_date <= data_decisao` — mesma fronteira
     inclusiva de todo o resto da spec. Pública (não só uso interno de `build_decisao`)
     porque `backtest.py` (Seção 9) precisa da mesma consulta point-in-time para marcar
-    posições a mercado mês a mês — nunca reimplementada lá."""
+    posições a mercado mês a mês — nunca reimplementada lá.
+
+    **Segura para avaliação point-in-time (uma razão numa única data — earnings yield,
+    por exemplo), nunca para calcular retorno entre duas datas sem checar
+    `backtest.tem_quebra_de_nivel` primeiro.** `CotahistPrice.close` é bruto, nunca
+    ajustado por evento societário (Seção 5.3) — dividir dois valores desta função
+    direto pode transformar um grupamento/bonificação em retorno de centenas de por
+    cento (achado real, Seção 9.5: um único evento inflou um backtest de 119% para
+    931%). O nome da função não avisa essa armadilha, por isso o aviso está aqui."""
     stmt = (
         select(CotahistPrice.close)
         .where(CotahistPrice.ticker == ticker, CotahistPrice.trade_date <= data_decisao)
