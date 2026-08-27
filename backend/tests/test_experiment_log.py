@@ -1,9 +1,12 @@
 from tradingbot.learning_engine.experiment_log import (
+    DOMAIN_ACOES,
+    DOMAIN_BOT,
     OUTCOME_NO_FINDING,
     OUTCOME_PROPOSAL_DRAFTED,
     ExperimentRecord,
     already_tried,
     append_experiment,
+    contar_experimentos_por_dominio,
     load_experiments,
 )
 
@@ -44,6 +47,41 @@ def test_already_tried_matches_on_exact_tool_and_params():
     assert already_tried(experiments, "evaluate_strategy_config", {"horizon_minutes": 45}) is True
     assert already_tried(experiments, "evaluate_strategy_config", {"horizon_minutes": 30}) is False
     assert already_tried(experiments, "analyze_feature_importance", {"horizon_minutes": 45}) is False
+
+
+def test_domain_defaults_to_bot_para_linha_antiga_sem_o_campo(tmp_path):
+    """Linha gravada antes do campo `domain` existir (spec 14, Seção 9.2) precisa
+    continuar carregando sem erro, com domínio "bot" — o comportamento de antes desta
+    mudança era implicitamente só o do bot."""
+    path = tmp_path / "experiments.jsonl"
+    path.write_text('{"ts": 1, "hypothesis": "h", "tool": "t", "params": {}, '
+                     '"result_summary": {}, "outcome": "sem_achado", "changes_file": null}\n')
+    loaded = load_experiments(path)
+    assert loaded[0].domain == DOMAIN_BOT
+
+
+def test_already_tried_e_isolado_por_dominio():
+    """Mesmo tool/params em domínios diferentes não é a mesma tentativa — um match
+    coincidente entre bot e ações nunca deve suprimir uma tentativa genuinamente nova no
+    outro domínio (spec 14, Seção 9.2)."""
+    experiments = [
+        ExperimentRecord(ts=1, hypothesis="h", tool="mesmo_nome", params={"x": 1}, domain=DOMAIN_BOT),
+    ]
+    assert already_tried(experiments, "mesmo_nome", {"x": 1}, domain=DOMAIN_BOT) is True
+    assert already_tried(experiments, "mesmo_nome", {"x": 1}, domain=DOMAIN_ACOES) is False
+
+
+def test_contar_experimentos_por_dominio_nao_mistura_os_dois():
+    """N do DSR (spec 14, Seção 9.2/10 critério 4) tem que ser específico do domínio —
+    tentativas do bot não podem inflar, nem ser infladas por, o viés de seleção do
+    módulo de ações."""
+    experiments = [
+        ExperimentRecord(ts=1, hypothesis="h1", tool="t", domain=DOMAIN_BOT),
+        ExperimentRecord(ts=2, hypothesis="h2", tool="t", domain=DOMAIN_BOT),
+        ExperimentRecord(ts=3, hypothesis="h3", tool="t", domain=DOMAIN_ACOES),
+    ]
+    assert contar_experimentos_por_dominio(experiments, DOMAIN_BOT) == 2
+    assert contar_experimentos_por_dominio(experiments, DOMAIN_ACOES) == 1
 
 
 def test_experiment_record_carries_changes_file_when_proposal_drafted():

@@ -1751,6 +1751,56 @@ não pré-requisito dela.
 
 **Teste de nulidade:** permutar a associação entre score e retorno futuro, N ≥ 100. O score real precisa ficar fora da nuvem nula. Se não ficar, o conjunto de fatores não passa — independentemente de quão bem o backtest tenha ido.
 
+### 9.1 Critérios de leitura pré-registrados (2026-08-26, antes de qualquer resultado existir)
+
+A disciplina muda de natureza a partir daqui: até a Seção 7.8, o rigor era "bate com a
+fonte?"; a partir do backtest, vira "esse resultado é real ou é a primeira configuração
+que pareceu boa?" — o risco clássico de olhar o resultado antes de decidir o que conta
+como sucesso, e escolher o critério que o resultado de fato bateu. Registrado aqui,
+**antes de rodar o backtest pela primeira vez**, para que a leitura do resultado não
+tenha grau de liberdade nenhum que não estivesse já decidido:
+
+1. **Bate o equal-weight do universo elegível em risco-ajustado** (Seção 9, benchmark
+   2) — não basta bater em retorno bruto, tem que bater ajustado por risco.
+2. **Fica fora da nuvem nula com p < 0,05** (Seção 9, teste de nulidade — já a régua
+   declarada em Seção 10, critério 3, repetida aqui porque é a mais fácil de amolecer
+   depois do fato).
+3. **Não concentra a vantagem inteira em um único setor (financeiro, Seção 7.5/10
+   critério 5) nem numa única era de cobertura de fator (2015-2019 vs. 2020-2026,
+   Seção 7.8/10 critério 5)** — os dois já são critério de gate (Seção 10), mas
+   registrados aqui de novo como parte do que "sucesso" significa, não só do que
+   "reprovação automática" significa.
+
+Os três, juntos — não cada um isoladamente já seria suficiente para declarar sucesso.
+Nenhum critério novo pode ser adicionado, nem nenhum destes relaxado, depois que o
+primeiro resultado do backtest existir, sem registrar explicitamente por que (mesma
+disciplina do resto da spec: mudança de critério exige `changes/` com justificativa, não
+silêncio).
+
+**Expectativa calibrada, registrada antes de saber o resultado**: três fatores, dois
+compartilhando lucro no numerador (earnings yield e ROE), sobre um corte transversal de
+100-210 empresas ao longo de 12 anos — a chance de vantagem estatisticamente robusta não
+é alta. Um resultado morno ou nulo não invalida o trabalho de fundação (Seções 5-8) —
+significa que estes três fatores não têm poder na B3 no período medido, resposta legítima
+e cara de obter honestamente. A camada de evidência (dados consolidados, rastreáveis,
+decompostos, Seção 10) continua valendo integralmente nesse cenário.
+
+### 9.2 Contabilização de configurações testadas — log de experimentos por domínio
+
+Cada variante testada (top-N com N diferente, pesos de fator, frequência de
+rebalanceamento) é uma tentativa, e o DSR (Seção 10, critério 4) precisa da contagem
+completa para deflacionar o resultado final — sem ela, o número reportado no fim não
+significa nada além de "a melhor entre as tentativas que couberam na sessão", que é
+exatamente o viés de seleção que o DSR existe para corrigir.
+
+Reusa `learning_engine/experiment_log.py` — **mesmo componente já usado pelo loop do
+bot, campo `domain` na entrada, contadores separados por domínio** (Seção 3, tabela de
+componentes herdados: "tentativas do bot não podem inflar, nem ser infladas por, o viés
+de seleção do módulo de ações"). Arquivo físico separado (`learnings/experiments_
+acoes.jsonl`, não o mesmo arquivo do bot) — mesma disciplina de "fundação de engenharia
+compartilhada, nunca estado ou dado" do `CLAUDE.md`: o *código* é reutilizado, o *log*
+de cada domínio não se mistura fisicamente com o do outro.
+
 ## 10. Gate de promoção
 
 Dois eixos de amostra diferentes decidem este gate, e não podem ser confundidos entre
