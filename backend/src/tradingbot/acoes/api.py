@@ -201,8 +201,11 @@ def _detalhe_earnings_yield(session: Session, empresa: DecisaoEmpresa, data_deci
     eps = get_eps_as_of(session, empresa.cnpj, empresa.ticker, data_decisao)
     preco = preco_as_of(session, empresa.ticker, data_decisao)
     if eps is not None and preco:
+        valor = earnings_yield_raw(eps, preco)
+        if valor is None:  # EPS implausível na fonte (achado Seção 13, 2026-08-27)
+            return {"valor": None, "percentil": None, "carimbo": _carimbo(filing), "motivo": "indefinido"}
         return {
-            "valor": earnings_yield_raw(eps, preco),
+            "valor": valor,
             "percentil": empresa.earnings_yield_percentil,
             "carimbo": _carimbo(filing),
             "motivo": None,

@@ -1966,20 +1966,35 @@ calibrada registrada na Seção 9.1 antes de qualquer resultado existir — resp
 legítima, obtida honestamente, não um problema a esconder.
 
 **Ressalva registrada depois (2026-08-27, mesmo dia — achado da interface, Seção
-11.5/13):** este resultado foi obtido com um **erro de escala conhecido no earnings
-yield** ainda não corrigido — 28 valores implausíveis (|razão| > 300%) ao longo da
-série, não isolados, incluindo `ITUB4` (banco grande e líquido, descartando "só
+11.5/13):** este resultado foi obtido com um **earnings yield implausível em 11 pontos
+da série** (número revisado depois de caracterizar a distribuição completa, não só a
+cauda — ver Seção 13), causas múltiplas confirmadas (dado corrompido na própria fonte
+CVM, erro de escala ~1000x, e pelo menos um caso plausivelmente real por
+reestruturação de capital), incluindo `ITUB4` (banco grande e líquido, descartando "só
 empresa pequena com dado ruim"). Earnings yield é o único dos três fatores aplicável
 ao universo inteiro (dívida líquida/EBITDA neutraliza bancos, Seção 7.2; ROE tem seus
 indefinidos) — é o que sustenta a maior cobertura do score composto. Ruído de escala
-1000x nesses pontos empurra o ranking na direção de empresas com dado errado, o que
-tende a **degradar**, não inflar, a performance de um candidato ranqueado por score —
-não invalida o "nulo" (a direção do viés não favorece um resultado positivo
-espúrio), mas significa que **este resultado não pode ainda ser lido como "os três
-fatores, limpos, não funcionam"** — só como "não funcionaram, com este erro dentro".
-Não reabrir o backtest agora só por essa ressalva (a decisão de encerrar a iteração de
-fatores, registrada acima, continua de pé) — se o fator for corrigido no futuro, aí
-sim uma nova rodada única se justifica, não como reabertura de busca.
+nesses pontos empurra o ranking na direção de empresas com dado errado, o que tende a
+**degradar**, não inflar, a performance de um candidato ranqueado por score — não
+invalida o "nulo" (a direção do viés não favorece um resultado positivo espúrio), mas
+significa que **este resultado não pode ainda ser lido como "os três fatores, limpos,
+não funcionam"** — só como "não funcionaram, com este erro dentro".
+
+Mitigação implementada depois desta rodada (Seção 13): `earnings_yield_raw` agora
+exclui (nunca corrige) valor acima do limiar derivado do vão real da distribuição —
+**detecção, não correção de escala** (nenhuma regra de "dividir por 1000" foi
+implementada, o caso `AZUL4` mostrou que isso quebraria pontos que já estavam certos).
+Ainda não determinado se essa mitigação é "o fator corrigido" no sentido que
+justificaria a rodada única mencionada abaixo — excluir um dado ruim (via imputação
+pela mediana) não é o mesmo que ter o valor certo, mas já impede que 11 pontos
+implausíveis distorçam o ranking na direção observada. Decisão de rerodar o backtest
+uma vez com essa mitigação fica para quem lê este registro, não tomada
+unilateralmente aqui.
+
+Não reabrir o backtest **em busca de resultado melhor** por causa desta ressalva (a
+decisão de encerrar a iteração de fatores, registrada acima, continua de pé) — uma
+rodada de confirmação com a mitigação aplicada, se feita, é para saber se o "nulo"
+muda com o dado ruim removido, não o início de uma nova busca.
 
 **Achado adicional, não pré-registrado**: nenhuma das três carteiras de ações (candidato,
 equal-weight, ponderada por liquidez) superou o CDI no período — o custo de
@@ -2563,28 +2578,62 @@ As fases 1–3 entregam valor mesmo que nenhum score jamais passe no gate. Isso 
 - **Regimes longos** — fatores passam anos sem funcionar. Um resultado ruim em 12 meses não invalida, e um bom não valida.
 - **Mudança regulatória e tributária** — regras de tributação de proventos e ganho de capital mudam. O sistema informa, não calcula obrigação fiscal.
 - **Overfitting de pesos** — o risco mais provável nesta frente. Mitigado pelo log de experimentos e pelo DSR.
-- **EPS extraído da CVM tem valores implausíveis, não isolados — achado da interface,
-  ainda sem causa raiz confirmada (2026-08-27).** Construindo a "linha do tempo de
-  conhecimento" da Seção 11.5 (que exibe o valor bruto de cada fator, não só o
-  percentil), earnings yield/ROE implausíveis (|razão| > 300%) apareceram em **28
-  ocorrências ao longo das 12 datas de decisão da série completa** — não um caso
-  isolado. A maioria é plausível (empresas em distress real, ex. `RSID3`/`PDGR3`,
-  prejuízo por ação grande contra preço já deprimido), mas pelo menos quatro são
-  claramente artefato de escala: `AMAR3` (earnings yield ≈ -4×10¹⁶), `MEAL3` (≈
-  -1,4×10⁸), `PTBL3` (≈ 178×), e **`ITUB4`** em 2020-02-28 (≈ 87×, EPS aparente de
-  R$2.780 — um dos bancos mais líquidos e escrutinados do país, o que descarta
-  "empresa pequena com dado ruim" como explicação completa). Investigado um caso
-  (`EVEN3`, 2023-02-28): duas linhas de item financeiro para contas de EPS distintas
-  (`3.99.01.01` = 1123,0; `3.99.02.01` = 1,123) — mil vezes de diferença, sugerindo
-  problema de escala/unidade em pelo menos uma conta da CVM para aquele filing, não
-  erro do pipeline de ingestão em si. **Não investigado ainda**: se é sempre a mesma
-  conta com o mesmo problema (corrigível com uma regra), se afeta `score_composto` o
-  bastante para mudar alguma leitura do backtest (Seção 9.6 já é nula; dado ruim
-  tende a adicionar ruído, não a inflar artificialmente uma vantagem, mas não
-  verificado), e se o mesmo padrão aparece em ROE (`get_lucro_liquido_controladores_
-  as_of`/`get_patrimonio_liquido_controladores_as_of`) por uma causa distinta. Registrado
-  aqui, não corrigido nesta rodada — é mudança de lógica de fator (`fatores.py`),
-  passa pelo fluxo `changes/` com investigação própria antes de qualquer alteração.
+- **EPS extraído da CVM tinha valores implausíveis, causa caracterizada e mitigada por
+  detecção — não por correção de escala (2026-08-27).** Achado inicial da interface
+  (Seção 11.5, "linha do tempo de conhecimento") investigado a fundo, mesmo método que
+  fechou o `EX` (Seção 5.3): distribuição **completa** de earnings yield ordenada por
+  módulo (não só a cauda) tem um vão real — salto de 3,52x entre |23,93| e |6,80|,
+  contra saltos de 1,0-1,3x no resto da cauda. **11 pontos** (não 28 — o número original
+  usava um limiar de conveniência, |razão|>300%, que ainda capturava distress real como
+  `RSID3`; o limiar derivado do vão é |razão|>1000%) ficam acima do vão, ao longo da
+  série completa.
+
+  **Causas múltiplas, confirmadas, não uma só** — a checagem independente que valida
+  isso: número de ações implícito (`lucro_controladores / eps`) é estável entre os anos
+  de uma mesma empresa quando o valor é plausível (ex. `EVEN3` ≈ 205.000-233.000 mil
+  ações em todo ano exceto um) e colapsa por ~1000x exatamente nos anos contaminados —
+  não coincidência.
+  - **Valor bruto corrompido na própria fonte CVM**: `AMAR3`
+    (`-27.439.999.999.999.998,00` literal no CSV publicado pela CVM) e `MEAL3`
+    (`-285.444.400,00`) — nenhuma correção de escala resolve, o dado na fonte já nasceu
+    errado.
+  - **Erro de escala ~1000x num item que nunca deveria escalar**: `ITUB4` (2020-02-28,
+    EPS bruto 2.780 — `ESCALA_MOEDA='MIL'` no arquivo, mas aplicar isso ao lucro por
+    ação é errado, o campo é por unidade de ação, não agregado; número de ações
+    implícito bate exatamente ao dividir por 1000, de ~9,7 milhões para ~9,75 bilhões,
+    consistente com todo o resto da série do banco), `EVEN3`, `MOSI3` no mesmo padrão.
+    **`ESCALA_MOEDA='MIL'` sozinho não é sinal confiável de que precisa dividir**:
+    `AZUL4` (2025-02-28, earnings yield -680%, dentro do vão, plausível) também tem
+    `ESCALA_MOEDA='MIL'` no mesmo `CD_CONTA`, com o valor já correto sem ajuste —
+    corrigir "sempre que MIL" quebraria esse caso. Nenhuma correção automática de
+    escala foi implementada por isso — o risco de "consertar" errado é maior que o de
+    excluir.
+  - **Possivelmente real, não bug**: `PDGR3` aparece em 3 anos diferentes da série —
+    tem eventos reais de grupamento (`CorporateEventFlag.is_level_break`) registrados
+    (2015, 2023, vários em 2025), então uma reconciliação suja "ações deveriam ser
+    estáveis entre anos" não se aplica a ela do mesmo jeito — pode ser variação real de
+    contagem de ações por reestruturação de capital, não dado ruim. Não resolvido caso
+    a caso.
+
+  **ROE checado pelo mesmo método, achado diferente — sem vão real, distribuição
+  contínua** (maior salto 2,41x, resto sob 1,6x) — os valores extremos (`CVCB3`
+  ≈-2626%, `RCSL3`≈-1088%) são patrimônio líquido perto de zero em empresas reais em
+  distress, não bug. **Nenhum limiar novo criado para ROE** — um limiar sem vão real
+  seria escolha arbitrária, exatamente o que este método existe para evitar.
+
+  **Mitigação implementada**: `EARNINGS_YIELD_IMPLAUSIVEL_LIMIAR = 10.0` (Seção 7.1,
+  `fatores.py`) — `earnings_yield_raw` devolve `None` (indefinido) acima do limiar,
+  nunca tenta adivinhar a escala certa. É detecção, não correção — a causa raiz na
+  ingestão (capturar `ESCALA_MOEDA`, hoje totalmente ignorado por
+  `cvm_ingestion.py`, e decidir uma regra seguindo o número de ações implícito, não
+  o campo sozinho) segue pendente para quem quiser reduzir a taxa de exclusão.
+
+  **Achado colateral**: `compute_demeaned_percentiles`/`winsorize` quebra
+  (`TypeError`) se um fator não tiver nenhum valor real em todo o universo de uma data
+  — caso degenerado nunca antes exercitado (precisa de 100% de exclusão para
+  disparar), encontrado testando o limiar acima com um valor artificialmente agressivo.
+  Baixa probabilidade em produção (o limiar real de 1000% nunca chegou perto de excluir
+  um universo inteiro), registrado mas não corrigido nesta rodada.
 
 ## 14. Expectativa calibrada
 

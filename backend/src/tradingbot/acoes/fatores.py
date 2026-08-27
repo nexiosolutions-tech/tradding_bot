@@ -113,11 +113,38 @@ def get_eps_as_of(session: Session, cnpj: str, ticker: str, data_decisao: date) 
     return linha.vl_conta if linha else None
 
 
-def earnings_yield_raw(eps: float, preco: float) -> float:
+EARNINGS_YIELD_IMPLAUSIVEL_LIMIAR = 10.0
+
+# Limiar derivado da distribuição real, mesmo método que fechou o EX (Seção 5.3): toda
+# a série 2015-2026 tem earnings yield com |razão| > 10 (1000%) em 11 pontos, e o vão
+# entre eles e o resto da distribuição é real, não escolhido por conveniência — o maior
+# salto entre valores consecutivos ordenados por módulo é de 3,52x, exatamente entre
+# |23,93| (ainda plausível — companhia em distress real) e |6,80| (claramente
+# plausível), contra saltos de 1,0-1,3x em todo o resto da cauda. Achado real (Seção
+# 13, 2026-08-27): a interface expôs earnings yield de 25.067% para uma empresa real
+# (EVEN3) — investigação encontrou **múltiplas causas distintas**, não uma só: valor
+# bruto corrompido na própria fonte CVM (`AMAR3`, `MEAL3` — nenhuma correção de escala
+# resolve, só exclusão), e erro de escala ~1000x num item por ação que não deveria
+# escalar (`ITUB4`, `EVEN3`, `MOSI3` — confirmado cruzando `lucro_controladores/eps`
+# contra o número de ações implícito nos outros anos da mesma empresa, que cai por
+# ~1000x só nos anos contaminados). Com mais de uma causa, o limiar não é rede de
+# segurança de uma correção única — é o que faz o trabalho, então fica conservador
+# (nunca filtra ROE, que não tem vão limpo — distribuição contínua, distress real).
+
+
+def earnings_yield_raw(eps: float, preco: float) -> float | None:
     """Lucro por ação / preço — o inverso do P/L. Deficitária (`eps < 0`) fica com yield
     negativo, corretamente no fundo do ranking; P/L bruto de deficitária ficaria negativo
-    e apareceria como "a mais barata" num ranking ingênuo, sinal invertido."""
-    return eps / preco
+    e apareceria como "a mais barata" num ranking ingênuo, sinal invertido.
+
+    `None` (indefinido) quando `|resultado| > EARNINGS_YIELD_IMPLAUSIVEL_LIMIAR` — dado
+    de EPS implausível na fonte (ver constante acima), nunca inventa correção de
+    escala (achado real mostrou que nem toda causa é a mesma, e "dividir por 1000"
+    quebraria os casos que já estavam certos)."""
+    resultado = eps / preco
+    if abs(resultado) > EARNINGS_YIELD_IMPLAUSIVEL_LIMIAR:
+        return None
+    return resultado
 
 
 # ------------------------------------------------------------- divida liquida / EBITDA

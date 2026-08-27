@@ -144,6 +144,24 @@ def test_earnings_yield_raw_petrobras_negativo_nao_invertido():
     assert yield_petr < yield_itub
 
 
+def test_earnings_yield_raw_implausivel_vira_none():
+    """Achado real (Seção 13, 2026-08-27): EPS implausível na fonte CVM (corrompido ou
+    com erro de escala ~1000x, casos distintos — `ITUB4` real tinha EPS=2780 num
+    filing em que os outros anos davam ~R$2-4) produz earnings yield absurdo (>1000%).
+    `EARNINGS_YIELD_IMPLAUSIVEL_LIMIAR` (derivado do vão real na distribuição, mesmo
+    método do `EX`) barra isso, virando indefinido em vez de um número que distorceria
+    o ranking."""
+    assert earnings_yield_raw(2780.0, 32.0) is None  # caso real ITUB4, 2020-02-28
+    assert earnings_yield_raw(1123.0, 4.48) is None  # caso real EVEN3, 2023-02-28
+
+
+def test_earnings_yield_raw_plausivel_mesmo_grande_nao_vira_none():
+    """Distress real não pode ser confundido com dado implausível — AZUL4 real
+    (2025-02-28) tem earnings yield de -680%, grande mas dentro do vão, e precisa
+    continuar computando normalmente."""
+    assert earnings_yield_raw(-26.32, 3.87) == pytest.approx(-26.32 / 3.87)
+
+
 def test_winsorize_amostra_pequena_nao_corta_extremos():
     """Regressão do bug achado nesta rodada: com `n=3` e índice por truncamento
     (`int`), o percentil 99 mapeava para o valor do meio, não o máximo, cortando o maior

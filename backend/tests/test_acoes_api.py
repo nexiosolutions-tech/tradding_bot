@@ -131,6 +131,30 @@ def test_mes_atual_devolve_ranking_com_carimbo_em_todo_valor_presente(client):
                 assert detalhe["motivo"] in ("inaplicavel", "indefinido", "sem_dado", "versao_indisponivel")
 
 
+def test_mes_atual_earnings_yield_implausivel_vira_indefinido(client, monkeypatch):
+    """Achado real (Seção 13, 2026-08-27): EPS implausível na fonte precisa virar
+    `indefinido` na API, nunca um número exposto sem contexto — a mesma regra de
+    carimbo/motivo do resto da Seção 11.3. Limiar reduzido para 0,25 (abaixo do
+    earnings yield real de BBAS3 nesta fixture, 26,1%, mas acima de ITUB4 12,9% e
+    |PETR4| 24,2%) — filtra só uma empresa, não todas, para não bater no caso
+    degenerado (nenhum valor real no bucket para imputar as demais)."""
+    import tradingbot.acoes.fatores as fatores
+
+    monkeypatch.setattr(fatores, "EARNINGS_YIELD_IMPLAUSIVEL_LIMIAR", 0.25)
+
+    resp = client.get("/api/acoes/mes-atual", params={"ano": 2016, "mes": 7})
+    body = resp.json()
+    por_ticker = {e["ticker"]: e for e in body["ranking"]}
+
+    detalhe_bbas3 = por_ticker["BBAS3"]["earnings_yield"]
+    assert detalhe_bbas3["valor"] is None
+    assert detalhe_bbas3["motivo"] == "indefinido"
+    assert detalhe_bbas3["carimbo"] is not None  # sabe-se a data do filing, mesmo indefinido
+
+    assert por_ticker["ITUB4"]["earnings_yield"]["valor"] is not None
+    assert por_ticker["PETR4"]["earnings_yield"]["valor"] is not None
+
+
 def test_mes_atual_dl_ebitda_inaplicavel_para_bancos(client):
     resp = client.get("/api/acoes/mes-atual", params={"ano": 2016, "mes": 7})
     body = resp.json()
