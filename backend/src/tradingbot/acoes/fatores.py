@@ -171,6 +171,89 @@ _CD_CONTA_DIVIDA_NAO_CIRCULANTE = "2.02.01"
 EBITDA_INDEFINIDO_LIMIAR = 0.0
 
 
+def _extrair_eps(ticker: str, linhas: list[CvmFinancialLineItem]) -> float | None:
+    """Mesma regra de `get_eps_as_of`, operando sobre linhas já em memória — parte da
+    reescrita em lote (2026-08-29): a versão single-item busca `linhas` do banco por
+    empresa; a versão em lote busca todas as empresas de uma vez (`pointintime.
+    get_line_items_lote`) e chama este extrator para cada uma, sem voltar ao banco.
+    Nunca filtra por `base` — mesmo comportamento de `get_eps_as_of`, que também não
+    filtra (achado de que o EPS não distingue consolidado/individual nesta rodada)."""
+    classe = _classe_da_acao(ticker)
+    if classe is None:
+        return None
+    cd_conta = _CD_CONTA_EPS_BASICO[classe]
+    candidatas = [linha for linha in linhas if linha.cd_conta == cd_conta]
+    linha = _unica_por_conteudo(candidatas)
+    return linha.vl_conta if linha else None
+
+
+def _extrair_ebit(linhas: list[CvmFinancialLineItem], base: str = "con") -> float | None:
+    """Mesma regra de `get_ebit_as_of` — ver docstring lá para a armadilha do `CD_CONTA`
+    de banco. Operando sobre linhas já em memória (reescrita em lote, 2026-08-29)."""
+    candidatas = [linha for linha in linhas if linha.base == base and linha.cd_conta == _CD_CONTA_EBIT]
+    linha = _unica_por_conteudo(candidatas)
+    if linha is None or linha.ds_conta.strip() != _DS_CONTA_EBIT_ESPERADO:
+        return None
+    return linha.vl_conta
+
+
+def _extrair_da(linhas: list[CvmFinancialLineItem], base: str = "con") -> float | None:
+    """Mesma regra de `get_depreciacao_amortizacao_as_of` — busca por palavra-chave em
+    `DS_CONTA`, nunca por `CD_CONTA` fixo (posição não é fixa dentro do grupo de
+    reconciliação, Seção 7.2). Operando sobre linhas já em memória (reescrita em lote,
+    2026-08-29)."""
+    candidatas = [
+        linha for linha in linhas
+        if linha.base == base
+        and linha.cd_conta.startswith(_CD_CONTA_DFC_RECONCILIACAO_PREFIXO)
+        and any(kw in linha.ds_conta.upper() for kw in _DA_KEYWORDS)
+    ]
+    linha = _unica_por_conteudo(candidatas)
+    return linha.vl_conta if linha else None
+
+
+def _extrair_divida_liquida(linhas: list[CvmFinancialLineItem], base: str = "con") -> float | None:
+    """Mesma regra de `get_divida_liquida_as_of`. Operando sobre linhas já em memória
+    (reescrita em lote, 2026-08-29)."""
+    caixa = _unica_por_conteudo(
+        [l for l in linhas if l.base == base and l.cd_conta == _CD_CONTA_CAIXA_E_EQUIVALENTES]
+    )
+    divida_circulante = _unica_por_conteudo(
+        [l for l in linhas if l.base == base and l.cd_conta == _CD_CONTA_DIVIDA_CIRCULANTE]
+    )
+    divida_nao_circulante = _unica_por_conteudo(
+        [l for l in linhas if l.base == base and l.cd_conta == _CD_CONTA_DIVIDA_NAO_CIRCULANTE]
+    )
+    if caixa is None or divida_circulante is None or divida_nao_circulante is None:
+        return None
+    return (divida_circulante.vl_conta + divida_nao_circulante.vl_conta) - caixa.vl_conta
+
+
+def _extrair_lucro_liquido_controladores(linhas: list[CvmFinancialLineItem], base: str = "con") -> float | None:
+    """Mesma regra de `get_lucro_liquido_controladores_as_of`. Operando sobre linhas já
+    em memória (reescrita em lote, 2026-08-29)."""
+    candidatas = [
+        l for l in linhas
+        if l.base == base and l.cd_conta.startswith("3.") and l.ds_conta == _DS_CONTA_LUCRO_LIQUIDO_CONTROLADORES
+    ]
+    linha = _unica_por_conteudo(candidatas)
+    return linha.vl_conta if linha else None
+
+
+def _extrair_patrimonio_liquido_controladores(linhas: list[CvmFinancialLineItem], base: str = "con") -> float | None:
+    """Mesma regra de `get_patrimonio_liquido_controladores_as_of`. Operando sobre linhas
+    já em memória (reescrita em lote, 2026-08-29)."""
+    total = _unica_por_conteudo(
+        [l for l in linhas if l.base == base and l.cd_conta.startswith("2.") and l.ds_conta == _DS_CONTA_PATRIMONIO_LIQUIDO_CONSOLIDADO]
+    )
+    nao_controladores = _unica_por_conteudo(
+        [l for l in linhas if l.base == base and l.cd_conta.startswith("2.") and l.ds_conta == _DS_CONTA_PARTICIPACAO_NAO_CONTROLADORES]
+    )
+    if total is None or nao_controladores is None:
+        return None
+    return total.vl_conta - nao_controladores.vl_conta
+
+
 def _unica_por_conteudo(linhas: list[CvmFinancialLineItem]) -> CvmFinancialLineItem | None:
     """Achado real (Seção 7.7): CVM às vezes repete a mesma linha idêntica várias vezes
     no arquivo bruto (2 empresas reais, FY2023, `CD_CONTA "3.99.01.01"` — mesmo

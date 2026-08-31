@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from sqlalchemy import select
+from sqlalchemy import func, select, tuple_
 from sqlalchemy.orm import Session
 
 from tradingbot.acoes.models import CvmFiling, CvmFinancialLineItem
@@ -98,3 +98,72 @@ def get_line_items_as_of(
         CvmFinancialLineItem.ordem_exerc == "ÚLTIMO",
     )
     return list(session.execute(stmt).scalars().all())
+
+
+def get_latest_filing_as_of_lote(
+    session: Session, cnpjs: list[str], categ_doc: str, data_decisao: date
+) -> dict[str, CvmFiling | None]:
+    """Mesma consulta de `get_latest_filing_as_of`, para todos os `cnpjs` de uma vez —
+    parte da reescrita em lote (2026-08-29, achado da Fase 1: esta consulta sozinha é
+    chamada até 4 vezes por empresa em `build_decisao`, uma por fator, sempre resolvendo
+    o mesmo filing). `ROW_NUMBER() OVER (PARTITION BY cnpj_cia ORDER BY dt_refer DESC,
+    versao DESC)` reproduz exatamente `ORDER BY dt_refer DESC, versao DESC LIMIT 1` por
+    empresa, filtrado por `dt_receb <= data_decisao` antes de ordenar — mesma disciplina
+    de nunca pegar o exercício mais recente que existe hoje e checar a data depois."""
+    if not cnpjs:
+        return {}
+    rn = (
+        func.row_number()
+        .over(
+            partition_by=CvmFiling.cnpj_cia,
+            order_by=(CvmFiling.dt_refer.desc(), CvmFiling.versao.desc()),
+        )
+        .label("rn")
+    )
+    subq = (
+        select(CvmFiling, rn)
+        .where(
+            CvmFiling.cnpj_cia.in_(cnpjs),
+            CvmFiling.categ_doc == categ_doc,
+            CvmFiling.dt_receb <= data_decisao,
+        )
+        .subquery()
+    )
+    stmt = select(subq).where(subq.c.rn == 1)
+    por_cnpj: dict[str, CvmFiling | None] = {cnpj: None for cnpj in cnpjs}
+    for row in session.execute(stmt).all():
+        filing = CvmFiling(
+            cnpj_cia=row.cnpj_cia, dt_refer=row.dt_refer, versao=row.versao,
+            categ_doc=row.categ_doc, denom_cia=row.denom_cia, cd_cvm=row.cd_cvm,
+            id_doc=row.id_doc, dt_receb=row.dt_receb, link_doc=row.link_doc,
+        )
+        por_cnpj[row.cnpj_cia] = filing
+    return por_cnpj
+
+
+def get_line_items_lote(
+    session: Session, filing_por_cnpj: dict[str, CvmFiling]
+) -> dict[str, list[CvmFinancialLineItem]]:
+    """Busca, para todas as empresas de `filing_por_cnpj` de uma vez, todas as linhas
+    `ordem_exerc='ÚLTIMO'` do filing já resolvido para cada uma — parte da reescrita em
+    lote (2026-08-29). Nunca filtra por `cd_conta`/`base`: essa camada devolve tudo que
+    existe para o filing, e cada extrator de fator (`fatores.py`) aplica seu próprio
+    filtro em memória, exatamente como a consulta single-item de cada fator fazia —
+    ver `fatores.py::_extrair_*` para onde cada regra específica vive agora."""
+    if not filing_por_cnpj:
+        return {}
+    chaves = [
+        (cnpj, filing.dt_refer, filing.versao) for cnpj, filing in filing_por_cnpj.items()
+    ]
+    stmt = select(CvmFinancialLineItem).where(
+        tuple_(
+            CvmFinancialLineItem.cnpj_cia,
+            CvmFinancialLineItem.dt_refer,
+            CvmFinancialLineItem.versao,
+        ).in_(chaves),
+        CvmFinancialLineItem.ordem_exerc == "ÚLTIMO",
+    )
+    linhas_por_cnpj: dict[str, list[CvmFinancialLineItem]] = {cnpj: [] for cnpj in filing_por_cnpj}
+    for linha in session.execute(stmt).scalars().all():
+        linhas_por_cnpj[linha.cnpj_cia].append(linha)
+    return linhas_por_cnpj

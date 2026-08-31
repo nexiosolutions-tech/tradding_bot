@@ -100,6 +100,26 @@ def get_latest_b3_classification(session: Session, cnpj: str) -> B3IndustryClass
     return session.execute(stmt).scalar_one_or_none()
 
 
+def get_latest_b3_classification_lote(
+    session: Session, cnpjs: list[str]
+) -> dict[str, B3IndustryClassification | None]:
+    """Mesma consulta de `get_latest_b3_classification`, para todos os `cnpjs` de uma vez
+    — parte da reescrita em lote (2026-08-29). Atributo quase-estático (não point-in-time,
+    ver docstring da função single-item), então "mais recente" aqui é só `data_coleta`
+    máxima por CNPJ, sem nenhum filtro de data de decisão envolvido."""
+    if not cnpjs:
+        return {}
+    stmt = select(B3IndustryClassification).where(B3IndustryClassification.cnpj.in_(cnpjs))
+    por_cnpj: dict[str, B3IndustryClassification | None] = {cnpj: None for cnpj in cnpjs}
+    melhor_coleta: dict[str, date] = {}
+    for row in session.execute(stmt).scalars().all():
+        atual = melhor_coleta.get(row.cnpj)
+        if atual is None or row.data_coleta > atual:
+            melhor_coleta[row.cnpj] = row.data_coleta
+            por_cnpj[row.cnpj] = row
+    return por_cnpj
+
+
 @dataclass
 class B3ClassificationStats:
     inserted: int = 0

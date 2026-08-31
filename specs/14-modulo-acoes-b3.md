@@ -1504,6 +1504,19 @@ de três fatores, Seção 7.6):
 | 2025 | 190 | 176 | 92,6% |
 | 2026 | 178 | 165 | 92,7% |
 
+**Números desta tabela superados pela Seção 7.8 — não usar como âncora.** A Seção 7.8
+corrigiu 2015/2016 (identidade reconstruída de forma inconsistente com 2017-2026 nesta
+tabela) e aplicou o deflator de IPCA a toda a série. A tabela final e correta é a de
+7.8 ("identidade consistente + IPCA — a que vale a partir de agora"): 2015 = 128/104,
+2016 = 116/97, não 125/106 e 115/98 como acima. **Este engano real já aconteceu uma vez**:
+o comando de migração para Postgres (`specs/comando-migracao-acoes-postgres.md`) foi
+escrito referenciando esta tabela sem checar que 7.8 a havia corrigido. A validação da
+migração (`changes/`, 2026-08-27) bateu 2015 exatamente contra 7.8 (128/104), mas mediu
+2016 como 117/98 — um ponto a mais que os 116/97 da tabela de 7.8, em ambas as fontes
+(SQLite original e Postgres migrado, idênticas entre si). Essa divergência residual de
+2016 não foi investigada nesta rodada (a prioridade era confirmar que a migração bate
+com a fonte, o que ela faz) e fica como pendência aberta — ver `changes/`, 2026-08-27.
+
 **N≥100 (recomendação da Seção 7.5/10, generalizado ao universo com score computável)
 reprova só 2016 (98) — 1 de 12 anos.** Exatamente o vale já identificado (recessão,
 universo bruto mais magro da série). Reprovar um ano de vale é o critério funcionando,
@@ -1629,6 +1642,49 @@ própria spec já superou.
 quando IPCA está ingerido (degrada para nominal sem ajuste caso contrário — nenhum teste
 existente precisou mudar). 6 testes novos (`test_acoes_ipca.py`), todos com variação
 mensal real do IPCA (BCB SGS 433, jan/2015-fev/2016).
+
+**4. Achado posterior (2026-08-29) — a tabela acima estava certa; o banco materializado
+divergiu dela depois.** Uma migração para Postgres revalidou 2015/2016 contra esta tabela
+e mediu 128/104 (bate) e **117/98** para 2016 — 1 a mais que os 116/97 acima. A causa não
+era esta seção nem a migração: um reprocessamento posterior aplicou a exclusão correta de
+IPCA para 59 pares `(data_decisao, ticker)` em 11 dos 12 anos (todos `motivo=iliquido`,
+todos confirmados por recomputação fresca do volume contra o piso deflacionado do ano)
+sem nunca apagar a linha de elegibilidade antiga do mesmo ticker — o mesmo bug de
+"reprocessar sem limpar" já registrado acima (achado 1), na direção inversa: em vez de
+zerar o universo, deixa resíduo. Simulado (sem apagar) e só então apagado — as 59 linhas
+removidas trazem o banco de volta a bater **exatamente** com a tabela acima em 11 dos 12
+anos; ver `changes/2026-08-27-modulo-acoes-b3-migracao-postgres-dados-validados-producao-
+pendente.md` (registro original) e `changes/2026-08-29-modulo-acoes-b3-fantasmas-de-
+universo-e-trigger-de-exclusao-mutua.md` (achado completo, correção e trigger estrutural
+que agora impede a mesma inconsistência de ser escrita de novo).
+
+**Propriedade do sistema, não escolha de projeto: as âncoras de regressão não são
+eternas.** Point-in-time correto (Seção 5) significa que a visão de uma data passada é
+reconstruída a partir de tudo que foi *publicado* até aquela data — mas "tudo que foi
+publicado" pode crescer depois, se uma retificação da CVM com `dt_receb <= data_decisao`
+for ingerida num momento posterior ao cálculo original. Quando isso acontece, o número da
+âncora muda de forma **legítima**, não por bug — o passado fica mais completo, não
+diferente. **O critério que distingue os dois casos**: mudança legítima vem acompanhada
+de uma linha nova em `cvm_filings` com `dt_receb` compatível com a data afetada;
+corrupção (o achado dos 59 fantasmas acima) não tem nenhum filing novo correspondente —
+é o mesmo dado, classificado errado, não dado novo. Antes de tratar uma divergência futura
+contra 128/104 ou 116/97 como bug, checar se há filing novo com `dt_receb` compatível
+primeiro.
+
+**2023 tem uma divergência de 1 no score computável (177 hoje contra 178 aqui) —
+classificada como divergência não explicada, do lado corrupção pelo critério acima, não
+como pendência benigna.** Universo bate exato (200); o resíduo dos 59 fantasmas não toca
+2023 dessa forma (os 10 fantasmas daquele ano saem do universo e do score juntos, não só
+do score). A hipótese de retificação nova foi checada e **refutada, não apenas
+descartada por suposição**: nenhuma ingestão de CVM aconteceu entre esta seção ter sido
+escrita (2026-08-26) e a checagem (2026-08-29) — sem filing novo, o critério de
+distinção definido acima classifica isto do lado corrupção, não do lado mudança
+legítima. Continua prioridade baixa para investigar (1 empresa em 200, não muda nenhum
+veredito de N≥100) — mas **a etiqueta é "não explicada", não "resolvida" nem
+"provavelmente benigna"**: nesta frente, três vezes antes (73%→65%, GETI4, pico 210 vs
+235) uma divergência de uma unidade escondia algo maior — o próprio achado dos fantasmas
+começou como 1 empresa (`CTAX11`, 2016) antes de virar 59 linhas em 11 anos. Ver
+`changes/2026-08-29-modulo-acoes-b3-fantasmas-de-universo-e-trigger-de-exclusao-mutua.md`.
 
 ## 8. Motor consciente da carteira
 
@@ -2514,6 +2570,29 @@ vazio caía no caso degenerado de `compute_demeaned_percentiles`, Seção 13, e 
 deixa o frontend desabilitar a aba Ações antes do erro acontecer — o `ModuleSwitch`
 mostra a aba visivelmente inativa com o motivo no título, em vez de deixar a pessoa
 clicar e só descobrir o problema tela por tela.
+
+**Atualização 2026-08-27 — critério da opção 3 disparou, migração de dados concluída e
+validada, corte de produção ainda pendente.** O critério acima (operar em produção) se
+tornou o motivo: a decisão de migrar para Postgres (mesmo serviço gerenciado que o bot já
+usa no Railway, banco lógico `acoes` separado — nunca estado ou schema compartilhado com
+o bot) foi tomada e as Fases 0-3 do comando de migração (`specs/comando-migracao-acoes-
+postgres.md`) foram executadas: schema portado, ~2,79M linhas replicadas em 11 tabelas
+com contagem exata, e `build_decisao` validado byte-a-byte contra a fonte SQLite original
+para 2015 (128/104) e 2016 (117/98) — ver `changes/`, 2026-08-27, para o detalhe completo,
+inclusive uma divergência pequena e ainda aberta entre o 2016 medido (117/98) e o valor
+final da Seção 7.8 (116/97).
+
+**Fase 4 (corte de produção — ligar as rotas ao Postgres) está explicitamente pendente,
+não concluída.** A Fase 3 revelou que `build_decisao` roda 150-350x mais lento contra
+Postgres que contra SQLite (362s/343s vs ~1s) — não por índice ausente (confirmado via
+`EXPLAIN ANALYZE`), mas por incompatibilidade de padrão de acesso: uma consulta as-of por
+candidato é gratuita num banco embutido e cara em round trips de rede num banco
+cliente-servidor. Ligar as rotas de produção com esse padrão inalterado tornaria as 5
+telas do módulo impraticáveis. O acesso em lote (`IN`/join substituindo consulta por
+candidato) precisa ser reescrito antes da Fase 4 — mesma classe de problema já resolvida
+na ingestão da COTAHIST (commit por linha → lote, Seção 7), agora na camada de leitura.
+Até essa reescrita, a hospedagem operacional continua sendo o SQLite local descrito
+acima; o Postgres existe, está validado, e aguarda a Fase 4.
 
 ## 12. Fases de entrega
 

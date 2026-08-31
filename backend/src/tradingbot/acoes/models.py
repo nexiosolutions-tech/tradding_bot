@@ -7,7 +7,7 @@ financeiro — toda linha de fundamento futura faz join com esta tabela por
 
 from __future__ import annotations
 
-from sqlalchemy import Date, Float, Index, Integer, String, UniqueConstraint
+from sqlalchemy import BigInteger, Date, DDL, Float, Index, Integer, String, UniqueConstraint, event
 from sqlalchemy.orm import Mapped, mapped_column
 
 from tradingbot.acoes.persistence import Base
@@ -126,7 +126,12 @@ class CotahistPrice(Base):
     low: Mapped[float] = mapped_column(Float)
     avg: Mapped[float] = mapped_column(Float)
     close: Mapped[float] = mapped_column(Float)
-    quantity: Mapped[int] = mapped_column(Integer)  # QUATOT — não precisa de normalização
+    # QUATOT — não precisa de normalização. `BigInteger` (não `Integer`): achado real
+    # na migração para Postgres (2026-08-27) — SQLite aceita qualquer inteiro sem
+    # checagem de faixa, mas o QUATOT de papéis muito diluídos/pós-reestruturação
+    # (ex. AZUL53, ~48,7 bilhões em 2026) estoura o limite de `int4` (~2,1 bilhões).
+    # 53 linhas reais já excediam o limite na série 2015-2026 — não é caso hipotético.
+    quantity: Mapped[int] = mapped_column(BigInteger)
     financial_volume: Mapped[float] = mapped_column(Float)  # VOLTOT (R$) — idem
 
 
@@ -286,6 +291,88 @@ class UniversoExclusao(Base):
     data_decisao: Mapped[Date] = mapped_column(Date, index=True)
     ticker: Mapped[str] = mapped_column(String, index=True)
     motivo: Mapped[str] = mapped_column(String)
+
+
+# `UniversoElegivel` e `UniversoExclusao` são mutuamente exclusivas por definição (Seção
+# 6), mas nada nas duas `UniqueConstraint` acima impede o mesmo par (data_decisao,
+# ticker) de existir nos dois lados — achado real, 2026-08-29: a correção de IPCA
+# (Seção 7.8) reprocessou a série e inseriu a exclusão correta de 59 tickers em 11 anos
+# sem nunca apagar a linha de elegibilidade antiga (pré-correção), porque nada barrava a
+# escrita duplicada entre tabelas. Os triggers abaixo transformam essa inconsistência em
+# erro de integridade na escrita (`IntegrityError`, já tratado como duplicata rejeitada
+# em `universo_elegivel.py::_excluir`/`build_universo_elegivel` — nenhuma mudança de
+# aplicação necessária), em vez de residir silenciosamente no dado até um join revelar.
+_TRIGGER_FUNCAO_POSTGRES = DDL(
+    """
+    CREATE OR REPLACE FUNCTION acoes_universo_mutuamente_exclusivo() RETURNS trigger AS $$
+    BEGIN
+        IF TG_TABLE_NAME = 'universo_elegivel' THEN
+            IF EXISTS (
+                SELECT 1 FROM universo_exclusao
+                WHERE data_decisao = NEW.data_decisao AND ticker = NEW.ticker
+            ) THEN
+                RAISE EXCEPTION 'ticker %% ja excluido em %% (universo_exclusao) - nao pode tambem ser elegivel', NEW.ticker, NEW.data_decisao
+                    USING ERRCODE = '23505';
+            END IF;
+        ELSE
+            IF EXISTS (
+                SELECT 1 FROM universo_elegivel
+                WHERE data_decisao = NEW.data_decisao AND ticker = NEW.ticker
+            ) THEN
+                RAISE EXCEPTION 'ticker %% ja elegivel em %% (universo_elegivel) - nao pode tambem ser excluido', NEW.ticker, NEW.data_decisao
+                    USING ERRCODE = '23505';
+            END IF;
+        END IF;
+        RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+    """
+)
+_TRIGGER_ELEGIVEL_POSTGRES = DDL(
+    """
+    DROP TRIGGER IF EXISTS trg_universo_elegivel_exclusivo ON universo_elegivel;
+    CREATE TRIGGER trg_universo_elegivel_exclusivo BEFORE INSERT ON universo_elegivel
+        FOR EACH ROW EXECUTE FUNCTION acoes_universo_mutuamente_exclusivo();
+    """
+)
+_TRIGGER_EXCLUSAO_POSTGRES = DDL(
+    """
+    DROP TRIGGER IF EXISTS trg_universo_exclusao_exclusivo ON universo_exclusao;
+    CREATE TRIGGER trg_universo_exclusao_exclusivo BEFORE INSERT ON universo_exclusao
+        FOR EACH ROW EXECUTE FUNCTION acoes_universo_mutuamente_exclusivo();
+    """
+)
+_TRIGGER_ELEGIVEL_SQLITE = DDL(
+    """
+    CREATE TRIGGER IF NOT EXISTS trg_universo_elegivel_exclusivo
+    BEFORE INSERT ON universo_elegivel
+    WHEN EXISTS (
+        SELECT 1 FROM universo_exclusao
+        WHERE data_decisao = NEW.data_decisao AND ticker = NEW.ticker
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'ticker ja excluido nesta data (universo_exclusao) - nao pode tambem ser elegivel');
+    END;
+    """
+)
+_TRIGGER_EXCLUSAO_SQLITE = DDL(
+    """
+    CREATE TRIGGER IF NOT EXISTS trg_universo_exclusao_exclusivo
+    BEFORE INSERT ON universo_exclusao
+    WHEN EXISTS (
+        SELECT 1 FROM universo_elegivel
+        WHERE data_decisao = NEW.data_decisao AND ticker = NEW.ticker
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'ticker ja elegivel nesta data (universo_elegivel) - nao pode tambem ser excluido');
+    END;
+    """
+)
+
+for _ddl in (_TRIGGER_FUNCAO_POSTGRES, _TRIGGER_ELEGIVEL_POSTGRES, _TRIGGER_EXCLUSAO_POSTGRES):
+    event.listen(Base.metadata, "after_create", _ddl.execute_if(dialect="postgresql"))
+for _ddl in (_TRIGGER_ELEGIVEL_SQLITE, _TRIGGER_EXCLUSAO_SQLITE):
+    event.listen(Base.metadata, "after_create", _ddl.execute_if(dialect="sqlite"))
 
 
 class B3IndustryClassification(Base):

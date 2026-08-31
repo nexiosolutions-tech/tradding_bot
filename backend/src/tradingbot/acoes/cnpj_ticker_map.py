@@ -254,3 +254,32 @@ def get_cnpj_as_of(session: Session, ticker: str, data_decisao: date) -> str | N
     )
     row = session.execute(stmt).scalar_one_or_none()
     return row.cnpj if row else None
+
+
+def get_cnpj_as_of_lote(
+    session: Session, tickers: list[str], data_decisao: date
+) -> dict[str, str | None]:
+    """Mesma consulta de `get_cnpj_as_of`, para todos os `tickers` de uma vez — uma
+    consulta em vez de uma por candidato (achado real da Fase 1 da reescrita em lote,
+    2026-08-29: 3.438 round trips por `build_decisao`, a maioria N+1 por candidato).
+    Mesma semântica exata: dentre as vigências que cobrem `data_decisao`, a de
+    `data_inicio_vigencia` mais recente por ticker — replicado em Python porque o
+    `ORDER BY ... LIMIT 1` por ticker vira `max()` por grupo depois de uma busca única."""
+    if not tickers:
+        return {}
+    stmt = select(CnpjTickerMap).where(
+        CnpjTickerMap.ticker.in_(tickers),
+        CnpjTickerMap.data_inicio_vigencia <= data_decisao,
+        or_(
+            CnpjTickerMap.data_fim_vigencia.is_(None),
+            CnpjTickerMap.data_fim_vigencia >= data_decisao,
+        ),
+    )
+    por_ticker: dict[str, str | None] = {ticker: None for ticker in tickers}
+    melhor_inicio: dict[str, date] = {}
+    for row in session.execute(stmt).scalars().all():
+        atual = melhor_inicio.get(row.ticker)
+        if atual is None or row.data_inicio_vigencia > atual:
+            melhor_inicio[row.ticker] = row.data_inicio_vigencia
+            por_ticker[row.ticker] = row.cnpj
+    return por_ticker
