@@ -149,11 +149,43 @@ passou sem nenhuma adaptação, antes e depois da correção do `%%`.
 ## Fase 4 — Corte de produção
 
 `acoes/api.py` já lê `ACOES_DATABASE_URL` via `persistence.py::get_engine` — nenhuma
-mudança de código nas rotas foi necessária, só a variável de ambiente em produção
-(registrado com o resultado real logo abaixo). `ModuleSwitch`/`App.tsx` já checam `/api/
-acoes/disponivel` dinamicamente no carregamento — nenhuma mudança de frontend
-necessária para reabilitar a aba; ela se habilita sozinha quando a rota responde
-`disponivel: true`.
+mudança de código nas rotas foi necessária para a conexão em si, só a variável de
+ambiente em produção. `ModuleSwitch`/`App.tsx` já checam `/api/acoes/disponivel`
+dinamicamente no carregamento — nenhuma mudança de frontend necessária para reabilitar
+a aba; ela se habilita sozinha quando a rota responde `disponivel: true`. Confirmado
+contra produção real: `disponivel: true`, deploy estável (`state: online`).
+
+**Achado real durante a navegação das telas, não previsto pelo comando**: `/api/acoes/
+mes-atual` levou **4min55s** na primeira medição real contra produção — `build_decisao`
+já em lote (confirmado, ~4-9s), mas a **camada de apresentação da API tinha o mesmo
+N+1, numa camada diferente**. `_empresa_para_ranking` (usada por "Mês atual" e
+"Histórico") chamava `get_latest_filing_as_of`/`get_eps_as_of`/`get_divida_liquida_as_
+of`/`get_ebitda_as_of`/`get_lucro_liquido_controladores_as_of`/`get_patrimonio_liquido_
+controladores_as_of`/`preco_as_of` uma vez **por empresa do ranking**, para expor o
+valor bruto por trás de cada percentil que `build_decisao` já tinha computado mas não
+devolvia — desenho original deliberado ("nunca reimplementa a extração, só materializa
+o que falta"), mas que reimplementava a *consulta*, não a *lógica*, empresa por empresa.
+Mesmo padrão do achado da Fase 1, camada diferente.
+
+**Corrigido com o mesmo material da Fase 2**: `pointintime.py` ganhou `existe_algum_
+item_lote` (mesma checagem de `versao_indisponivel`, em lote — precisa ser uma consulta
+separada de `get_line_items_lote`, porque não filtra por `ordem_exerc`, e misturar os
+dois filtros apagaria a distinção entre "filing sem nenhum item" e "filing com item, só
+não o ÚLTIMO"); `cnpj_ticker_map.py` ganhou `get_fonte_identidade_as_of_lote`. `api.py`
+ganhou `_DossieRanking`/`_montar_dossie_ranking` (busca tudo uma vez para o ranking
+inteiro) e `_detalhe_*`/`_selo_identidade` passaram a consumir esse dossiê em memória,
+via os extratores puros de `fatores.py` já criados na Fase 2 — nenhuma lógica nova,
+reuso do que já existia. `_retorno_carteira_topo_ou_base` (tela Histórico, 8 chamadas
+por requisição) tinha o mesmo padrão para preço — batido numa função companheira,
+`_precos_topo_base_por_data`, reduzindo de até 160 consultas individuais para 5.
+
+**Validado por equivalência, não só por não quebrar**: script ad hoc comparando, para
+196 empresas reais de 2024-02-29, o valor de cada `_detalhe_*`/`_selo_identidade` pela
+via antiga (consulta individual) contra a via nova (dossiê em lote) — **zero
+divergências**. Suíte completa (499 testes) segue passando sem adaptação.
+
+**Resultado**: `/api/acoes/mes-atual` volta a responder dentro da meta depois da
+correção (medido após o redeploy, ver seção seguinte).
 
 ## O que não foi feito nesta rodada (registrado, não esquecido)
 

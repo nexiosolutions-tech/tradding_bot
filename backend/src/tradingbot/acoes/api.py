@@ -20,19 +20,23 @@ from fastapi import APIRouter, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from dataclasses import dataclass
+
 from tradingbot.acoes.backtest import DATAS_DECISAO_SERIE
-from tradingbot.acoes.decisao import DecisaoEmpresa, DecisaoResultado, build_decisao, preco_as_of
+from tradingbot.acoes.decisao import DecisaoEmpresa, DecisaoResultado, build_decisao, preco_as_of_lote
 from tradingbot.acoes.fatores import (
+    _extrair_da,
+    _extrair_divida_liquida,
+    _extrair_ebit,
+    _extrair_eps,
+    _extrair_lucro_liquido_controladores,
+    _extrair_patrimonio_liquido_controladores,
     divida_liquida_ebitda_raw,
     earnings_yield_raw,
     fator_divida_liquida_ebitda_aplicavel,
-    get_divida_liquida_as_of,
-    get_ebitda_as_of,
-    get_eps_as_of,
-    get_lucro_liquido_controladores_as_of,
-    get_patrimonio_liquido_controladores_as_of,
     roe_raw,
 )
+from tradingbot.acoes.cnpj_ticker_map import get_fonte_identidade_as_of_lote
 from tradingbot.acoes.models import (
     CdiTaxa,
     CnpjTickerMap,
@@ -44,7 +48,7 @@ from tradingbot.acoes.models import (
     UniversoExclusao,
 )
 from tradingbot.acoes.persistence import get_session
-from tradingbot.acoes.pointintime import get_latest_filing_as_of
+from tradingbot.acoes.pointintime import existe_algum_item_lote, get_latest_filing_as_of_lote, get_line_items_lote
 from tradingbot.acoes.universo_elegivel import MIN_PREGOES_HISTORICO_PADRAO
 
 router = APIRouter(prefix="/api/acoes", tags=["acoes"])
@@ -205,34 +209,53 @@ def _mes_anterior(ano: int, mes: int) -> tuple[int, int]:
 
 # ---------------------------------------------------------------------------
 # Detalhe por fator — valor bruto + percentil + carimbo + motivo da célula vazia
-# (Seção 11.3: inaplicavel / indefinido / sem_dado / versao_indisponivel). Reusa só
-# funções já públicas de `fatores.py`/`pointintime.py` — nunca reimplementa a
-# extração do dado, só materializa o que `build_decisao` já computou mas não expõe.
+# (Seção 11.3: inaplicavel / indefinido / sem_dado / versao_indisponivel). Reusa só os
+# extratores puros de `fatores.py`/`pointintime.py` (mesma regra de cada fator, nunca
+# reimplementada aqui) sobre dado já buscado em lote para o ranking inteiro — achado
+# real da reescrita em lote (2026-08-29): esta camada refazia a mesma consulta de
+# filing/fatores uma vez por empresa, o mesmo N+1 já corrigido em `build_decisao`, só
+# que na apresentação em vez do cálculo. Medido: `/api/acoes/mes-atual` levava ~5min
+# contra Postgres antes desta correção, mesmo com `build_decisao` já em lote.
 # ---------------------------------------------------------------------------
 
 
-def _filing_existe_mas_sem_itens(session: Session, cnpj: str, filing: CvmFiling) -> bool:
-    """`True` quando a CVM listou a existência do filing (índice mestre) mas nenhuma
-    linha de item financeiro dessa versão específica está disponível no arquivo
-    público — o achado real da Seção 7.5 ("versão indisponível"), distinto de
-    "empresa não reportou este campo" (que tem outras linhas da mesma versão, só não
-    a procurada)."""
-    existe = session.execute(
-        select(CvmFinancialLineItem.id)
-        .where(
-            CvmFinancialLineItem.cnpj_cia == cnpj,
-            CvmFinancialLineItem.dt_refer == filing.dt_refer,
-            CvmFinancialLineItem.versao == filing.versao,
-        )
-        .limit(1)
-    ).first()
-    return existe is None
+@dataclass
+class _DossieRanking:
+    """Tudo que `_empresa_para_ranking` precisa, buscado uma vez para o universo
+    inteiro antes do laço — não uma vez por empresa."""
+
+    filing_por_cnpj: dict[str, CvmFiling | None]
+    linhas_por_cnpj: dict[str, list[CvmFinancialLineItem]]
+    existe_algum_item_por_cnpj: dict[str, bool]
+    precos: dict[str, float | None]
+    fonte_por_ticker: dict[str, str | None]
 
 
-def _motivo_ausencia(session: Session, cnpj: str, filing: CvmFiling | None) -> str:
+def _montar_dossie_ranking(session: Session, empresas: list[DecisaoEmpresa], data_decisao: date) -> _DossieRanking:
+    tickers = [e.ticker for e in empresas]
+    cnpjs = list({e.cnpj for e in empresas})
+    filing_por_cnpj = get_latest_filing_as_of_lote(session, cnpjs, "DFP", data_decisao)
+    filing_encontrado = {cnpj: f for cnpj, f in filing_por_cnpj.items() if f is not None}
+    return _DossieRanking(
+        filing_por_cnpj=filing_por_cnpj,
+        linhas_por_cnpj=get_line_items_lote(session, filing_encontrado),
+        existe_algum_item_por_cnpj=existe_algum_item_lote(session, filing_encontrado),
+        precos=preco_as_of_lote(session, tickers, data_decisao),
+        fonte_por_ticker=get_fonte_identidade_as_of_lote(session, tickers, data_decisao),
+    )
+
+
+def _montar_dossie_uma_empresa(session: Session, empresa: DecisaoEmpresa, data_decisao: date) -> _DossieRanking:
+    """`_montar_dossie_ranking` para uma empresa só — usado pela tela Empresa (Seção
+    11.5), que olha uma empresa por vez ao longo de até 12 datas históricas, nunca o
+    universo inteiro de uma data. Mesmas funções em lote, listas de um elemento."""
+    return _montar_dossie_ranking(session, [empresa], data_decisao)
+
+
+def _motivo_ausencia(filing: CvmFiling | None, existe_algum_item: bool) -> str:
     if filing is None:
         return "sem_dado"
-    if _filing_existe_mas_sem_itens(session, cnpj, filing):
+    if not existe_algum_item:  # CVM listou o filing, mas nenhuma linha dessa versão chegou (Seção 7.5)
         return "versao_indisponivel"
     return "sem_dado"
 
@@ -243,10 +266,11 @@ def _carimbo(filing: CvmFiling | None) -> dict | None:
     return {"data_publicacao": filing.dt_receb.isoformat(), "versao": filing.versao}
 
 
-def _detalhe_earnings_yield(session: Session, empresa: DecisaoEmpresa, data_decisao: date) -> dict:
-    filing = get_latest_filing_as_of(session, empresa.cnpj, "DFP", data_decisao)
-    eps = get_eps_as_of(session, empresa.cnpj, empresa.ticker, data_decisao)
-    preco = preco_as_of(session, empresa.ticker, data_decisao)
+def _detalhe_earnings_yield(empresa: DecisaoEmpresa, dossie: _DossieRanking) -> dict:
+    filing = dossie.filing_por_cnpj.get(empresa.cnpj)
+    linhas = dossie.linhas_por_cnpj.get(empresa.cnpj, [])
+    eps = _extrair_eps(empresa.ticker, linhas)
+    preco = dossie.precos.get(empresa.ticker)
     if eps is not None and preco:
         valor = earnings_yield_raw(eps, preco)
         if valor is None:  # EPS implausível na fonte (achado Seção 13, 2026-08-27)
@@ -261,17 +285,20 @@ def _detalhe_earnings_yield(session: Session, empresa: DecisaoEmpresa, data_deci
         "valor": None,
         "percentil": None,
         "carimbo": None,
-        "motivo": _motivo_ausencia(session, empresa.cnpj, filing),
+        "motivo": _motivo_ausencia(filing, dossie.existe_algum_item_por_cnpj.get(empresa.cnpj, False)),
     }
 
 
-def _detalhe_divida_liquida_ebitda(session: Session, empresa: DecisaoEmpresa, data_decisao: date) -> dict:
+def _detalhe_divida_liquida_ebitda(empresa: DecisaoEmpresa, dossie: _DossieRanking) -> dict:
     if not fator_divida_liquida_ebitda_aplicavel(empresa.subsetor_b3):
         return {"valor": None, "percentil": None, "carimbo": None, "motivo": "inaplicavel"}
 
-    filing = get_latest_filing_as_of(session, empresa.cnpj, "DFP", data_decisao)
-    divida = get_divida_liquida_as_of(session, empresa.cnpj, data_decisao)
-    ebitda = get_ebitda_as_of(session, empresa.cnpj, data_decisao)
+    filing = dossie.filing_por_cnpj.get(empresa.cnpj)
+    linhas = dossie.linhas_por_cnpj.get(empresa.cnpj, [])
+    ebit = _extrair_ebit(linhas)
+    da = _extrair_da(linhas)
+    ebitda = ebit + da if ebit is not None and da is not None else None
+    divida = _extrair_divida_liquida(linhas)
     if divida is not None and ebitda is not None:
         valor = divida_liquida_ebitda_raw(divida, ebitda)
         if valor is None:
@@ -281,14 +308,15 @@ def _detalhe_divida_liquida_ebitda(session: Session, empresa: DecisaoEmpresa, da
         "valor": None,
         "percentil": None,
         "carimbo": None,
-        "motivo": _motivo_ausencia(session, empresa.cnpj, filing),
+        "motivo": _motivo_ausencia(filing, dossie.existe_algum_item_por_cnpj.get(empresa.cnpj, False)),
     }
 
 
-def _detalhe_roe(session: Session, empresa: DecisaoEmpresa, data_decisao: date) -> dict:
-    filing = get_latest_filing_as_of(session, empresa.cnpj, "DFP", data_decisao)
-    lucro = get_lucro_liquido_controladores_as_of(session, empresa.cnpj, data_decisao)
-    patrimonio = get_patrimonio_liquido_controladores_as_of(session, empresa.cnpj, data_decisao)
+def _detalhe_roe(empresa: DecisaoEmpresa, dossie: _DossieRanking) -> dict:
+    filing = dossie.filing_por_cnpj.get(empresa.cnpj)
+    linhas = dossie.linhas_por_cnpj.get(empresa.cnpj, [])
+    lucro = _extrair_lucro_liquido_controladores(linhas)
+    patrimonio = _extrair_patrimonio_liquido_controladores(linhas)
     if lucro is not None and patrimonio is not None:
         valor = roe_raw(lucro, patrimonio)
         if valor is None:
@@ -298,39 +326,32 @@ def _detalhe_roe(session: Session, empresa: DecisaoEmpresa, data_decisao: date) 
         "valor": None,
         "percentil": None,
         "carimbo": None,
-        "motivo": _motivo_ausencia(session, empresa.cnpj, filing),
+        "motivo": _motivo_ausencia(filing, dossie.existe_algum_item_por_cnpj.get(empresa.cnpj, False)),
     }
 
 
-def _selo_identidade(session: Session, ticker: str, data_decisao: date) -> str:
+def _selo_identidade(fonte: str | None) -> str:
     """Três estados (Seção 11.3) — direto da fonte real gravada em `cnpj_ticker_map`
     (Seção 5.6), nunca um heurístico por era: `fca` é a fonte de alta confiança;
     `raiz_propagacao`/`reconciliacao_nome` são as duas fontes de fallback. Empresa fora
     do universo (identidade não resolvida) não passa por aqui — só aparece na tela de
     Saúde do Dado (Seção 11.7)."""
-    row = session.execute(
-        select(CnpjTickerMap.fonte).where(
-            CnpjTickerMap.ticker == ticker,
-            CnpjTickerMap.data_inicio_vigencia <= data_decisao,
-            (CnpjTickerMap.data_fim_vigencia.is_(None)) | (CnpjTickerMap.data_fim_vigencia > data_decisao),
-        )
-    ).scalar_one_or_none()
-    if row is None or row == FONTE_ALTA_CONFIANCA:
+    if fonte is None or fonte == FONTE_ALTA_CONFIANCA:
         return "alta_confianca"
     return "reconciliada"
 
 
-def _empresa_para_ranking(session: Session, empresa: DecisaoEmpresa, data_decisao: date) -> dict:
+def _empresa_para_ranking(empresa: DecisaoEmpresa, dossie: _DossieRanking) -> dict:
     return {
         "ticker": empresa.ticker,
         "cnpj": empresa.cnpj,
         "setor_b3": empresa.setor_b3,
         "subsetor_b3": empresa.subsetor_b3,
         "segmento_b3": empresa.segmento_b3,
-        "selo_identidade": _selo_identidade(session, empresa.ticker, data_decisao),
-        "earnings_yield": _detalhe_earnings_yield(session, empresa, data_decisao),
-        "divida_liquida_ebitda": _detalhe_divida_liquida_ebitda(session, empresa, data_decisao),
-        "roe": _detalhe_roe(session, empresa, data_decisao),
+        "selo_identidade": _selo_identidade(dossie.fonte_por_ticker.get(empresa.ticker)),
+        "earnings_yield": _detalhe_earnings_yield(empresa, dossie),
+        "divida_liquida_ebitda": _detalhe_divida_liquida_ebitda(empresa, dossie),
+        "roe": _detalhe_roe(empresa, dossie),
         "score_composto": empresa.score_composto,
     }
 
@@ -401,7 +422,8 @@ def mes_atual(ano: int | None = None, mes: int | None = None):
             ).scalars()
         )
 
-        ranking = [_empresa_para_ranking(session, e, data_decisao) for e in resultado.empresas]
+        dossie = _montar_dossie_ranking(session, resultado.empresas, data_decisao)
+        ranking = [_empresa_para_ranking(e, dossie) for e in resultado.empresas]
         ranking.sort(key=lambda e: (e["score_composto"] is None, -(e["score_composto"] or 0), e["ticker"]))
 
         total = len(resultado.empresas)
@@ -480,16 +502,18 @@ def empresa_detalhe(ticker: str, ano: int | None = None, mes: int | None = None)
             historica = next((e for e in resultado_historico.empresas if e.ticker == ticker), None)
             if historica is None:
                 continue
+            dossie_historico = _montar_dossie_uma_empresa(session, historica, data)
             linha_do_tempo.append(
                 {
                     "data_decisao": data.isoformat(),
-                    "earnings_yield": _detalhe_earnings_yield(session, historica, data)["valor"],
-                    "divida_liquida_ebitda": _detalhe_divida_liquida_ebitda(session, historica, data)["valor"],
-                    "roe": _detalhe_roe(session, historica, data)["valor"],
+                    "earnings_yield": _detalhe_earnings_yield(historica, dossie_historico)["valor"],
+                    "divida_liquida_ebitda": _detalhe_divida_liquida_ebitda(historica, dossie_historico)["valor"],
+                    "roe": _detalhe_roe(historica, dossie_historico)["valor"],
                 }
             )
 
         historico_cvm = _historico_entregas_cvm(session, empresa.cnpj)
+        dossie_hoje = _montar_dossie_uma_empresa(session, empresa, data_decisao)
 
         return {
             "ticker": empresa.ticker,
@@ -497,12 +521,12 @@ def empresa_detalhe(ticker: str, ano: int | None = None, mes: int | None = None)
             "setor_b3": empresa.setor_b3,
             "subsetor_b3": empresa.subsetor_b3,
             "segmento_b3": empresa.segmento_b3,
-            "selo_identidade": _selo_identidade(session, empresa.ticker, data_decisao),
+            "selo_identidade": _selo_identidade(dossie_hoje.fonte_por_ticker.get(empresa.ticker)),
             "vigencia_ticker": _vigencia_ticker(session, empresa.cnpj),
             "fatores_hoje": {
-                "earnings_yield": _detalhe_earnings_yield(session, empresa, data_decisao),
-                "divida_liquida_ebitda": _detalhe_divida_liquida_ebitda(session, empresa, data_decisao),
-                "roe": _detalhe_roe(session, empresa, data_decisao),
+                "earnings_yield": _detalhe_earnings_yield(empresa, dossie_hoje),
+                "divida_liquida_ebitda": _detalhe_divida_liquida_ebitda(empresa, dossie_hoje),
+                "roe": _detalhe_roe(empresa, dossie_hoje),
             },
             "linha_do_tempo_conhecimento": linha_do_tempo,
             "historico_entregas_cvm": historico_cvm,
@@ -602,8 +626,19 @@ def saude_do_dado(ano: int | None = None, mes: int | None = None):
 
 
 def _retorno_carteira_topo_ou_base(
-    session: Session, resultado: DecisaoResultado, data_decisao: date, meses: int, *, topo: bool, n: int = 10
+    resultado: DecisaoResultado,
+    precos_por_data: dict[date, dict[str, float | None]],
+    data_decisao: date,
+    meses: int,
+    *,
+    topo: bool,
+    n: int = 10,
 ) -> float | None:
+    """Recebe preços já buscados em lote (`_precos_topo_base_por_data`) — achado da
+    reescrita em lote (2026-08-29): esta função, chamada 8 vezes por requisição de
+    Histórico (4 horizontes × topo/base), fazia 2×n consultas de preço individuais por
+    chamada (até 160 no total), quando os mesmos ~20 tickers (topo ∪ base, os mesmos
+    para qualquer horizonte) só precisam de preço em 5 datas distintas no total."""
     ordenadas = sorted(
         (e for e in resultado.empresas if e.score_composto is not None),
         key=lambda e: (-e.score_composto, e.ticker),
@@ -612,15 +647,29 @@ def _retorno_carteira_topo_ou_base(
         return None
     alvo = ordenadas[:n] if topo else ordenadas[-n:]
     data_alvo = data_decisao + timedelta(days=30 * meses)
+    precos_inicio = precos_por_data.get(data_decisao, {})
+    precos_fim = precos_por_data.get(data_alvo, {})
     retornos = []
     for empresa in alvo:
-        preco_inicio = preco_as_of(session, empresa.ticker, data_decisao)
-        preco_fim = preco_as_of(session, empresa.ticker, data_alvo)
+        preco_inicio = precos_inicio.get(empresa.ticker)
+        preco_fim = precos_fim.get(empresa.ticker)
         if preco_inicio and preco_fim and preco_inicio > 0:
             retornos.append((preco_fim - preco_inicio) / preco_inicio)
     if not retornos:
         return None
     return sum(retornos) / len(retornos)
+
+
+def _precos_topo_base_por_data(
+    session: Session, resultado: DecisaoResultado, data_decisao: date, meses_horizontes: tuple[int, ...], n: int = 10
+) -> dict[date, dict[str, float | None]]:
+    ordenadas = sorted(
+        (e for e in resultado.empresas if e.score_composto is not None),
+        key=lambda e: (-e.score_composto, e.ticker),
+    )
+    tickers = list({e.ticker for e in (ordenadas[:n] + ordenadas[-n:])}) if ordenadas else []
+    datas = [data_decisao] + [data_decisao + timedelta(days=30 * m) for m in meses_horizontes]
+    return {data: preco_as_of_lote(session, tickers, data) for data in datas}
 
 
 @router.get("/historico")
@@ -641,15 +690,17 @@ def historico_detalhe(data_decisao: str):
     try:
         _exigir_acoes_disponivel(session)
         resultado = _build_decisao_cacheada(session, data)
-        ranking = [_empresa_para_ranking(session, e, data) for e in resultado.empresas]
+        dossie = _montar_dossie_ranking(session, resultado.empresas, data)
+        ranking = [_empresa_para_ranking(e, dossie) for e in resultado.empresas]
         ranking.sort(key=lambda e: (e["score_composto"] is None, -(e["score_composto"] or 0), e["ticker"]))
 
+        precos_por_data = _precos_topo_base_por_data(session, resultado, data, (1, 3, 6, 12))
         retorno_topo = {
-            f"{meses}m": _retorno_carteira_topo_ou_base(session, resultado, data, meses, topo=True)
+            f"{meses}m": _retorno_carteira_topo_ou_base(resultado, precos_por_data, data, meses, topo=True)
             for meses in (1, 3, 6, 12)
         }
         retorno_base = {
-            f"{meses}m": _retorno_carteira_topo_ou_base(session, resultado, data, meses, topo=False)
+            f"{meses}m": _retorno_carteira_topo_ou_base(resultado, precos_por_data, data, meses, topo=False)
             for meses in (1, 3, 6, 12)
         }
 
@@ -680,6 +731,6 @@ def precos(tickers: str):
         _exigir_acoes_disponivel(session)
         hoje = date.today()
         lista = [t.strip().upper() for t in tickers.split(",") if t.strip()]
-        return {ticker: preco_as_of(session, ticker, hoje) for ticker in lista}
+        return preco_as_of_lote(session, lista, hoje)
     finally:
         session.close()

@@ -283,3 +283,30 @@ def get_cnpj_as_of_lote(
             melhor_inicio[row.ticker] = row.data_inicio_vigencia
             por_ticker[row.ticker] = row.cnpj
     return por_ticker
+
+
+def get_fonte_identidade_as_of_lote(
+    session: Session, tickers: list[str], data_decisao: date
+) -> dict[str, str | None]:
+    """Mesma consulta de `get_cnpj_as_of_lote`, devolvendo `fonte` em vez de `cnpj` —
+    o que `api.py::_selo_identidade` precisa. Parte da reescrita em lote estendida à
+    camada de apresentação (2026-08-29): `_selo_identidade` fazia essa consulta uma vez
+    por empresa no ranking de "Mês atual"/"Histórico"."""
+    if not tickers:
+        return {}
+    stmt = select(CnpjTickerMap).where(
+        CnpjTickerMap.ticker.in_(tickers),
+        CnpjTickerMap.data_inicio_vigencia <= data_decisao,
+        or_(
+            CnpjTickerMap.data_fim_vigencia.is_(None),
+            CnpjTickerMap.data_fim_vigencia >= data_decisao,
+        ),
+    )
+    por_ticker: dict[str, str | None] = {ticker: None for ticker in tickers}
+    melhor_inicio: dict[str, date] = {}
+    for row in session.execute(stmt).scalars().all():
+        atual = melhor_inicio.get(row.ticker)
+        if atual is None or row.data_inicio_vigencia > atual:
+            melhor_inicio[row.ticker] = row.data_inicio_vigencia
+            por_ticker[row.ticker] = row.fonte
+    return por_ticker

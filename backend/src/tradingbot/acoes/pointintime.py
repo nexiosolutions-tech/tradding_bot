@@ -167,3 +167,32 @@ def get_line_items_lote(
     for linha in session.execute(stmt).scalars().all():
         linhas_por_cnpj[linha.cnpj_cia].append(linha)
     return linhas_por_cnpj
+
+
+def existe_algum_item_lote(
+    session: Session, filing_por_cnpj: dict[str, CvmFiling]
+) -> dict[str, bool]:
+    """Mesma checagem de `api.py::_filing_existe_mas_sem_itens`, para todas as empresas
+    de `filing_por_cnpj` de uma vez — parte da reescrita em lote (2026-08-29, achado da
+    Fase 1 estendido à camada de apresentação: `_empresa_para_ranking` repetia a mesma
+    classe de N+1 já corrigida em `build_decisao`, um por empresa no ranking de "Mês
+    atual"/"Histórico"). **Não filtra por `ordem_exerc`** — de propósito, diferente de
+    `get_line_items_lote`: esta checagem existe para distinguir "filing sem nenhum item"
+    de "filing com item, só não o ÚLTIMO procurado", e misturar os dois filtros
+    apagaria essa distinção."""
+    if not filing_por_cnpj:
+        return {}
+    chaves = [
+        (cnpj, filing.dt_refer, filing.versao) for cnpj, filing in filing_por_cnpj.items()
+    ]
+    stmt = select(CvmFinancialLineItem.cnpj_cia, CvmFinancialLineItem.dt_refer, CvmFinancialLineItem.versao).where(
+        tuple_(
+            CvmFinancialLineItem.cnpj_cia,
+            CvmFinancialLineItem.dt_refer,
+            CvmFinancialLineItem.versao,
+        ).in_(chaves)
+    ).distinct()
+    existe: dict[str, bool] = {cnpj: False for cnpj in filing_por_cnpj}
+    for cnpj, _dt_refer, _versao in session.execute(stmt).all():
+        existe[cnpj] = True
+    return existe
