@@ -2531,7 +2531,13 @@ além de cor, e valores negativos têm sinal além de tom.
 Preparar a estrutura para múltiplos mercados desde o início, como já foi feito com o
 seletor de moedas — mas sem implementar nada além da B3 agora.
 
-### 11.12 Hospedagem — local por escolha, não por omissão (2026-08-27)
+### 11.12 Hospedagem — de local por escolha a Postgres em produção (2026-08-27, atualizado 2026-08-29)
+
+**Estado atual (2026-08-29): produção usa Postgres — ver a atualização ao final da
+seção.** O texto abaixo registra a decisão original e o raciocínio que levou até lá;
+mantido por inteiro (não reescrito) porque o comportamento sem dado que ele descreve
+(503 estruturado) continua correto e a decisão original não estava errada, só teve seu
+critério de reconsideração disparado depois.
 
 Registrado para que o comportamento sem dado em produção (abaixo) nunca seja lido como
 bug — é a consequência direta de uma decisão já tomada, não uma lacuna esquecida.
@@ -2572,27 +2578,37 @@ mostra a aba visivelmente inativa com o motivo no título, em vez de deixar a pe
 clicar e só descobrir o problema tela por tela.
 
 **Atualização 2026-08-27 — critério da opção 3 disparou, migração de dados concluída e
-validada, corte de produção ainda pendente.** O critério acima (operar em produção) se
-tornou o motivo: a decisão de migrar para Postgres (mesmo serviço gerenciado que o bot já
-usa no Railway, banco lógico `acoes` separado — nunca estado ou schema compartilhado com
-o bot) foi tomada e as Fases 0-3 do comando de migração (`specs/comando-migracao-acoes-
-postgres.md`) foram executadas: schema portado, ~2,79M linhas replicadas em 11 tabelas
-com contagem exata, e `build_decisao` validado byte-a-byte contra a fonte SQLite original
-para 2015 (128/104) e 2016 (117/98) — ver `changes/`, 2026-08-27, para o detalhe completo,
-inclusive uma divergência pequena e ainda aberta entre o 2016 medido (117/98) e o valor
-final da Seção 7.8 (116/97).
+validada.** O critério acima (operar em produção) se tornou o motivo: a decisão de
+migrar para Postgres (mesmo serviço gerenciado que o bot já usa no Railway, banco
+lógico `acoes` separado — nunca estado ou schema compartilhado com o bot) foi tomada e
+as Fases 0-3 do comando de migração (`specs/comando-migracao-acoes-postgres.md`) foram
+executadas: schema portado, ~2,79M linhas replicadas em 11 tabelas com contagem exata.
+(A divergência de 2016 medida nesta fase — 117/98 contra o 116/97 da Seção 7.8 — foi
+depois identificada como corrupção real de 59 linhas em `universo_elegivel`, corrigida
+e travada por trigger; ver `changes/2026-08-29-modulo-acoes-b3-fantasmas-de-universo-
+e-trigger-de-exclusao-mutua.md` e a nota na Seção 7.8.)
 
-**Fase 4 (corte de produção — ligar as rotas ao Postgres) está explicitamente pendente,
-não concluída.** A Fase 3 revelou que `build_decisao` roda 150-350x mais lento contra
-Postgres que contra SQLite (362s/343s vs ~1s) — não por índice ausente (confirmado via
-`EXPLAIN ANALYZE`), mas por incompatibilidade de padrão de acesso: uma consulta as-of por
-candidato é gratuita num banco embutido e cara em round trips de rede num banco
-cliente-servidor. Ligar as rotas de produção com esse padrão inalterado tornaria as 5
-telas do módulo impraticáveis. O acesso em lote (`IN`/join substituindo consulta por
-candidato) precisa ser reescrito antes da Fase 4 — mesma classe de problema já resolvida
-na ingestão da COTAHIST (commit por linha → lote, Seção 7), agora na camada de leitura.
-Até essa reescrita, a hospedagem operacional continua sendo o SQLite local descrito
-acima; o Postgres existe, está validado, e aguarda a Fase 4.
+**Atualização 2026-08-29 — Fase 4 concluída: Postgres em produção, hospedagem deixa de
+ser "local por escolha".** A Fase 3 revelou que `build_decisao` rodava 150-350x mais
+lento contra Postgres que contra SQLite (362s/343s vs ~1s) — não por índice ausente
+(confirmado via `EXPLAIN ANALYZE`), mas por incompatibilidade de padrão de acesso: uma
+consulta as-of por candidato é gratuita num banco embutido e cara em round trips de
+rede num banco cliente-servidor. Uma rodada dedicada (`changes/2026-08-29-modulo-acoes-
+b3-reescrita-em-lote-e-corte-de-producao.md`) mediu antes de reescrever (3.438 round
+trips por `build_decisao`, 88% do tempo), reescreveu o acesso a dado para lote sem
+alterar nenhuma regra de negócio (validado contra as doze datas-âncora, correspondência
+exata), e um segundo achado — a mesma classe de N+1 na camada de apresentação da API
+(`_empresa_para_ranking`, usada por "Mês atual"/"Histórico") — foi corrigido do mesmo
+jeito depois de medido em produção real (`/api/acoes/mes-atual`: 4min55s → 5,74s em
+regime). `ACOES_DATABASE_URL` ligado em produção no serviço `tradding_bot`; as cinco
+telas navegadas contra Postgres real, dado real, dentro da meta de tempo.
+
+**Achado da mesma rodada, não corrigido, registrado para a próxima**: `tradding_bot`
+está em `europe-west4` (Binance geobloqueia `us-east4`, onde o Postgres está) —
+travessia intercontinental real (~85-90ms por round trip) explica boa parte do tempo
+que sobra mesmo com o acesso em lote. Mover o bot quebraria o acesso à Binance; a
+correção é um serviço próprio para `acoes/api.py` em `us-east4` (o módulo não depende
+da Binance), fora do escopo desta rodada.
 
 ## 12. Fases de entrega
 

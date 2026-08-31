@@ -184,8 +184,23 @@ por requisição) tinha o mesmo padrão para preço — batido numa função com
 via antiga (consulta individual) contra a via nova (dossiê em lote) — **zero
 divergências**. Suíte completa (499 testes) segue passando sem adaptação.
 
-**Resultado**: `/api/acoes/mes-atual` volta a responder dentro da meta depois da
-correção (medido após o redeploy, ver seção seguinte).
+**Resultado, medido contra produção real depois do redeploy** (`curl` direto, não a
+medição interna de `build_decisao` — tempo de ponta a ponta da rota HTTP):
+
+| Rota | Antes (só a correção da Fase 2) | Depois (com a correção da API) |
+|---|---|---|
+| `/api/acoes/mes-atual` | 4min55s | 23,5s (1ª chamada, cache frio) → **5,74s** (regime) |
+| `/api/acoes/historico/{data}` | não medido isoladamente | 16,6s (cache frio) → **6,18s** (regime) |
+| `/api/acoes/empresas/{ticker}` | não medido isoladamente | 6,83s |
+| `/api/acoes/saude-do-dado` | não medido isoladamente | 1,46s |
+| `/api/acoes/precos` | não medido isoladamente | 0,85s |
+
+**As cinco telas navegadas contra produção real**, dado real, dentro da meta em regime
+(a primeira chamada de cada rota paga o cache frio de `_build_decisao_cacheada` — nunca
+mais que ~24s mesmo no pior caso, "Mês atual" com duas datas não cacheadas). Conteúdo
+verificado: `/saude-do-dado` reporta 128/104 (2015) e 116/97 (2016) — as mesmas âncoras,
+pela rota HTTP real, não só pela função interna; `/historico/2024-02-29` reporta
+196/186, batendo exatamente com a validação da Fase 3.
 
 ## O que não foi feito nesta rodada (registrado, não esquecido)
 
