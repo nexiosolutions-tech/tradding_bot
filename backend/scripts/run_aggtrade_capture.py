@@ -7,15 +7,19 @@ Reacts to two kinds of gap the stream can emit: an id-sequence gap (exact, actio
 backfilled via REST fromId) and a time-based liveness gap (informational only, logged by
 the stream itself, nothing to backfill without a resumed id to anchor to).
 
-Testnet, not mainnet — reverted same-day (2026-08-18): mainnet is the right target in
-principle (public market data, no execution/capital risk, testnet's order flow is a
-handful of other bots in test and carries no predictive signal — see
-changes/2026-08-18-captura-aggtrade-fluxo-ordens.md), but Binance mainnet rejects every
-connection from this Railway project's region with HTTP 451 (geoblock — same family of
-issue already known for order execution, now confirmed for market-data WS too). Back on
-testnet until that's resolved (different Railway region, or a proxy) — capturing something
-low-signal beats capturing nothing. Every row is tagged `environment="testnet"` so this
-can never silently mix with real mainnet data later.
+Mainnet, via WebSocket direto (2026-09-01) — o motivo original de ficar em testnet
+(Binance mainnet rejeitava toda conexão desta região com HTTP 451, ver
+changes/2026-08-18-captura-aggtrade-fluxo-ordens.md) deixou de valer quando este serviço
+foi movido para `europe-west4` (inventário de 2026-09-01: `stream.binance.com`/
+`api.binance.com` respondem plenamente de lá, handshake WS real confirmado). Sequência
+seguida para nunca ter uma janela quebrada: região movida primeiro, sozinha, sem mudar
+código (Railway reaproveita a imagem existente, sem downtime — só volume força
+recriação, e este serviço não tem); só depois deste toggle, com o serviço já rodando na
+região certa. Todo o histórico anterior a esta data (18/08 em diante) ficou em testnet —
+recuperável via arquivo histórico (`data.binance.vision`, confirmado no mesmo
+inventário), backfill de outra rodada. Toda linha gravada daqui em diante leva
+`environment="mainnet"`, para nunca se misturar em silêncio com o histórico testnet
+acima.
 
 Required environment variables:
     SYMBOL          (default BTCUSDT)
@@ -46,11 +50,12 @@ logger = logging.getLogger(__name__)
 # than looping forever trying to recover data the exchange no longer serves.
 MAX_BACKFILL_TRADES = 50_000
 
-# Single toggle point — flip to False once the geoblock (see module docstring) is
-# resolved. Drives the WS stream, the REST backfill client (must match: testnet and
-# mainnet aggTradeId sequences are unrelated), and the `environment` label persisted on
-# every row, so none of the three can drift apart from the others.
-USE_TESTNET = True
+# Ponto único de troca — virou False em 2026-09-01, depois de mover este serviço para
+# `europe-west4` (ver docstring do módulo). Comanda o stream WS, o cliente REST de
+# backfill (têm que bater: sequências de aggTradeId de testnet e mainnet não têm
+# relação) e o rótulo `environment` gravado em cada linha — os três nunca podem divergir
+# entre si.
+USE_TESTNET = False
 
 
 def _persist_bucket(session_factory, bucket: AggTradeBucketFields, environment: str) -> None:
@@ -116,8 +121,8 @@ async def main() -> None:
     stream = BinanceAggTradeStream(symbols=[symbol], testnet=USE_TESTNET)
 
     print(
-        f"Capturando fluxo de ordens (aggTrade) de {symbol} ({environment} — mainnet "
-        "bloqueado geograficamente pelo Railway, ver changes/), 1 bucket/segundo..."
+        f"Capturando fluxo de ordens (aggTrade) de {symbol} ({environment}, WebSocket "
+        "direto de europe-west4, ver changes/2026-09-01), 1 bucket/segundo..."
     )
     try:
         async for event in stream:
