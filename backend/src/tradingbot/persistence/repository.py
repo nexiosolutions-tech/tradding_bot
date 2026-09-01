@@ -147,6 +147,19 @@ def count_agg_trade_buckets_in_range(session: Session, start_ts: int, end_ts: in
     return session.scalar(stmt) or 0
 
 
+def count_engine_events_in_range(session: Session, start_ts: int, end_ts: int, environment: str | None = None) -> int:
+    """Achado real, 2026-09-01: um hiato de 151h (~6,3 dias) no motor ficou invisível até
+    um inventário manual encontrá-lo — a asserção de frescor cobria as capturas de dado
+    (`order_book_snapshots`/`agg_trade_buckets`), nunca o motor em si. `EngineEvent` não
+    tem coluna `environment` (é sempre o processo real, nunca sintético por design) —
+    `environment` aqui existe só para a mesma assinatura de `_CAPTURE_COUNT_FNS`
+    (`daily_report.py`), sempre ignorado."""
+    stmt = select(func.count()).select_from(EngineEvent).where(
+        EngineEvent.ts >= start_ts, EngineEvent.ts <= end_ts
+    )
+    return session.scalar(stmt) or 0
+
+
 def upsert_agg_trade_bucket(session: Session, bucket: AggTradeBucket) -> None:
     """Merges into an existing (symbol, ts) row instead of inserting a duplicate — the same
     bucket can be touched twice: once by the live capture path, once by a REST gap backfill

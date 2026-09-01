@@ -15,6 +15,7 @@ from tradingbot.backtesting.costs import net_trade_pnl
 from tradingbot.backtesting.metrics import win_rate
 from tradingbot.persistence.repository import (
     count_agg_trade_buckets_in_range,
+    count_engine_events_in_range,
     count_order_book_snapshots_in_range,
     recent_engine_events,
     trades_in_range,
@@ -35,14 +36,30 @@ HOUR_UNDERPERFORMANCE_WIN_RATE_THRESHOLD = 0.35
 ORDER_BOOK_SNAPSHOT_DAILY_FLOOR = 500
 AGG_TRADE_BUCKET_DAILY_FLOOR = 5_000
 
+# Achado real, 2026-09-01: um hiato de 151h (~6,3 dias) no motor (engine_events) ficou
+# invisível até um inventário manual encontrá-lo meses depois — a asserção de frescor
+# acima só cobria as capturas de dado, nunca o motor em si, apesar do motor ser exatamente
+# o processo cujo silêncio mais importa. Diferente das duas de cima, engine_events só
+# grava em transição real de estado (execution/orchestrator.py::_transition), não numa
+# cadência fixa — um dia sem sinal de entrada pode legitimamente ter poucos eventos. Piso
+# calibrado contra a distribuição real medida (2026-08-01 a 2026-09-01, excluindo os dias
+# do próprio hiato, que não aparecem — zero eventos, não "poucos"): mínimo real 7
+# eventos/dia, todos os outros dias entre 7 e 32. Piso de 3 fica com a mesma margem que os
+# dois de cima guardam do mínimo real observado (long. faixa segura, curto o suficiente
+# para nunca disparar num dia real de mercado, longo o suficiente para nunca deixar passar
+# um motor genuinamente parado, que aparece como zero, não como "um pouco baixo").
+ENGINE_EVENTS_DAILY_FLOOR = 3
+
 # (table label, environment each capture service currently targets, floor) — count is
 # scoped to this one environment per table, not "any environment", so a healthy testnet
 # capture can never mask a dead mainnet one or vice versa (2026-08-18 incident: depth is
 # mainnet now via REST polling, aggtrade is still testnet pending its own conversion).
-# Update the environment here when a capture service's target changes.
+# Update the environment here when a capture service's target changes. `environment=None`
+# for engine_events — EngineEvent não tem essa coluna (é sempre o processo real).
 CAPTURE_FRESHNESS_TARGETS = [
     ("order_book_snapshots", "mainnet", ORDER_BOOK_SNAPSHOT_DAILY_FLOOR),
     ("agg_trade_buckets", "testnet", AGG_TRADE_BUCKET_DAILY_FLOOR),
+    ("engine_events", None, ENGINE_EVENTS_DAILY_FLOOR),
 ]
 
 # 2026-08-17: TradeRecord.pnl/fees_paid never reflect a real trading fee — fees_paid is
@@ -73,7 +90,7 @@ class Finding:
 @dataclass(frozen=True)
 class CaptureFreshness:
     label: str
-    environment: str
+    environment: str | None
     count_last_24h: int
     expected_floor: int
 
@@ -129,6 +146,7 @@ def _find_underperforming_hours(trades: list) -> list[Finding]:
 _CAPTURE_COUNT_FNS = {
     "order_book_snapshots": count_order_book_snapshots_in_range,
     "agg_trade_buckets": count_agg_trade_buckets_in_range,
+    "engine_events": count_engine_events_in_range,
 }
 
 
@@ -200,16 +218,19 @@ def render_markdown(report: DailyReport) -> str:
 
     lines += [
         "",
-        "## Frescor da captura de dados (order book / fluxo de ordens)",
-        "Contagem de linhas gravadas nas últimas 24h por tabela de captura contínua — um "
-        "coletor que parou de gravar não gera nenhum erro visível por conta própria, só "
-        "silêncio; esta seção existe pra transformar esse silêncio num sinal (2026-08-18).",
+        "## Frescor da captura de dados e do motor",
+        "Contagem de linhas/eventos nas últimas 24h — um coletor ou o motor que param de "
+        "gravar não geram nenhum erro visível por conta própria, só silêncio; esta seção "
+        "existe pra transformar esse silêncio num sinal (2026-08-18, estendida a "
+        "`engine_events` em 2026-09-01 depois de um hiato real de 151h ter passado "
+        "despercebido).",
     ]
     for freshness in report.capture_freshness:
         status = "OK" if freshness.ok else "**ALERTA — abaixo do piso esperado**"
+        rotulo = f"{freshness.label} ({freshness.environment})" if freshness.environment else freshness.label
         lines.append(
-            f"- `{freshness.label}` ({freshness.environment}): {freshness.count_last_24h} "
-            f"linha(s) nas últimas 24h (piso esperado: {freshness.expected_floor}) — {status}"
+            f"- `{rotulo}`: {freshness.count_last_24h} "
+            f"linha(s)/evento(s) nas últimas 24h (piso esperado: {freshness.expected_floor}) — {status}"
         )
 
     lines += [

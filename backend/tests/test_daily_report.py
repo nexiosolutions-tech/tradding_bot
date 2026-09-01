@@ -169,8 +169,12 @@ def test_write_daily_report_creates_markdown_file(tmp_path, monkeypatch):
 
 def test_capture_freshness_ok_when_counts_above_floor(tmp_path):
     import tradingbot.learning_engine.daily_report as daily_report_module
-    from tradingbot.persistence.models import AggTradeBucket, OrderBookSnapshot
-    from tradingbot.persistence.repository import record_order_book_snapshot, upsert_agg_trade_bucket
+    from tradingbot.persistence.models import AggTradeBucket, EngineEvent, OrderBookSnapshot
+    from tradingbot.persistence.repository import (
+        record_engine_event,
+        record_order_book_snapshot,
+        upsert_agg_trade_bucket,
+    )
 
     session = _session(tmp_path)
     for i in range(daily_report_module.ORDER_BOOK_SNAPSHOT_DAILY_FLOOR + 10):
@@ -205,6 +209,17 @@ def test_capture_freshness_ok_when_counts_above_floor(tmp_path):
                 notional=200.0,
             ),
         )
+    for i in range(daily_report_module.ENGINE_EVENTS_DAILY_FLOOR + 2):
+        record_engine_event(
+            session,
+            EngineEvent(
+                ts=_ts_at_hour(1) + i,
+                from_state="ANALISANDO",
+                to_state="POSICAO_ABERTA",
+                reason="entrada executada",
+                triggered_by_human=False,
+            ),
+        )
 
     report = build_daily_report(session, REPORT_DATE)
 
@@ -212,6 +227,7 @@ def test_capture_freshness_ok_when_counts_above_floor(tmp_path):
     markdown = render_markdown(report)
     assert "order_book_snapshots" in markdown
     assert "agg_trade_buckets" in markdown
+    assert "engine_events" in markdown
     assert "ALERTA" not in markdown
 
 
