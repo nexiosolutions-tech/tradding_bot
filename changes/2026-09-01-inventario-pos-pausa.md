@@ -29,6 +29,22 @@ código (`run_aggtrade_capture.py:53`): `USE_TESTNET = True`, hardcoded, com o m
 documentado no próprio arquivo — geobloqueio de `us-east4` (onde o serviço roda). Ver
 Seção 3 abaixo: esse motivo deixou de ser válido.
 
+**Correção (2026-09-01, mesma rodada — apontada por Brian): a frase original desta
+seção sobre backfill ("Binance não expõe aggTrade passado além da janela recente da
+REST") estava errada, confundindo dois endpoints diferentes.** `/api/v3/aggTrades` (a
+REST ao vivo, usada por `measure_aggtrade_rate.py` e pelo polling) de fato só devolve
+os últimos ~1000 registros — mas o **arquivo histórico** (`data.binance.vision`, bucket
+`data/spot/daily/aggTrades/BTCUSDT/`, já achado numa rodada anterior — `changes/2026-08-
+18-captura-aggtrade-fluxo-ordens.md`) é outra coisa inteiramente, sem essa limitação.
+Reconferido agora, por download direto (não pela página de listagem, que é uma UI
+HTML e não reflete o conteúdo real do bucket): `BTCUSDT-aggTrades-2026-08-31.zip`
+(17,8MB), `-2026-08-30.zip` (10,9MB) e `-2026-08-18.zip` (6,2MB) — os três `200`, os
+três com conteúdo real, cobrindo exatamente a janela inteira que hoje só existe em
+testnet. **As semanas de captura testnet são recuperáveis como dado mainnet real, via
+download do arquivo — não é backfill parcial, é a série inteira.** Isso muda a resposta
+da Pergunta 1 no fechamento deste documento; ver a seção "As três perguntas" abaixo,
+também corrigida.
+
 **Kline/candle**: não existe tabela dedicada — `backend/src/tradingbot/persistence/
 models.py` não tem `Kline`/`Candle`. O treino busca klines direto da REST da Binance a
 cada execução (`BinanceRestClient.fetch_klines`), nunca persiste localmente. Não há
@@ -211,14 +227,17 @@ Fica como achado aberto, não como incidente explicado.
 
 ## As três perguntas
 
-**1. O aggTrade precisa de backfill histórico, e de qual período?**
-Não há histórico anterior a capturar via backfill — a Binance não expõe aggTrade
-passado além da janela recente da REST (mesma limitação já documentada para
-`order_book_snapshots`/microestrutura). O que existe (18/08 em diante, 100% testnet) é
-tudo que pode existir sem uma fonte alternativa. A pergunta real não é "quanto
-backfillar", é "trocar de ambiente agora que a Seção 3 mostrou que dá": rodar
-`aggtrade-capture` em mainnet a partir de `europe-west4` recomeça a série do zero, dessa
-vez com dado real — não é backfill, é troca de rumo, decisão de outra rodada.
+**1. O aggTrade precisa de backfill histórico, e de qual período?** *(corrigido — ver
+nota na Seção 1)*
+Sim, e do período inteiro: 18/08 até hoje, a janela inteira que existe só em testnet.
+O arquivo `data.binance.vision/data/spot/daily/aggTrades/BTCUSDT/` tem os dias
+confirmados por download direto (18/08, 30/08, 31/08 — todos `200`, conteúdo real), sem
+o limite de ~1000 registros da REST ao vivo. **As semanas de captura testnet podem ser
+substituídas por dado mainnet real via download do arquivo, não descartadas.** Isso é
+independente da mudança de região da Seção 3: o backfill resolve o passado; mover
+`aggtrade-capture` para `europe-west4` resolve o futuro (captura direta, sem polling,
+sem o teto de folga da Seção 2). Nenhum dos dois foi executado nesta rodada — os dois
+são decisão de rodada própria, agora com o número na mão para as duas.
 
 **2. Há dado suficiente para redimensionar o walk-forward, e quanto?**
 Sim, com folga larga — ~9 anos de kline 1m disponíveis contra os 45 dias/5 folds atuais.
