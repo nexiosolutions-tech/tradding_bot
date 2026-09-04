@@ -52,6 +52,13 @@ def _evaluate_strategy_config(events: list[MarketEvent], **kwargs) -> dict:
         "folds_total": result.folds_total,
         "mean_profit_factor": result.mean_profit_factor,
         "min_profit_factor": result.min_profit_factor,
+        # total_pnl/aggregate_profit_factor (2026-09-04): agregados corretos para
+        # comparação estatística (soma pooled, não média de razões — ver os próprios
+        # docstrings destas properties em model/evaluation.py), ausentes aqui desde que
+        # FoldSummary ganhou os campos equivalentes por fold em 2026-08-19. equity_curve
+        # fica de fora deliberadamente: ver nota abaixo.
+        "total_pnl": result.total_pnl,
+        "aggregate_profit_factor": result.aggregate_profit_factor,
         "folds": [
             {
                 "fold_index": f.fold_index,
@@ -60,6 +67,18 @@ def _evaluate_strategy_config(events: list[MarketEvent], **kwargs) -> dict:
                 "max_drawdown_pct": f.max_drawdown_pct,
                 "won": f.won,
                 "reason": f.reason,
+                "total_pnl": f.total_pnl,
+                "gross_profit": f.gross_profit,
+                "gross_loss": f.gross_loss,
+                # f.equity_curve (por barra, ~13k pontos/fold) fica de fora por
+                # desenho: este dict é result_summary — vai direto para o prompt do
+                # modelo de raciocínio (agentic_loop.py::report_tool_result) e para o
+                # contexto dos próximos ciclos (_build_context), não só para o disco.
+                # Guardar a curva completa aqui explodiria esse prompt. Quando existir
+                # spec de DSR/PBO definindo o consumidor real, a série de retorno por
+                # trade é a candidata mais provável — não a curva por barra — e vai
+                # exigir separar "o que persiste" de "o que o LLM vê" em
+                # ExperimentRecord, não só acrescentar um campo aqui.
             }
             for f in result.folds
         ],

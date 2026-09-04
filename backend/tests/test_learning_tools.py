@@ -78,6 +78,31 @@ def test_evaluate_strategy_config_tool_runs_against_closed_over_events():
     assert isinstance(result["folds"], list)
 
 
+def test_evaluate_strategy_config_tool_exposes_pnl_aggregates_without_equity_curve():
+    """total_pnl/gross_profit/gross_loss precisam chegar em result_summary (gap real,
+    apontado como já resolvido no commit 2d0dc45 quando não estava) -- mas equity_curve
+    (por barra, ~13k pontos/fold) fica fora de propósito: result_summary vai direto para
+    o prompt do modelo de raciocínio a cada chamada e para o contexto dos próximos
+    ciclos (agentic_loop.py), não só para o disco -- ver changes/2026-09-04."""
+    events = _synthetic_events(n=900)
+    tools = {t.name: t for t in build_tools(events)}
+
+    result = tools["evaluate_strategy_config"].run(
+        horizon_minutes=5, entry_percentile=80.0, move_threshold_pct=0.002, n_splits=2, min_trades=1
+    )
+
+    assert "total_pnl" in result
+    assert "aggregate_profit_factor" in result
+    assert isinstance(result["total_pnl"], (int, float))
+
+    assert "equity_curve" not in result
+    for fold in result["folds"]:
+        assert "total_pnl" in fold
+        assert "gross_profit" in fold
+        assert "gross_loss" in fold
+        assert "equity_curve" not in fold
+
+
 def test_analyze_feature_importance_tool_returns_sorted_features():
     events = _synthetic_events(n=900)
     tools = {t.name: t for t in build_tools(events)}
